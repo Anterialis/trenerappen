@@ -411,29 +411,18 @@
   .token.multi-checked .avatar{
     box-shadow:0 0 0 4px rgba(50,180,90,.7), var(--shadow-sm);
   }
-  /* Small solid triangle, no circle/background - built from CSS borders.
-     Up-triangles (most/most2) set border-bottom; down-triangles (least/
-     least2) set border-top; the other three border sides stay transparent
-     to shape the point. */
+  /* Small solid triangle with a true, uniform white outline (an SVG
+     polygon's stroke, not a CSS border-triangle) - up-triangles (most/
+     most2) point up, down-triangles (least/least2) point down. */
   .badge-rank{
-    position:absolute; top:-3px; left:-3px;
-    width:0; height:0;
-    border-left:5px solid transparent;
-    border-right:5px solid transparent;
-    /* Stacked 1px-offset white drop-shadows fake a stroke around the
-       triangle (a plain shadow isn't enough contrast against the pitch's
-       white lines/circle, where the triangle can otherwise blend in). */
-    filter:
-      drop-shadow(1px 0 0 #fff)
-      drop-shadow(-1px 0 0 #fff)
-      drop-shadow(0 1px 0 #fff)
-      drop-shadow(0 -1px 0 #fff)
-      drop-shadow(0 1px 2px rgba(0,0,0,.4));
+    position:absolute; top:-4px; left:-4px;
+    display:block;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));
   }
-  .badge-rank.rank-most{ border-bottom:9px solid #dc2626; }
-  .badge-rank.rank-most2{ border-bottom:9px solid var(--orange); }
-  .badge-rank.rank-least2{ border-top:9px solid #7dd3fc; }
-  .badge-rank.rank-least{ border-top:9px solid #2563eb; }
+  .badge-rank.rank-most polygon{ fill:#dc2626; }
+  .badge-rank.rank-most2 polygon{ fill:var(--orange); }
+  .badge-rank.rank-least2 polygon{ fill:#7dd3fc; }
+  .badge-rank.rank-least polygon{ fill:#2563eb; }
   .badge-check{
     position:absolute; top:-6px; right:-6px;
     width:19px; height:19px; border-radius:50%;
@@ -1759,9 +1748,17 @@
     els.viewportFrame.classList.toggle('fullscreen-fit', diff < 0.04);
   }
 
+  // SVG (not a CSS border-triangle) specifically so the white outline
+  // is a true, uniform stroke - the old border-trick + drop-shadow-stack
+  // outline came out thick at the point but thin along flat edges,
+  // looking "cut off" on the pitch's white lines.
   function rankBadgeHtml(rank){
     if (!rank) return '';
-    return '<div class="badge-rank rank-' + rank + '"></div>';
+    var up = (rank === 'most' || rank === 'most2');
+    var points = up ? '7,2 12,12 2,12' : '2,2 12,2 7,12';
+    return '<svg class="badge-rank rank-' + rank + '" viewBox="0 0 14 14" width="14" height="14">' +
+      '<polygon points="' + points + '" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>' +
+    '</svg>';
   }
 
   function renderField(){
