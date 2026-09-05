@@ -578,7 +578,7 @@
       <button type="button" id="settingsCancelBtn" class="secondary">Avbryt</button>
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
     </div>
-    <div class="app-version">v1.1.1</div>
+    <div class="app-version" id="appVersionLabel"></div>
   </div>
 </div>
 
@@ -680,6 +680,37 @@
 
   var STORAGE_KEY = 'spillerbytte_v3';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
+
+  // Single source of truth for the version shown in settings - bump on
+  // every push (see checkForUpdate below, which parses this same line back
+  // out of the live deployed file to detect when a newer version exists).
+  var APP_VERSION = '1.1.2';
+  var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
+
+  // Runs at startup (and when iOS restores a suspended PWA tab from its
+  // back-forward cache instead of doing a real reload) to make sure the
+  // device isn't stuck on a cached copy from before the last Netlify
+  // deploy. Fetches this same URL bypassing HTTP cache, reads the
+  // APP_VERSION the *live* file declares, and if it differs, navigates to
+  // a cache-busted URL so the browser/PWA is forced to fetch fresh HTML.
+  // Guarded by sessionStorage so a mismatch that persists after one
+  // reload attempt (e.g. slow CDN propagation) can't loop forever.
+  function checkForUpdate(){
+    fetch(location.pathname, { cache: 'no-store' })
+      .then(function(res){ return res.ok ? res.text() : null; })
+      .then(function(html){
+        if (!html) return;
+        var m = html.match(/APP_VERSION\s*=\s*'([^']+)'/);
+        if (!m || m[1] === APP_VERSION) return;
+        var target = m[1];
+        var lastAttempt = null;
+        try { lastAttempt = sessionStorage.getItem(UPDATE_ATTEMPT_KEY); } catch(e){}
+        if (lastAttempt === target) return;
+        try { sessionStorage.setItem(UPDATE_ATTEMPT_KEY, target); } catch(e){}
+        location.href = location.pathname + '?v=' + encodeURIComponent(target) + '&_=' + Date.now();
+      })
+      .catch(function(){ /* offline or network hiccup - keep running the current version */ });
+  }
 
   var state = null;
   var selected = null; // {id, zone:'field'|'bench'}
@@ -1843,6 +1874,13 @@
     els.joinCodeError = qs('joinCodeError');
     els.joinCodeCancelBtn = qs('joinCodeCancelBtn');
     els.joinCodeConfirmBtn = qs('joinCodeConfirmBtn');
+    els.appVersionLabel = qs('appVersionLabel');
+    els.appVersionLabel.textContent = 'v' + APP_VERSION;
+
+    checkForUpdate();
+    window.addEventListener('pageshow', function(e){
+      if (e.persisted) checkForUpdate();
+    });
 
     state = loadState();
     roster = loadRoster();
