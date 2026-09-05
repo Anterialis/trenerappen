@@ -578,7 +578,7 @@
       <button type="button" id="settingsCancelBtn" class="secondary">Avbryt</button>
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
     </div>
-    <div class="app-version">v1.1</div>
+    <div class="app-version">v1.1.1</div>
   </div>
 </div>
 
@@ -714,18 +714,45 @@
     };
   }
 
+  // Backfills/validates a state object regardless of where it came from
+  // (localStorage or a Supabase row) - returns null if it's too malformed
+  // to safely render (e.g. missing players/onField/onBench arrays), so
+  // callers can fall back instead of letting renderField/renderBench throw.
+  function normalizeState(raw){
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.players)) return null;
+    if (!Array.isArray(raw.onField)) raw.onField = [];
+    if (!Array.isArray(raw.onBench)) raw.onBench = [];
+    if (!raw.fieldTimers || typeof raw.fieldTimers !== 'object') raw.fieldTimers = {};
+    if (!raw.benchTimers || typeof raw.benchTimers !== 'object') raw.benchTimers = {};
+    if (!raw.cumulative || typeof raw.cumulative !== 'object') raw.cumulative = {};
+    if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
+    if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
+    if (!raw.fieldSize) raw.fieldSize = 5;
+    if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 120000;
+    if (raw.globalRunning === undefined) raw.globalRunning = false;
+    return raw;
+  }
+
+  // Drops timeUpNotified entries that no longer match reality after `state`
+  // was replaced wholesale by data from another device: a player who is off
+  // the field, or back on the field with time still remaining (a fresh
+  // stint someone else gave them), should be able to trigger the beep again
+  // next time their timer actually hits zero on this device.
+  function resyncTimeUpNotified(){
+    var now = Date.now();
+    Object.keys(timeUpNotified).forEach(function(id){
+      if (state.onField.indexOf(id) === -1 || fieldRemaining(id, now) > 0){
+        delete timeUpNotified[id];
+      }
+    });
+  }
+
   function loadState(){
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw){
-        var parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.players)){
-          if (!parsed.cumulative) parsed.cumulative = {};
-          if (!parsed.matchClock) parsed.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
-          if (parsed.wakeLockEnabled === undefined) parsed.wakeLockEnabled = true;
-          if (!parsed.fieldSize) parsed.fieldSize = 5;
-          return parsed;
-        }
+        var normalized = normalizeState(JSON.parse(raw));
+        if (normalized) return normalized;
       }
     } catch(e){ console.warn('Kunne ikke lese lagret tilstand', e); }
     return defaultState();
@@ -769,8 +796,11 @@
         { event: 'UPDATE', schema: 'public', table: 'sessions', filter: 'code=eq.' + code },
         function(payload){
           if (!payload.new || payload.new.origin === deviceOrigin) return;
-          state = payload.new.data;
+          var normalized = normalizeState(payload.new.data);
+          if (!normalized){ console.warn('Mottok ugyldig delt tilstand fra økt, ignorerer'); return; }
+          state = normalized;
           saveStateLocally();
+          resyncTimeUpNotified();
           renderAll();
         }
       )
@@ -807,10 +837,13 @@
     if (!sb){ onNotFound(); return; }
     sb.from('sessions').select('*').eq('code', code).maybeSingle().then(function(res){
       if (!res || res.error || !res.data){ onNotFound(); return; }
-      state = res.data.data;
+      var normalized = normalizeState(res.data.data);
+      if (!normalized){ console.warn('Økten fantes, men data var ugyldig'); onNotFound(); return; }
+      state = normalized;
       sessionCode = code;
       try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
       saveStateLocally();
+      resyncTimeUpNotified();
       subscribeToSession(code);
       updateSessionCodeUI();
       onSuccess();
@@ -1902,6 +1935,12 @@
       }
     });
 
+    // Unlock audio on the very first tap anywhere, not just Play/Pause - a
+    // device that joins a session already running (and only ever drags/taps
+    // players to swap) would otherwise never get an unlocked AudioContext
+    // and silently never beep on time-up.
+    document.addEventListener('pointerdown', ensureAudioUnlocked, { once: true });
+
     updateFrameFit();
     renderPitchMarkings();
     requestWakeLock();
@@ -1930,10 +1969,26 @@
       updateSessionCodeUI();
       sb.from('sessions').select('*').eq('code', sessionCode).maybeSingle().then(function(res){
         if (res && !res.error && res.data){
-          state = res.data.data;
-          saveStateLocally();
+          var normalized = normalizeState(res.data.data);
+          if (normalized){
+            state = normalized;
+            saveStateLocally();
+            resyncTimeUpNotified();
+          } else {
+            console.warn('Lagret økt inneholdt ugyldig data, fortsetter med lokal tilstand');
+          }
+          subscribeToSession(sessionCode);
+        } else if (res && !res.error && !res.data){
+          // Session no longer exists server-side (e.g. deleted/cleaned up) -
+          // stop pretending we're synced, so pushRemoteState() silently
+          // no-op'ing against a missing row doesn't mask that changes
+          // aren't reaching anyone else.
+          sessionCode = null;
+          try { localStorage.removeItem(SESSION_CODE_KEY); } catch(e){}
+          updateSessionCodeUI();
+        } else {
+          subscribeToSession(sessionCode);
         }
-        subscribeToSession(sessionCode);
         if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
         finishStartup();
       }).catch(function(){
