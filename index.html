@@ -72,6 +72,17 @@
     box-shadow:0 0 60px rgba(0,0,0,.5);
     overflow:hidden;
   }
+  /* Rotated phone: the frame itself targets the landscape version of the
+     same aspect ratio (956/440) instead of staying portrait-shaped and
+     letterboxing the rotation away. */
+  @media (orientation: landscape){
+    #app{
+      width:min(100vw, calc((100vh) * 956 / 440));
+      width:min(100vw, calc((100dvh) * 956 / 440));
+      height:min(100vh, calc(100vw * 440 / 956));
+      height:min(100dvh, calc(100vw * 440 / 956));
+    }
+  }
   #viewport-frame.fullscreen-fit #app{
     width:100vw; height:100vh; height:100dvh;
     border-radius:0; border:none; box-shadow:none;
@@ -155,6 +166,21 @@
     display:flex; flex-direction:column;
     min-height:0;
   }
+
+  /* Rotated phone: bench moves to a left-hand column, pitch takes the rest
+     of the width on the right - order swapped via flex `order`, source
+     order (and therefore all the JS that reads/writes these elements)
+     stays untouched. */
+  @media (orientation: landscape){
+    #main{ flex-direction:row; }
+    #field-wrap{ flex:1 1 auto; order:2; }
+    #bench-wrap{
+      flex:0 0 36%;
+      order:1;
+      border-top:none;
+      border-right:1px solid rgba(15,31,54,.08);
+    }
+  }
   .bench-label-row{
     display:flex; align-items:center; justify-content:space-between;
     padding:10px 16px 2px;
@@ -202,20 +228,25 @@
     display:flex; flex-direction:column; align-items:center;
     cursor:grab;
   }
+  /* Field-token/avatar size is set per render from state.fieldSize (see
+     applyFieldDensity) via these custom properties, so more utespillere
+     packed onto the same pitch get proportionally smaller icons instead of
+     overflowing. Bench tokens stay a fixed size - only the field gets denser. */
   .field-token{
-    width:96px;
+    width:var(--field-token-width, 96px);
   }
   .bench-token{ width:64px; }
 
   .avatar{
-    width:68px; height:68px; border-radius:50%;
+    width:var(--field-avatar-size, 68px); height:var(--field-avatar-size, 68px);
+    border-radius:50%;
     display:flex; align-items:center; justify-content:center;
-    font-weight:700; font-size:19px; color:#fff;
+    font-weight:700; font-size:var(--field-avatar-font, 19px); color:#fff;
     background:linear-gradient(160deg,var(--navy-2),var(--navy));
     box-shadow:var(--shadow-sm);
     border:2px solid rgba(255,255,255,.55);
     position:relative;
-    transition:box-shadow .15s ease;
+    transition:box-shadow .15s ease, width .2s ease, height .2s ease;
   }
   .bench-avatar{
     width:48px; height:48px; font-size:14px;
@@ -224,9 +255,10 @@
   }
   .badge-warning{
     position:absolute; top:-7px; right:-7px;
-    width:23px; height:23px; border-radius:50%;
+    width:var(--field-badge-size, 23px); height:var(--field-badge-size, 23px);
+    border-radius:50%;
     background:var(--danger); color:#fff;
-    font-size:14px; font-weight:800;
+    font-size:var(--field-badge-font, 14px); font-weight:800;
     display:flex; align-items:center; justify-content:center;
     box-shadow:0 1px 3px rgba(0,0,0,.35);
     animation:badgePulse 1.1s ease-in-out infinite;
@@ -270,7 +302,7 @@
     max-width:78px; text-align:center; line-height:1.15;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  .field-token .label{ font-size:15px; font-weight:700; max-width:96px; margin-top:8px; }
+  .field-token .label{ font-size:var(--field-label-font, 15px); font-weight:700; max-width:var(--field-label-max-w, 96px); margin-top:8px; }
   .bench-token .label{ color:var(--ink); text-shadow:none; max-width:64px; }
 
   .timer{
@@ -278,7 +310,7 @@
     font-variant-numeric:tabular-nums;
     color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.55);
   }
-  .field-token .timer{ font-size:16px; margin-top:3px; }
+  .field-token .timer{ font-size:var(--field-timer-font, 16px); margin-top:3px; }
   .timer.overtime{ color:#ff3b30; }
   .timer.soon{ color:var(--orange); }
   .stopwatch{
@@ -292,17 +324,21 @@
   .token.multi-checked .avatar{
     box-shadow:0 0 0 4px rgba(50,180,90,.7), var(--shadow-sm);
   }
+  /* Small solid triangle, no circle/background - built from CSS borders.
+     Up-triangles (most/most2) set border-bottom; down-triangles (least/
+     least2) set border-top; the other three border sides stay transparent
+     to shape the point. */
   .badge-rank{
-    position:absolute; top:-6px; left:-6px;
-    width:20px; height:20px; border-radius:50%;
-    font-size:11px; font-weight:800; color:#fff;
-    display:flex; align-items:center; justify-content:center;
-    box-shadow:0 1px 3px rgba(0,0,0,.35);
+    position:absolute; top:-3px; left:-3px;
+    width:0; height:0;
+    border-left:5px solid transparent;
+    border-right:5px solid transparent;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));
   }
-  .badge-rank.rank-most{ background:#b91c1c; }
-  .badge-rank.rank-most2{ background:#f97316; }
-  .badge-rank.rank-least2{ background:#38bdf8; color:#0c3a52; }
-  .badge-rank.rank-least{ background:#1d4ed8; }
+  .badge-rank.rank-most{ border-bottom:9px solid #dc2626; }
+  .badge-rank.rank-most2{ border-bottom:9px solid var(--orange); }
+  .badge-rank.rank-least2{ border-top:9px solid #7dd3fc; }
+  .badge-rank.rank-least{ border-top:9px solid #2563eb; }
   .badge-check{
     position:absolute; top:-6px; right:-6px;
     width:19px; height:19px; border-radius:50%;
@@ -469,10 +505,10 @@
   }
   .legend-swatch.warning{ background:var(--danger); color:#fff; }
   .legend-swatch.warning.soon{ background:var(--orange); }
-  .legend-swatch.rank-most{ background:#b91c1c; color:#fff; }
-  .legend-swatch.rank-most2{ background:#f97316; color:#fff; }
-  .legend-swatch.rank-least2{ background:#38bdf8; color:#0c3a52; }
-  .legend-swatch.rank-least{ background:#1d4ed8; color:#fff; }
+  .legend-swatch.rank-most{ background:#dc2626; color:#fff; }
+  .legend-swatch.rank-most2{ background:var(--orange); color:#fff; }
+  .legend-swatch.rank-least2{ background:#7dd3fc; color:#0c3a52; }
+  .legend-swatch.rank-least{ background:#2563eb; color:#fff; }
   .legend-swatch.check{ background:#32b45a; color:#fff; }
   .legend-swatch.ring-orange{ box-shadow:0 0 0 3px rgba(255,138,61,.65); }
   .legend-swatch.order{ background:var(--navy); color:#fff; font-size:16px; }
@@ -577,6 +613,7 @@
       <svg id="pitchLines" class="pitch-lines" viewBox="0 0 100 150" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="matchClock">0:00</div>
       <div id="field"></div>
+      <div id="selectionInfo"></div>
     </div>
 
     <div id="bench-wrap">
@@ -586,14 +623,20 @@
       </div>
       <div id="bench"></div>
     </div>
-
-    <div id="selectionInfo"></div>
   </div>
 
   <div id="settingsModal" class="modal">
   <div class="modal-card">
     <h2>Innstillinger</h2>
     <p class="sub">Skriv inn navn på spillerne og standard byttetid.</p>
+
+    <label class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>Antall utespillere</span>
+      <span id="fieldSizeLockedNote" class="locked-note">Låst under kamp</span>
+    </label>
+    <div class="duration-input">
+      <input type="number" id="fieldSizeInput" min="1" max="11" inputmode="numeric"><span>på banen samtidig</span>
+    </div>
 
     <label class="section-label">Spillere</label>
     <div id="nameRows"></div>
@@ -603,14 +646,6 @@
     <div class="duration-input">
       <input type="number" id="durMin" min="0" max="30" inputmode="numeric"><span>min</span>
       <input type="number" id="durSec" min="0" max="59" inputmode="numeric"><span>sek</span>
-    </div>
-
-    <label class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-      <span>Antall utespillere</span>
-      <span id="fieldSizeLockedNote" class="locked-note">Låst under kamp</span>
-    </label>
-    <div class="duration-input">
-      <input type="number" id="fieldSizeInput" min="1" max="11" inputmode="numeric"><span>på banen samtidig</span>
     </div>
 
     <div class="settings-row">
@@ -625,6 +660,14 @@
       <span class="settings-row-label">Del økt med andre</span>
       <label class="toggle">
         <input type="checkbox" id="shareSessionToggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row">
+      <span class="settings-row-label">Kumulert rangering</span>
+      <label class="toggle">
+        <input type="checkbox" id="rankByCumulativeToggle">
         <span class="toggle-slider"></span>
       </label>
     </div>
@@ -683,10 +726,10 @@
     <div class="legend-list">
       <div class="legend-row"><span class="legend-swatch warning soon">!</span><span class="legend-text">Snart tid for bytte (siste 30 sek) – utespiller.</span></div>
       <div class="legend-row"><span class="legend-swatch warning">!</span><span class="legend-text">Tiden er ute for en utespiller – klar for bytte.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most">▲</span><span class="legend-text">Har spilt mest totalt – vurder benk til neste kamp.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most2">▲</span><span class="legend-text">Har spilt nest mest totalt.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least2">▼</span><span class="legend-text">Har spilt nest minst totalt.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least">▼</span><span class="legend-text">Har spilt minst totalt – vurder start til neste kamp.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most">▲</span><span class="legend-text">Har spilt mest – vurder benk til neste kamp. Rød trekant på spilleren.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most2">▲</span><span class="legend-text">Har spilt nest mest. Oransje trekant.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least2">▼</span><span class="legend-text">Har spilt nest minst. Lyseblå trekant.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least">▼</span><span class="legend-text">Har spilt minst – vurder start til neste kamp. Blå trekant.</span></div>
       <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert – trykk på en spiller i motsatt sone for å bytte dem.</span></div>
       <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i "Velg flere"-modus (grønn ring), klar til å sendes ut.</span></div>
       <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre = har spilt/ventet lengst.</span></div>
@@ -750,11 +793,13 @@
    * @property {Object<string, FieldTimer>} fieldTimers
    * @property {Object<string, BenchTimer>} benchTimers
    * @property {Object<string, Cumulative>} cumulative
+   * @property {Object<string, Cumulative>} periodStartCumulative
    * @property {MatchClock} matchClock
    * @property {boolean} wakeLockEnabled
    * @property {number} fieldSize
    * @property {boolean} globalRunning
    * @property {number} defaultDurationMs
+   * @property {boolean} rankByCumulative
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -780,7 +825,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.3.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -859,11 +904,13 @@
       fieldTimers: {},
       benchTimers: {},
       cumulative: {},
+      periodStartCumulative: {},
       matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
       wakeLockEnabled: true,
       fieldSize: 5,
       globalRunning: false,
-      defaultDurationMs: 120000
+      defaultDurationMs: 120000,
+      rankByCumulative: false
     };
   }
 
@@ -882,11 +929,13 @@
     if (!raw.fieldTimers || typeof raw.fieldTimers !== 'object') raw.fieldTimers = {};
     if (!raw.benchTimers || typeof raw.benchTimers !== 'object') raw.benchTimers = {};
     if (!raw.cumulative || typeof raw.cumulative !== 'object') raw.cumulative = {};
+    if (!raw.periodStartCumulative || typeof raw.periodStartCumulative !== 'object') raw.periodStartCumulative = {};
     if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
     if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
     if (!raw.fieldSize) raw.fieldSize = 5;
     if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 120000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
+    if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     return raw;
   }
 
@@ -1068,9 +1117,11 @@
     saveRoster();
   }
 
-  function initials(name){
+  /** @param {string} name @param {boolean} [singleLetter] @returns {string} */
+  function initials(name, singleLetter){
     var parts = name.trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) return '?';
+    if (singleLetter) return parts[0].slice(0,1).toUpperCase();
     if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
@@ -1155,11 +1206,24 @@
     return m + ':' + String(s).padStart(2,'0');
   }
 
+  // Field time since the CURRENT period started (i.e. since the last
+  // "Kampslutt"), rather than the lifetime cumulative - the difference
+  // between the two is exactly what state.periodStartCumulative snapshots
+  // at the start of each period (see endMatchPeriod).
+  /** @param {string} id @param {number} now @returns {number} */
+  function currentPeriodFieldMs(id, now){
+    var baseline = (state.periodStartCumulative[id] && state.periodStartCumulative[id].fieldMs) || 0;
+    return Math.max(0, cumulativeFieldMs(id, now) - baseline);
+  }
+
   // Returns {playerId: 'most'|'most2'|'least2'|'least'} across the whole squad
-  // (both zones), so it's easy to see who to start next match with.
+  // (both zones), so it's easy to see who to start next match with. Basis is
+  // either the current period only (default) or the full cross-match
+  // cumulative total, per the "Kumulert rangering" setting.
   function computeRankBadges(now){
     var badges = {};
-    var all = state.players.map(function(p){ return { id: p.id, ms: cumulativeFieldMs(p.id, now) }; });
+    var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
+    var all = state.players.map(function(p){ return { id: p.id, ms: msFor(p.id, now) }; });
     var n = all.length;
     if (n < 2) return badges;
     all.sort(function(a,b){ return b.ms - a.ms; });
@@ -1188,11 +1252,13 @@
       fieldTimers: cloneStateValue(state.fieldTimers),
       benchTimers: cloneStateValue(state.benchTimers),
       cumulative: cloneStateValue(state.cumulative),
+      periodStartCumulative: cloneStateValue(state.periodStartCumulative || {}),
       matchClock: cloneStateValue(state.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() }),
       globalRunning: !!state.globalRunning,
       defaultDurationMs: state.defaultDurationMs,
       fieldSize: state.fieldSize,
-      wakeLockEnabled: !!state.wakeLockEnabled
+      wakeLockEnabled: !!state.wakeLockEnabled,
+      rankByCumulative: !!state.rankByCumulative
     };
   }
 
@@ -1205,11 +1271,13 @@
     state.fieldTimers = cloneStateValue(snap.fieldTimers || {});
     state.benchTimers = cloneStateValue(snap.benchTimers || {});
     state.cumulative = cloneStateValue(snap.cumulative || {});
+    state.periodStartCumulative = cloneStateValue(snap.periodStartCumulative || {});
     state.matchClock = cloneStateValue(snap.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() });
     state.globalRunning = !!snap.globalRunning;
     state.defaultDurationMs = typeof snap.defaultDurationMs === 'number' ? snap.defaultDurationMs : state.defaultDurationMs;
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
+    state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
   }
 
   // Call BEFORE mutating state for any undoable action - pushes the
@@ -1249,7 +1317,37 @@
 
   /* ---------------- Rendering ---------------- */
 
+  // More utespillere sharing the same pitch means smaller icons, so they
+  // still all fit without crowding. Sets CSS custom properties consumed by
+  // .field-token/.avatar/.badge-warning/label/timer - see those rules.
+  // Bench tokens are unaffected (fixed size), only the field gets denser.
+  function applyFieldDensity(){
+    var fs = state.fieldSize || 5;
+    var t;
+    if (fs <= 5)      t = { avatar:68, avatarFont:19, token:96, label:15, labelW:96, timer:16, badge:23, badgeFont:14 };
+    else if (fs <= 7) t = { avatar:58, avatarFont:17, token:84, label:13, labelW:84, timer:14, badge:20, badgeFont:13 };
+    else if (fs <= 9) t = { avatar:50, avatarFont:15, token:74, label:12, labelW:74, timer:13, badge:18, badgeFont:12 };
+    else              t = { avatar:44, avatarFont:14, token:66, label:11, labelW:66, timer:12, badge:16, badgeFont:11 };
+    var s = document.documentElement.style;
+    s.setProperty('--field-avatar-size', t.avatar + 'px');
+    s.setProperty('--field-avatar-font', t.avatarFont + 'px');
+    s.setProperty('--field-token-width', t.token + 'px');
+    s.setProperty('--field-label-font', t.label + 'px');
+    s.setProperty('--field-label-max-w', t.labelW + 'px');
+    s.setProperty('--field-timer-font', t.timer + 'px');
+    s.setProperty('--field-badge-size', t.badge + 'px');
+    s.setProperty('--field-badge-font', t.badgeFont + 'px');
+  }
+
+  // Once the field avatar is too small to comfortably show two letters,
+  // fall back to one - same density tiers as applyFieldDensity (the 50px
+  // and 44px avatar sizes).
+  function fieldUsesSingleLetter(){
+    return (state.fieldSize || 5) >= 8;
+  }
+
   function renderAll(){
+    applyFieldDensity();
     renderField();
     renderBench();
     updatePlayPauseUI();
@@ -1300,7 +1398,7 @@
   function updateFrameFit(){
     var vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
-    var targetRatio = 440/956;
+    var targetRatio = vw > vh ? 956/440 : 440/956;
     var actualRatio = vw/vh;
     var diff = Math.abs(actualRatio - targetRatio) / targetRatio;
     els.viewportFrame.classList.toggle('fullscreen-fit', diff < 0.04);
@@ -1308,14 +1406,14 @@
 
   function rankBadgeHtml(rank){
     if (!rank) return '';
-    var symbol = (rank === 'most' || rank === 'most2') ? '▲' : '▼';
-    return '<div class="badge-rank rank-' + rank + '">' + symbol + '</div>';
+    return '<div class="badge-rank rank-' + rank + '"></div>';
   }
 
   function renderField(){
     Array.prototype.forEach.call(els.field.querySelectorAll('.token'), function(n){ n.remove(); });
     var now = Date.now();
     var rankBadges = computeRankBadges(now);
+    var singleLetter = fieldUsesSingleLetter();
     var sorted = state.onField.filter(function(id, i){ return state.onField.indexOf(id) === i; }).sort(function(a,b){
       var diff = fieldElapsed(a, now) - fieldElapsed(b, now);
       if (diff !== 0) return diff;
@@ -1333,7 +1431,7 @@
       el.className = 'token field-token token-enter';
       el.dataset.id = id;
       el.innerHTML =
-        '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name) +
+        '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
           rankBadgeHtml(rankBadges[id]) +
           (timeUp ? '<div class="badge-warning">!</div>' : timeSoon ? '<div class="badge-warning soon">!</div>' : '') +
         '</div>' +
@@ -1760,13 +1858,44 @@
 
   /* ---------------- Settings modal ---------------- */
 
+  // How many blank name fields to show by default, driven by "Antall
+  // utespillere" - always a few more than the field itself so there's room
+  // for a bench without immediately needing "+ Legg til spiller".
+  /** @param {number} fieldSize @returns {number} */
+  function defaultNameRowCount(fieldSize){
+    if (fieldSize <= 3) return 5;
+    if (fieldSize <= 6) return 8;
+    return 10;
+  }
+
+  // Grows/shrinks the visible name rows to match the current "Antall
+  // utespillere" value, live as it's being typed during first-run setup.
+  // Never removes a row that already has a name typed into it - only trims
+  // trailing blank rows, and stops as soon as it hits a non-blank one.
+  function resizeNameRowsToFieldSize(){
+    if (els.fieldSizeInput.disabled) return;
+    var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 5));
+    var target = defaultNameRowCount(fieldSize);
+    var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
+    if (rows.length < target){
+      for (var i = rows.length; i < target; i++) addNameRow(null, '', i+1);
+    } else {
+      for (var j = rows.length - 1; j >= target; j--){
+        var input = rows[j].querySelector('input');
+        if (input && input.value.trim()) break;
+        if (els.nameRows.children.length > 1) rows[j].remove();
+      }
+    }
+  }
+
   function openSettings(isFirstRun){
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.nameRows.innerHTML = '';
 
     if (state.players.length === 0){
-      for (var i=0;i<5;i++) addNameRow(null, '', i+1);
+      var rowCount = defaultNameRowCount(state.fieldSize || 5);
+      for (var i=0;i<rowCount;i++) addNameRow(null, '', i+1);
     } else {
       state.players.forEach(function(p, idx){ addNameRow(p.id, p.name, idx+1); });
     }
@@ -1775,6 +1904,7 @@
     els.durSec.value = Math.floor((totalMs%60000)/1000);
     els.wakeLockToggle.checked = !!state.wakeLockEnabled;
     els.shareSessionToggle.checked = !!sessionCode;
+    els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
     els.fieldSizeInput.value = state.fieldSize || 5;
     els.fieldSizeInput.disabled = !isFirstRun;
     els.fieldSizeLockedNote.style.display = isFirstRun ? 'none' : '';
@@ -1987,6 +2117,10 @@
 
     state.matchClock = { baseElapsedMs: 0, sinceTs: now };
     state.globalRunning = false;
+    // Baseline for "current period" rank badges (see currentPeriodFieldMs) -
+    // the period that's about to start counts from here, not from 0 in the
+    // lifetime cumulative.
+    state.periodStartCumulative = cloneStateValue(state.cumulative);
     selected = null;
     undoStack = [];
     multiMode = false;
@@ -2024,10 +2158,12 @@
     var keepDuration = state.defaultDurationMs;
     var keepWakeLock = state.wakeLockEnabled;
     var keepFieldSize = state.fieldSize;
+    var keepRankByCumulative = state.rankByCumulative;
     state = defaultState();
     state.defaultDurationMs = keepDuration;
     state.wakeLockEnabled = keepWakeLock;
     state.fieldSize = keepFieldSize;
+    state.rankByCumulative = keepRankByCumulative;
     saveState();
     updateUndoUI();
     updateMultiSelectUI();
@@ -2084,6 +2220,7 @@
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.shareSessionToggle = qs('shareSessionToggle');
+    els.rankByCumulativeToggle = qs('rankByCumulativeToggle');
     els.joinExistingBtn = qs('joinExistingBtn');
     els.joinCodeModal = qs('joinCodeModal');
     els.joinCodeInput = qs('joinCodeInput');
@@ -2117,6 +2254,7 @@
     els.undoBtn.addEventListener('click', undoLastAction);
     els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
     els.addNameBtn.addEventListener('click', function(){ addNameRow(null, '', els.nameRows.children.length+1); });
+    els.fieldSizeInput.addEventListener('input', resizeNameRowsToFieldSize);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
     els.endBtn.addEventListener('click', function(){
@@ -2195,6 +2333,11 @@
       } else {
         leaveSession();
       }
+    });
+    els.rankByCumulativeToggle.addEventListener('change', function(){
+      state.rankByCumulative = els.rankByCumulativeToggle.checked;
+      saveState();
+      renderAll();
     });
     els.joinExistingBtn.addEventListener('click', function(){
       els.settingsModal.classList.remove('open');
