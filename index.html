@@ -477,6 +477,28 @@
     margin-top:18px;
   }
   .settings-row-label{ font-size:14px; font-weight:600; color:var(--ink); }
+  .settings-row-label-wrap{ display:flex; align-items:center; gap:6px; }
+  .info-label-row{ display:flex; align-items:center; gap:6px; }
+  .info-btn{
+    width:16px; height:16px; border-radius:50%; flex:0 0 auto;
+    border:1px solid var(--ink-soft); background:none; color:var(--ink-soft);
+    font-size:10px; font-weight:700; font-style:italic; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:0; cursor:pointer;
+    transition:background .12s ease;
+  }
+  .info-btn:active{ background:rgba(15,31,54,.08); }
+  .info-popup-card{ position:relative; padding-top:46px; }
+  .info-popup-close{
+    position:absolute; top:14px; right:14px;
+    width:30px; height:30px; border-radius:50%; border:none;
+    background:#f0f1f3; color:var(--ink-soft);
+    font-size:17px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .12s ease;
+  }
+  .info-popup-close:active{ background:#e2e4e8; }
+  #infoPopupText{ margin:0; }
   .toggle{ position:relative; display:inline-block; width:48px; height:28px; flex:0 0 auto; }
   .toggle input{ opacity:0; width:0; height:0; position:absolute; }
   .toggle-slider{
@@ -569,6 +591,7 @@
   #exportModal{ z-index:110; }
   #legendModal{ z-index:110; }
   #joinCodeModal{ z-index:120; }
+  #infoPopupModal{ z-index:130; }
 
   .session-code-bar{
     flex:0 0 auto;
@@ -665,14 +688,20 @@
       <input type="number" id="matchDurationInput" min="1" max="180" inputmode="numeric"><span>min</span>
     </div>
 
-    <label class="section-label">Standard byttetid</label>
+    <label class="section-label info-label-row">
+      <span>Standard byttetid</span>
+      <button type="button" class="info-btn" data-info="byttetid" aria-label="Om standard byttetid">i</button>
+    </label>
     <div class="duration-input">
       <input type="number" id="durMin" min="0" max="30" inputmode="numeric"><span>min</span>
       <input type="number" id="durSec" min="0" max="59" inputmode="numeric"><span>sek</span>
     </div>
 
     <div class="settings-row">
-      <span class="settings-row-label">Hold skjermen våken</span>
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Hold skjermen våken</span>
+        <button type="button" class="info-btn" data-info="wakelock" aria-label="Om hold skjermen våken">i</button>
+      </span>
       <label class="toggle">
         <input type="checkbox" id="wakeLockToggle">
         <span class="toggle-slider"></span>
@@ -680,7 +709,10 @@
     </div>
 
     <div class="settings-row">
-      <span class="settings-row-label">Del økt med andre</span>
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Del økt med andre</span>
+        <button type="button" class="info-btn" data-info="share" aria-label="Om del økt med andre">i</button>
+      </span>
       <label class="toggle">
         <input type="checkbox" id="shareSessionToggle">
         <span class="toggle-slider"></span>
@@ -688,7 +720,10 @@
     </div>
 
     <div class="settings-row">
-      <span class="settings-row-label">Kumulert rangering</span>
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Kumulert rangering</span>
+        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert rangering">i</button>
+      </span>
       <label class="toggle">
         <input type="checkbox" id="rankByCumulativeToggle">
         <span class="toggle-slider"></span>
@@ -760,6 +795,14 @@
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>
     </div>
+  </div>
+</div>
+
+<div id="infoPopupModal" class="modal">
+  <div class="modal-card info-popup-card">
+    <button type="button" id="infoPopupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2 id="infoPopupTitle"></h2>
+    <p id="infoPopupText" class="sub"></p>
   </div>
 </div>
 
@@ -849,7 +892,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.3.3';
+  var APP_VERSION = '1.3.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -903,6 +946,27 @@
   /** @type {string[]} */
   var multiSelected = []; // ids currently checked while in multiMode
   var WARNING_LEAD_MS = 30000; // yellow pre-warning starts this long before the red time-up badge
+
+  // Explanations shown by the small "i" info buttons in settings, keyed by
+  // their data-info attribute.
+  var INFO_TEXTS = {
+    byttetid: {
+      title: 'Standard byttetid',
+      text: 'Tiden en utespiller har vært på banen før spilleren varsles med gult (siste 30 sekunder) og deretter rødt utropstegn. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
+    },
+    wakelock: {
+      title: 'Hold skjermen våken',
+      text: 'Hindrer at skjermen låser seg selv mens appen er åpen, slik at klokkene alltid er synlige under kampen.'
+    },
+    share: {
+      title: 'Del økt med andre',
+      text: 'Slår på sanntidsdeling med en tresifret kode, slik at en medhjelper kan følge med og gjøre byttinger fra sin egen telefon samtidig som deg.'
+    },
+    rankCumulative: {
+      title: 'Kumulert rangering',
+      text: 'Av: trekantene som viser mest/minst spilletid tar kun hensyn til inneværende periode. På: de viser total spilletid på tvers av alle "Kampslutt" i økten.'
+    }
+  };
   var resetConfirmArmed = false; // "Avslutt og nullstill" needs a second press to confirm
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   var resetConfirmTimer; // clearTimeout(undefined) is a safe no-op, same as our old null check
@@ -931,10 +995,10 @@
       periodStartCumulative: {},
       matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
       wakeLockEnabled: true,
-      fieldSize: 5,
+      fieldSize: 3,
       globalRunning: false,
-      defaultDurationMs: 120000,
-      matchDurationMs: 600000,
+      defaultDurationMs: 180000,
+      matchDurationMs: 1200000,
       rankByCumulative: false
     };
   }
@@ -957,9 +1021,9 @@
     if (!raw.periodStartCumulative || typeof raw.periodStartCumulative !== 'object') raw.periodStartCumulative = {};
     if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
     if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
-    if (!raw.fieldSize) raw.fieldSize = 5;
-    if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 120000;
-    if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 600000;
+    if (!raw.fieldSize) raw.fieldSize = 3;
+    if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 180000;
+    if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 1200000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     return raw;
@@ -1358,7 +1422,7 @@
   // .field-token/.avatar/.badge-warning/label/timer - see those rules.
   // Bench tokens are unaffected (fixed size), only the field gets denser.
   function applyFieldDensity(){
-    var fs = state.fieldSize || 5;
+    var fs = state.fieldSize || 3;
     var t;
     if (fs <= 5)      t = { avatar:68, avatarFont:19, token:96, label:15, labelW:96, timer:16, badge:23, badgeFont:14 };
     else if (fs <= 7) t = { avatar:58, avatarFont:17, token:84, label:13, labelW:84, timer:14, badge:20, badgeFont:13 };
@@ -1379,7 +1443,7 @@
   // fall back to one - same density tiers as applyFieldDensity (the 50px
   // and 44px avatar sizes).
   function fieldUsesSingleLetter(){
-    return (state.fieldSize || 5) >= 8;
+    return (state.fieldSize || 3) >= 8;
   }
 
   function renderAll(){
@@ -1911,7 +1975,7 @@
   // trailing blank rows, and stops as soon as it hits a non-blank one.
   function resizeNameRowsToFieldSize(){
     if (els.fieldSizeInput.disabled) return;
-    var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 5));
+    var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 3));
     var target = defaultNameRowCount(fieldSize);
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     if (rows.length < target){
@@ -1941,7 +2005,7 @@
     els.nameRows.innerHTML = '';
 
     if (state.players.length === 0){
-      var rowCount = defaultNameRowCount(state.fieldSize || 5);
+      var rowCount = defaultNameRowCount(state.fieldSize || 3);
       for (var i=0;i<rowCount;i++) addNameRow(null, '', i+1);
     } else {
       state.players.forEach(function(p, idx){ addNameRow(p.id, p.name, idx+1); });
@@ -1953,7 +2017,7 @@
     els.wakeLockToggle.checked = !!state.wakeLockEnabled;
     els.shareSessionToggle.checked = !!sessionCode;
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
-    els.fieldSizeInput.value = state.fieldSize || 5;
+    els.fieldSizeInput.value = state.fieldSize || 3;
     els.fieldSizeInput.disabled = !isFirstRun;
     els.fieldSizeLockedNote.style.display = isFirstRun ? 'none' : '';
   }
@@ -2084,7 +2148,7 @@
     var sec = Math.max(0, Math.min(59, parseInt(els.durSec.value,10) || 0));
     var newDur = (min*60 + sec) * 1000;
     if (newDur > 0) state.defaultDurationMs = newDur;
-    state.fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value,10) || state.fieldSize || 5));
+    state.fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value,10) || state.fieldSize || 3));
 
     saveState();
     els.settingsModal.classList.remove('open');
@@ -2151,7 +2215,7 @@
         return { id: p.id, ms: (state.cumulative[p.id] && state.cumulative[p.id].fieldMs) || 0 };
       });
       all.sort(function(a,b){ return a.ms - b.ms; }); // ascending: least played first
-      var fieldSize = Math.max(1, Math.min(state.fieldSize || 5, all.length));
+      var fieldSize = Math.max(1, Math.min(state.fieldSize || 3, all.length));
       state.onField = all.slice(0, fieldSize).map(function(x){ return x.id; });
       state.onBench = all.slice(fieldSize).map(function(x){ return x.id; });
     }
@@ -2272,6 +2336,10 @@
     els.legendBtn = qs('legendBtn');
     els.legendModal = qs('legendModal');
     els.legendCloseBtn = qs('legendCloseBtn');
+    els.infoPopupModal = qs('infoPopupModal');
+    els.infoPopupTitle = qs('infoPopupTitle');
+    els.infoPopupText = qs('infoPopupText');
+    els.infoPopupCloseBtn = qs('infoPopupCloseBtn');
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.shareSessionToggle = qs('shareSessionToggle');
@@ -2369,6 +2437,16 @@
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
     els.legendCloseBtn.addEventListener('click', function(){ els.legendModal.classList.remove('open'); });
+    Array.prototype.forEach.call(document.querySelectorAll('.info-btn'), function(btn){
+      btn.addEventListener('click', function(){
+        var info = INFO_TEXTS[btn.dataset.info || ''];
+        if (!info) return;
+        els.infoPopupTitle.textContent = info.title;
+        els.infoPopupText.textContent = info.text;
+        els.infoPopupModal.classList.add('open');
+      });
+    });
+    els.infoPopupCloseBtn.addEventListener('click', function(){ els.infoPopupModal.classList.remove('open'); });
     els.exportCopyBtn.addEventListener('click', function(){
       els.exportText.select();
       if (navigator.clipboard && navigator.clipboard.writeText){
