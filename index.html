@@ -420,7 +420,15 @@
     width:0; height:0;
     border-left:5px solid transparent;
     border-right:5px solid transparent;
-    filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));
+    /* Stacked 1px-offset white drop-shadows fake a stroke around the
+       triangle (a plain shadow isn't enough contrast against the pitch's
+       white lines/circle, where the triangle can otherwise blend in). */
+    filter:
+      drop-shadow(1px 0 0 #fff)
+      drop-shadow(-1px 0 0 #fff)
+      drop-shadow(0 1px 0 #fff)
+      drop-shadow(0 -1px 0 #fff)
+      drop-shadow(0 1px 2px rgba(0,0,0,.4));
   }
   .badge-rank.rank-most{ border-bottom:9px solid #dc2626; }
   .badge-rank.rank-most2{ border-bottom:9px solid var(--orange); }
@@ -1085,7 +1093,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.4.2';
+  var APP_VERSION = '1.4.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
