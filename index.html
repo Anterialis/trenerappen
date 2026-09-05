@@ -8,8 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trenerappen">
 <meta name="theme-color" content="#0f1f36">
-<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiVHJlbmVyYXBwZW4iLCJzaG9ydF9uYW1lIjoiVHJlbmVyYXBwZW4iLCJzdGFydF91cmwiOiIvIiwic2NvcGUiOiIvIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJvcmllbnRhdGlvbiI6InBvcnRyYWl0IiwiYmFja2dyb3VuZF9jb2xvciI6IiMxNDVjMzAiLCJ0aGVtZV9jb2xvciI6IiMwZjFmMzYiLCJpY29ucyI6W3sic3JjIjoiL2ljb24tNTEyLnBuZyIsInNpemVzIjoiNTEyeDUxMiIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55In0seyJzcmMiOiIvaWNvbi01MTIucG5nIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyIsInB1cnBvc2UiOiJtYXNrYWJsZSJ9XX0=">
-<link rel="apple-touch-icon" href="/icon-512.png">
+<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiVHJlbmVyYXBwZW4iLCJzaG9ydF9uYW1lIjoiVHJlbmVyYXBwZW4iLCJzdGFydF91cmwiOiIvIiwic2NvcGUiOiIvIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJvcmllbnRhdGlvbiI6InBvcnRyYWl0IiwiYmFja2dyb3VuZF9jb2xvciI6IiMxNDVjMzAiLCJ0aGVtZV9jb2xvciI6IiMwZjFmMzYiLCJpY29ucyI6W3sic3JjIjoiL2ljb24tMTgwLnBuZyIsInNpemVzIjoiMTgweDE4MCIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55In0seyJzcmMiOiIvaWNvbi01MTIucG5nIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyIsInB1cnBvc2UiOiJhbnkifV19">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+<link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png">
 <link rel="icon" type="image/png" href="/icon-512.png">
 <title>Trenerappen</title>
 <style>
@@ -135,8 +136,12 @@
       repeating-linear-gradient(180deg, var(--green-1) 0 40px, var(--green-2) 40px 80px);
   }
   .pitch-lines{ position:absolute; inset:0; width:100%; height:100%; display:block; }
-  #matchClock{
+  .match-clock-wrap{
     position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    z-index:5; pointer-events:none;
+  }
+  #matchClock{
     background:linear-gradient(180deg,#222,#000);
     border:2px solid rgba(255,255,255,.22);
     border-radius:8px;
@@ -146,7 +151,17 @@
     font-variant-numeric:tabular-nums; letter-spacing:3px;
     text-shadow:0 0 6px rgba(255,255,255,.6), 0 0 16px rgba(255,255,255,.3);
     box-shadow:0 8px 20px rgba(0,0,0,.65), inset 0 0 10px rgba(0,0,0,.6);
-    z-index:5; pointer-events:none;
+  }
+  /* Small countdown-to-zero readout under the main (count-up) match clock -
+     same kampvarighet the coach set in settings, ticking down alongside it. */
+  #matchCountdown{
+    background:rgba(0,0,0,.45);
+    border-radius:6px;
+    padding:2px 10px;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:13px; font-weight:600; color:rgba(244,244,242,.8);
+    font-variant-numeric:tabular-nums; letter-spacing:1.5px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
   }
   #field{
     position:relative;
@@ -611,7 +626,10 @@
   <div id="main">
     <div id="field-wrap">
       <svg id="pitchLines" class="pitch-lines" viewBox="0 0 100 150" xmlns="http://www.w3.org/2000/svg"></svg>
-      <div id="matchClock">0:00</div>
+      <div id="matchClockWrap" class="match-clock-wrap">
+        <div id="matchClock">0:00</div>
+        <div id="matchCountdown">0:00</div>
+      </div>
       <div id="field"></div>
       <div id="selectionInfo"></div>
     </div>
@@ -641,6 +659,11 @@
     <label class="section-label">Spillere</label>
     <div id="nameRows"></div>
     <button type="button" id="addNameBtn">+ Legg til spiller</button>
+
+    <label class="section-label">Kampvarighet</label>
+    <div class="duration-input">
+      <input type="number" id="matchDurationInput" min="1" max="180" inputmode="numeric"><span>min</span>
+    </div>
 
     <label class="section-label">Standard byttetid</label>
     <div class="duration-input">
@@ -799,6 +822,7 @@
    * @property {number} fieldSize
    * @property {boolean} globalRunning
    * @property {number} defaultDurationMs
+   * @property {number} matchDurationMs
    * @property {boolean} rankByCumulative
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
@@ -825,7 +849,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.3.2';
+  var APP_VERSION = '1.3.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -910,6 +934,7 @@
       fieldSize: 5,
       globalRunning: false,
       defaultDurationMs: 120000,
+      matchDurationMs: 600000,
       rankByCumulative: false
     };
   }
@@ -934,6 +959,7 @@
     if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
     if (!raw.fieldSize) raw.fieldSize = 5;
     if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 120000;
+    if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 600000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     return raw;
@@ -1161,6 +1187,14 @@
     return state.globalRunning ? t.baseElapsedMs + (now - t.sinceTs) : t.baseElapsedMs;
   }
 
+  // Countdown companion to the (count-up) match clock, ticking down from
+  // kampvarighet. Goes negative past zero - formatMs already renders that
+  // with a "+" prefix, same as the rest of the app's overtime displays.
+  /** @param {number} now @returns {number} */
+  function matchCountdownMs(now){
+    return state.matchDurationMs - matchClockElapsed(now);
+  }
+
   /** @param {string} id @returns {Cumulative} */
   function ensureCumulative(id){
     if (!state.cumulative[id]) state.cumulative[id] = { fieldMs: 0, benchMs: 0 };
@@ -1256,6 +1290,7 @@
       matchClock: cloneStateValue(state.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() }),
       globalRunning: !!state.globalRunning,
       defaultDurationMs: state.defaultDurationMs,
+      matchDurationMs: state.matchDurationMs,
       fieldSize: state.fieldSize,
       wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative
@@ -1275,6 +1310,7 @@
     state.matchClock = cloneStateValue(snap.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() });
     state.globalRunning = !!snap.globalRunning;
     state.defaultDurationMs = typeof snap.defaultDurationMs === 'number' ? snap.defaultDurationMs : state.defaultDurationMs;
+    state.matchDurationMs = typeof snap.matchDurationMs === 'number' ? snap.matchDurationMs : state.matchDurationMs;
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
@@ -1508,6 +1544,7 @@
       el.querySelector('.stopwatch').textContent = formatMs(benchElapsed(id, now));
     });
     els.matchClock.textContent = formatMs(matchClockElapsed(now));
+    els.matchCountdown.textContent = formatMs(matchCountdownMs(now));
     updateSelectionInfo();
   }
 
@@ -1888,6 +1925,16 @@
     }
   }
 
+  // Standard byttetid defaults to ~15% of kampvarighet, rounded up to the
+  // nearest whole minute (10 min match -> 2 min, 20 min -> 3 min) - live as
+  // "Kampvarighet" is edited. The byttetid fields stay freely editable
+  // afterwards, this is just the suggested starting point.
+  function applyMatchDurationSuggestion(){
+    var mins = Math.max(1, parseInt(els.matchDurationInput.value, 10) || 10);
+    els.durMin.value = Math.max(1, Math.ceil(mins * 0.15));
+    els.durSec.value = 0;
+  }
+
   function openSettings(isFirstRun){
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
@@ -1899,6 +1946,7 @@
     } else {
       state.players.forEach(function(p, idx){ addNameRow(p.id, p.name, idx+1); });
     }
+    els.matchDurationInput.value = Math.round(state.matchDurationMs/60000);
     var totalMs = state.defaultDurationMs;
     els.durMin.value = Math.floor(totalMs/60000);
     els.durSec.value = Math.floor((totalMs%60000)/1000);
@@ -2029,6 +2077,9 @@
     state.players = newPlayers;
     addNamesToRoster(newPlayers.map(function(p){ return p.name; }));
 
+    var matchMin = Math.max(1, parseInt(els.matchDurationInput.value,10) || Math.round(state.matchDurationMs/60000) || 10);
+    state.matchDurationMs = matchMin * 60000;
+
     var min = Math.max(0, parseInt(els.durMin.value,10) || 0);
     var sec = Math.max(0, Math.min(59, parseInt(els.durSec.value,10) || 0));
     var newDur = (min*60 + sec) * 1000;
@@ -2156,11 +2207,13 @@
     multiMode = false;
     multiSelected = [];
     var keepDuration = state.defaultDurationMs;
+    var keepMatchDuration = state.matchDurationMs;
     var keepWakeLock = state.wakeLockEnabled;
     var keepFieldSize = state.fieldSize;
     var keepRankByCumulative = state.rankByCumulative;
     state = defaultState();
     state.defaultDurationMs = keepDuration;
+    state.matchDurationMs = keepMatchDuration;
     state.wakeLockEnabled = keepWakeLock;
     state.fieldSize = keepFieldSize;
     state.rankByCumulative = keepRankByCumulative;
@@ -2208,6 +2261,8 @@
     els.reorgYesBtn = qs('reorgYesBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
     els.matchClock = qs('matchClock');
+    els.matchCountdown = qs('matchCountdown');
+    els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
     els.exportBtn = qs('exportBtn');
     els.exportModal = qs('exportModal');
@@ -2255,6 +2310,7 @@
     els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
     els.addNameBtn.addEventListener('click', function(){ addNameRow(null, '', els.nameRows.children.length+1); });
     els.fieldSizeInput.addEventListener('input', resizeNameRowsToFieldSize);
+    els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
     els.endBtn.addEventListener('click', function(){
