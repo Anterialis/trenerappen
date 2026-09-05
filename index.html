@@ -130,6 +130,76 @@
     .launcher-tile.lifted{ transform:none; opacity:.85; }
   }
 
+  /* Glass popup shown on tapping the launcher tile: choose new vs. join an
+     existing session. Matches the launcher's own dark/glass language
+     (--navy, blur+saturate), not the white .modal-card system used
+     elsewhere in the app - this is the very first thing a coach sees. */
+  .launcher-choice-overlay{
+    position:absolute; inset:0; z-index:310;
+    display:flex; align-items:center; justify-content:center;
+    padding:28px;
+    opacity:0; pointer-events:none;
+    transition:opacity .3s cubic-bezier(.25,.8,.25,1);
+  }
+  .launcher-choice-overlay.open{ opacity:1; pointer-events:auto; }
+  .launcher-choice-card{
+    position:relative;
+    width:100%; max-width:320px;
+    border-radius:var(--radius-lg);
+    background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.22);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    box-shadow:var(--shadow-md);
+    padding:26px 22px;
+    transform:scale(.94);
+    transition:transform .3s cubic-bezier(.25,.8,.25,1);
+  }
+  .launcher-choice-overlay.open .launcher-choice-card{ transform:scale(1); }
+  .launcher-choice-card.shake{ animation:shake .4s; }
+  .launcher-choice-title{ margin:0 0 4px; color:#fff; font-size:19px; font-weight:700; text-align:center; }
+  .launcher-choice-sub{ margin:0 0 20px; color:rgba(255,255,255,.65); font-size:13px; text-align:center; }
+  .glass-choice-btn{
+    display:block; width:100%; padding:14px; margin-bottom:10px;
+    border:1px solid rgba(255,255,255,.22); border-radius:var(--radius-sm);
+    background:rgba(255,255,255,.08); color:#fff;
+    font-size:15px; font-weight:700; cursor:pointer;
+    transition:transform .12s ease, background .15s ease;
+  }
+  .glass-choice-btn:active{ transform:scale(.97); background:rgba(255,255,255,.16); }
+  .glass-choice-btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
+  .glass-choice-btn.primary:active{ opacity:.85; }
+  .launcher-choice-cancel{
+    display:block; width:100%; margin:4px 0 0; padding:10px;
+    background:none; border:none; color:rgba(255,255,255,.5);
+    font-size:14px; font-weight:600; cursor:pointer;
+  }
+  .launcher-choice-back{
+    position:absolute; top:18px; left:16px;
+    width:30px; height:30px; border-radius:50%; border:none;
+    background:rgba(255,255,255,.10); color:#fff; font-size:19px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .launcher-join-input{
+    width:100%; margin:6px 0 12px; text-align:center;
+    font-size:28px; font-weight:700; letter-spacing:8px;
+    padding:12px; border:1px solid rgba(255,255,255,.25); border-radius:var(--radius-sm);
+    background:rgba(255,255,255,.10); color:#fff;
+  }
+  .launcher-join-input::placeholder{ color:rgba(255,255,255,.35); }
+  .launcher-join-error{ color:#ff8a8a; font-size:13px; text-align:center; margin:0 0 8px; }
+  .launcher-join-enter{
+    display:flex; align-items:center; justify-content:center;
+    width:52px; height:52px; margin:6px auto 0; border-radius:50%; border:none;
+    background:var(--accent); color:var(--accent-ink); font-size:22px; font-weight:800;
+    cursor:pointer;
+  }
+  .launcher-join-enter:active{ transform:scale(.94); }
+  @media (prefers-reduced-motion: reduce){
+    .launcher-choice-overlay{ transition:opacity .3s ease; }
+    .launcher-choice-card{ transition:none; }
+  }
+
   /* ---------- Header ---------- */
   header{
     flex:0 0 auto;
@@ -153,6 +223,7 @@
   }
   .header-actions{ display:flex; align-items:center; gap:16px; }
   .icon-btn{
+    position:relative;
     width:38px; height:38px; border-radius:50%;
     border:none; background:rgba(255,255,255,.12); color:#fff;
     font-size:18px; display:flex; align-items:center; justify-content:center;
@@ -161,6 +232,13 @@
   .icon-btn:active{ background:rgba(255,255,255,.22); }
   .icon-btn:disabled{ opacity:.28; cursor:default; }
   .icon-btn:disabled:active{ background:rgba(255,255,255,.12); }
+  .icon-btn-badge{
+    position:absolute; top:-2px; right:-2px;
+    min-width:16px; height:16px; padding:0 3px; border-radius:50%;
+    background:var(--accent); color:var(--accent-ink);
+    font-size:10px; font-weight:800; line-height:16px; text-align:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+  }
   .end-btn{
     border:1px solid rgba(255,69,58,.45);
     background:rgba(255,69,58,.18); color:#ff6259;
@@ -690,10 +768,13 @@
   .modal-actions-col button{ flex:none; }
   .stack-btn{
     width:100%; padding:14px; border-radius:var(--radius-sm); border:none;
+    background:#f0f1f3; color:var(--ink);
     font-size:15px; font-weight:700; cursor:pointer;
     transition:transform .12s ease;
   }
   .stack-btn:active{ transform:scale(.97); }
+  .stack-btn:disabled{ opacity:.4; cursor:default; }
+  .stack-btn:disabled:active{ transform:none; }
   .stack-btn.period{ background:rgba(10,132,255,.14); color:var(--period-blue); }
   .stack-btn.danger{ background:rgba(230,57,70,.12); color:var(--danger); transition:background .15s ease, color .15s ease; }
   .stack-btn.danger.armed{ background:var(--danger); color:#fff; }
@@ -735,6 +816,23 @@
   }
   .sync-dot.offline{ background:#ff9500; }
   .session-code-bar.offline{ color:rgba(255,197,138,.9); }
+
+  .auto-pause-notice{
+    position:absolute; left:50%; top:calc(env(safe-area-inset-top) + 10px);
+    transform:translate(-50%,-140%);
+    z-index:400;
+    max-width:86%;
+    background:rgba(15,31,54,.82);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    color:#fff; font-size:13px; font-weight:600; text-align:center;
+    padding:10px 16px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 8px 22px rgba(0,0,0,.3);
+    opacity:0; pointer-events:none;
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .auto-pause-notice.show{ opacity:1; transform:translate(-50%,0); }
 
   /* Read-only participant in a shared session: the controls that would
      mutate shared state are visibly inert, not just functionally blocked. */
@@ -787,9 +885,31 @@
       </div>
     </div>
     <p class="launcher-credit">utviklet av André Nanbjør</p>
+
+    <div id="launcherChoiceOverlay" class="launcher-choice-overlay">
+      <div class="launcher-choice-card" id="launcherChoiceCard">
+        <div class="launcher-choice-panel" id="launcherChoicePanelChoice">
+          <p class="launcher-choice-title">Trenerappen</p>
+          <p class="launcher-choice-sub">Hvordan vil du starte?</p>
+          <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
+          <button type="button" id="joinSessionChoiceBtn" class="glass-choice-btn">Delta i eksisterende økt</button>
+          <button type="button" id="launcherChoiceCancelBtn" class="launcher-choice-cancel">Avbryt</button>
+        </div>
+        <div class="launcher-choice-panel" id="launcherChoicePanelJoin" hidden>
+          <button type="button" id="launcherChoiceBackBtn" class="launcher-choice-back" aria-label="Tilbake">‹</button>
+          <p class="launcher-choice-title">Bli med i økt</p>
+          <p class="launcher-choice-sub">Skriv inn den tresifrede koden</p>
+          <div class="field-invalid-wrap" id="launcherJoinInputWrap">
+            <input type="text" id="launcherJoinInput" inputmode="numeric" maxlength="3" class="launcher-join-input" placeholder="000">
+          </div>
+          <p id="launcherJoinError" class="launcher-join-error" hidden>Fant ingen økt med den koden.</p>
+          <button type="button" id="launcherJoinEnterBtn" class="launcher-join-enter" aria-label="Bli med">→</button>
+        </div>
+      </div>
+    </div>
   </div>
   <header>
-    <button id="undoBtn" class="icon-btn" aria-label="Angre siste bytte" disabled>↩</button>
+    <button id="undoBtn" class="icon-btn" aria-label="Angre, gjør om eller gå tilbake til hovedmeny">↩<span id="undoCountBadge" class="icon-btn-badge" hidden>0</span></button>
     <div class="header-actions">
       <button id="playPauseBtn" aria-label="Start">
         <span class="pp-icon">▶</span><span class="pp-text">Start</span>
@@ -800,6 +920,8 @@
   </header>
 
   <div id="sessionCodeBar" class="session-code-bar" style="display:none;">Delt økt: <span id="sessionCodeText"></span><span id="syncDot" class="sync-dot" title="Synkronisert"></span></div>
+
+  <div id="autoPauseNotice" class="auto-pause-notice">Kampklokka ble satt på pause – appen var inaktiv en stund.</div>
 
   <div id="main">
     <div id="field-wrap">
@@ -903,6 +1025,17 @@
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
     </div>
     <div class="app-version" id="appVersionLabel"></div>
+  </div>
+</div>
+
+<div id="backActionModal" class="modal">
+  <div class="modal-card">
+    <div class="modal-actions modal-actions-col">
+      <button type="button" id="undoActionBtn" class="stack-btn">Angre bytte</button>
+      <button type="button" id="redoActionBtn" class="stack-btn">Endre tilbake</button>
+      <button type="button" id="backToMenuActionBtn" class="stack-btn period">Gå tilbake til hovedmeny</button>
+      <button type="button" id="backActionCancelBtn" class="stack-btn secondary">Avbryt</button>
+    </div>
   </div>
 </div>
 
@@ -1078,11 +1211,13 @@
 
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
+  var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
+  var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
 
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.4.3';
+  var APP_VERSION = '1.5';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1129,7 +1264,10 @@
   var roster = []; // remembered player names, alphabetical
   /** @type {AppState[]} */
   var undoStack = []; // snapshots, oldest first; capped at UNDO_MAX
+  /** @type {AppState[]} */
+  var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
+  var launcherEnteredOnce = false; // true once the app has actually been entered this page-load, so the tile skips the new/join choice on repeat visits
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
   var multiMode = false; // bulk "send several bench players to field" mode
@@ -1625,25 +1763,58 @@
   // Call BEFORE mutating state for any undoable action - pushes the
   // pre-mutation snapshot onto the undo stack, capped at UNDO_MAX so
   // undoLastAction() can be pressed repeatedly to step back that many moves.
+  // A genuine new action invalidates any pending redo (standard undo/redo
+  // semantics), so this also clears redoStack.
   function pushUndoSnapshot(){
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
+    redoStack = [];
     updateUndoUI();
   }
 
+  // Drives the back-button's badge (how many steps currently stepped back
+  // from live state) - the button itself always opens the action sheet now,
+  // so it's never disabled here; the sheet's own Undo/Redo items reflect
+  // whether their stack has anything in it.
   function updateUndoUI(){
-    els.undoBtn.disabled = undoStack.length === 0;
+    if (!els.undoCountBadge) return;
+    var n = redoStack.length;
+    els.undoCountBadge.textContent = String(n);
+    els.undoCountBadge.hidden = n === 0;
   }
 
   function undoLastAction(){
     if (!canEdit()) return;
     var snap = undoStack.pop();
     if (!snap) return;
+    redoStack.push(snapshotState());
+    if (redoStack.length > UNDO_MAX) redoStack.shift();
     restoreState(snap);
     selected = null;
     saveState();
     updateUndoUI();
     renderAll();
+  }
+
+  function redoLastAction(){
+    if (!canEdit()) return;
+    var snap = redoStack.pop();
+    if (!snap) return;
+    undoStack.push(snapshotState());
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+    restoreState(snap);
+    selected = null;
+    saveState();
+    updateUndoUI();
+    renderAll();
+  }
+
+  // Re-shows the launcher screen over the still-live app - no state/timer
+  // changes, since clocks are timestamp-based (sinceTs/baseElapsedMs) and
+  // keep advancing correctly regardless of what's on screen.
+  function showLauncherMenu(){
+    els.launcherTile.classList.remove('lifted');
+    els.launcherScreen.classList.remove('hidden');
   }
 
   /** @param {string} id @returns {Player|null} */
@@ -2258,23 +2429,34 @@
 
   /* ---------------- Play / Pause ---------------- */
 
+  // Advances every fieldTimers/benchTimers/matchClock entry up to ts and
+  // re-anchors sinceTs there, without touching globalRunning - the shared
+  // "freeze the running clocks at a specific instant" step used both by
+  // the manual pause (togglePlayPause, at Date.now()) and by
+  // checkIdleAutoPause (at the last-known-alive timestamp, so a long gap
+  // isn't silently credited as playtime).
+  /** @param {number} ts */
+  function freezeTimersAt(ts){
+    Object.keys(state.fieldTimers).forEach(function(id){
+      var t = state.fieldTimers[id];
+      t.baseElapsedMs = t.baseElapsedMs + (ts - t.sinceTs);
+      t.sinceTs = ts;
+    });
+    Object.keys(state.benchTimers).forEach(function(id){
+      var t = state.benchTimers[id];
+      t.baseElapsedMs = t.baseElapsedMs + (ts - t.sinceTs);
+      t.sinceTs = ts;
+    });
+    state.matchClock.baseElapsedMs += (ts - state.matchClock.sinceTs);
+    state.matchClock.sinceTs = ts;
+  }
+
   function togglePlayPause(){
     if (!canEdit()) return;
     ensureAudioUnlocked();
     var now = Date.now();
     if (state.globalRunning){
-      Object.keys(state.fieldTimers).forEach(function(id){
-        var t = state.fieldTimers[id];
-        t.baseElapsedMs = t.baseElapsedMs + (now - t.sinceTs);
-        t.sinceTs = now;
-      });
-      Object.keys(state.benchTimers).forEach(function(id){
-        var t = state.benchTimers[id];
-        t.baseElapsedMs = t.baseElapsedMs + (now - t.sinceTs);
-        t.sinceTs = now;
-      });
-      state.matchClock.baseElapsedMs += (now - state.matchClock.sinceTs);
-      state.matchClock.sinceTs = now;
+      freezeTimersAt(now);
       state.globalRunning = false;
     } else {
       Object.keys(state.fieldTimers).forEach(function(id){
@@ -2289,6 +2471,37 @@
     saveState();
     updatePlayPauseUI();
     updateTimersOnly();
+  }
+
+  // Timestamp-based clocks (sinceTs/baseElapsedMs) would otherwise silently
+  // credit a long background/idle gap as playtime once the app is reopened.
+  // A plain (unsynced) heartbeat is stamped to localStorage every 8s
+  // (see finishStartup's saveState interval) while the app is alive; if the
+  // gap since that heartbeat exceeds IDLE_AUTO_PAUSE_MS, freeze the running
+  // clocks at the last known-good instant instead of "now" and pause, with
+  // a brief on-screen explanation so the sudden stop isn't a mystery.
+  function checkIdleAutoPause(){
+    if (!state.globalRunning) return;
+    var last = Number(localStorage.getItem(LAST_ALIVE_KEY)) || Date.now();
+    var gap = Date.now() - last;
+    if (gap > IDLE_AUTO_PAUSE_MS){
+      freezeTimersAt(last);
+      state.globalRunning = false;
+      saveState();
+      updatePlayPauseUI();
+      updateTimersOnly();
+      showAutoPauseNotice();
+    }
+  }
+
+  var autoPauseNoticeTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+  function showAutoPauseNotice(){
+    if (!els.autoPauseNotice) return;
+    els.autoPauseNotice.classList.add('show');
+    clearTimeout(autoPauseNoticeTimer);
+    autoPauseNoticeTimer = setTimeout(function(){
+      els.autoPauseNotice.classList.remove('show');
+    }, 4000);
   }
 
   /* ---------------- Settings modal ---------------- */
@@ -2696,6 +2909,7 @@
     state.periodStartCumulative = cloneStateValue(state.cumulative);
     selected = null;
     undoStack = [];
+    redoStack = [];
     multiMode = false;
     multiSelected = [];
     saveState();
@@ -2725,6 +2939,7 @@
   function resetMatch(){
     selected = null;
     undoStack = [];
+    redoStack = [];
     timeUpNotified = {};
     multiMode = false;
     multiSelected = [];
@@ -2759,6 +2974,12 @@
     els.playPauseIcon = els.playPauseBtn.querySelector('.pp-icon');
     els.playPauseText = els.playPauseBtn.querySelector('.pp-text');
     els.undoBtn = qs('undoBtn');
+    els.undoCountBadge = qs('undoCountBadge');
+    els.backActionModal = qs('backActionModal');
+    els.undoActionBtn = qs('undoActionBtn');
+    els.redoActionBtn = qs('redoActionBtn');
+    els.backToMenuActionBtn = qs('backToMenuActionBtn');
+    els.backActionCancelBtn = qs('backActionCancelBtn');
     els.endBtn = qs('endBtn');
     els.selectionInfo = qs('selectionInfo');
     els.pitchLines = qs('pitchLines');
@@ -2766,6 +2987,18 @@
     els.appEl = qs('app');
     els.launcherScreen = qs('launcherScreen');
     els.launcherTile = qs('launcherTile');
+    els.launcherChoiceOverlay = qs('launcherChoiceOverlay');
+    els.launcherChoiceCard = qs('launcherChoiceCard');
+    els.launcherChoicePanelChoice = qs('launcherChoicePanelChoice');
+    els.launcherChoicePanelJoin = qs('launcherChoicePanelJoin');
+    els.newSessionChoiceBtn = qs('newSessionChoiceBtn');
+    els.joinSessionChoiceBtn = qs('joinSessionChoiceBtn');
+    els.launcherChoiceCancelBtn = qs('launcherChoiceCancelBtn');
+    els.launcherChoiceBackBtn = qs('launcherChoiceBackBtn');
+    els.launcherJoinInputWrap = qs('launcherJoinInputWrap');
+    els.launcherJoinInput = qs('launcherJoinInput');
+    els.launcherJoinError = qs('launcherJoinError');
+    els.launcherJoinEnterBtn = qs('launcherJoinEnterBtn');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
@@ -2808,6 +3041,7 @@
     els.durationPickerValue = qs('durationPickerValue');
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
+    els.autoPauseNotice = qs('autoPauseNotice');
     els.shareSessionToggle = qs('shareSessionToggle');
     els.shareModeRow = qs('shareModeRow');
     els.shareModeSegmented = qs('shareModeSegmented');
@@ -2843,7 +3077,26 @@
     roster = loadRoster();
 
     els.playPauseBtn.addEventListener('click', togglePlayPause);
-    els.undoBtn.addEventListener('click', undoLastAction);
+    els.undoBtn.addEventListener('click', function(){
+      els.undoActionBtn.disabled = undoStack.length === 0;
+      els.redoActionBtn.disabled = redoStack.length === 0;
+      els.backActionModal.classList.add('open');
+    });
+    els.undoActionBtn.addEventListener('click', function(){
+      els.backActionModal.classList.remove('open');
+      undoLastAction();
+    });
+    els.redoActionBtn.addEventListener('click', function(){
+      els.backActionModal.classList.remove('open');
+      redoLastAction();
+    });
+    els.backToMenuActionBtn.addEventListener('click', function(){
+      els.backActionModal.classList.remove('open');
+      showLauncherMenu();
+    });
+    els.backActionCancelBtn.addEventListener('click', function(){
+      els.backActionModal.classList.remove('open');
+    });
     els.settingsBtn.addEventListener('click', function(){ if (canEdit()) openSettings(false); });
     els.addNameBtn.addEventListener('click', function(){ addNameRow(null, '', els.nameRows.children.length+1); });
     els.fieldSizeInput.addEventListener('input', resizeNameRowsToFieldSize);
@@ -3003,12 +3256,77 @@
     // and silently never beep on time-up.
     document.addEventListener('pointerdown', ensureAudioUnlocked, { once: true });
 
-    els.launcherTile.addEventListener('click', function(){
+    function enterAppFromLauncher(){
+      closeLauncherChoice();
+      launcherEnteredOnce = true;
       els.launcherTile.classList.add('lifted');
       setTimeout(function(){
         els.launcherScreen.classList.add('hidden');
       }, 500);
+    }
+
+    function showLauncherChoicePanel(){
+      els.launcherChoicePanelChoice.hidden = false;
+      els.launcherChoicePanelJoin.hidden = true;
+    }
+
+    function showLauncherJoinPanel(){
+      els.launcherChoicePanelChoice.hidden = true;
+      els.launcherChoicePanelJoin.hidden = false;
+      els.launcherJoinInput.value = '';
+      els.launcherJoinError.hidden = true;
+      clearFieldInvalid(els.launcherJoinInputWrap);
+      setTimeout(function(){ els.launcherJoinInput.focus(); }, 50);
+    }
+
+    function openLauncherChoice(){
+      showLauncherChoicePanel();
+      els.launcherChoiceOverlay.classList.add('open');
+    }
+
+    function closeLauncherChoice(){
+      els.launcherChoiceOverlay.classList.remove('open');
+    }
+
+    function submitLauncherJoin(){
+      var code = els.launcherJoinInput.value.trim();
+      if (!/^[0-9]{3}$/.test(code)){
+        els.launcherJoinError.textContent = 'Skriv inn en gyldig tresifret kode.';
+        els.launcherJoinError.hidden = false;
+        markFieldInvalid(els.launcherJoinInputWrap);
+        shakeElement(els.launcherChoiceCard);
+        return;
+      }
+      joinSession(code, function(){
+        enterAppFromLauncher();
+        if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
+      }, function(){
+        els.launcherJoinError.textContent = 'Fant ingen økt med den koden.';
+        els.launcherJoinError.hidden = false;
+        markFieldInvalid(els.launcherJoinInputWrap);
+        shakeElement(els.launcherChoiceCard);
+      });
+    }
+
+    // Tapping the tile only offers the New/Join choice the first time the
+    // app is entered this page-load - once inside, "back to menu" from the
+    // action sheet just needs to re-play the same reveal, not re-ask.
+    els.launcherTile.addEventListener('click', function(){
+      if (launcherEnteredOnce){ enterAppFromLauncher(); return; }
+      openLauncherChoice();
     });
+    els.newSessionChoiceBtn.addEventListener('click', enterAppFromLauncher);
+    els.joinSessionChoiceBtn.addEventListener('click', showLauncherJoinPanel);
+    els.launcherChoiceCancelBtn.addEventListener('click', closeLauncherChoice);
+    els.launcherChoiceBackBtn.addEventListener('click', showLauncherChoicePanel);
+    els.launcherJoinInput.addEventListener('input', function(){
+      els.launcherJoinError.hidden = true;
+      clearFieldInvalid(els.launcherJoinInputWrap);
+    });
+    els.launcherJoinInput.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') submitLauncherJoin();
+    });
+    els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
 
     updateFrameFit();
     renderPitchMarkings();
@@ -3021,13 +3339,21 @@
 
     try { sessionCode = localStorage.getItem(SESSION_CODE_KEY); } catch(e){ sessionCode = null; }
 
+    function stampLastAlive(){
+      try { localStorage.setItem(LAST_ALIVE_KEY, String(Date.now())); } catch(e){}
+    }
+
     function finishStartup(){
+      checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
+      stampLastAlive();
       setInterval(updateTimersOnly, 250);
-      setInterval(saveState, 8000);
+      setInterval(function(){ saveState(); stampLastAlive(); }, 8000);
       document.addEventListener('visibilitychange', function(){
         if (document.hidden){
           saveState();
         } else {
+          checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
+          stampLastAlive();
           updateTimersOnly();
           requestWakeLock();
         }
