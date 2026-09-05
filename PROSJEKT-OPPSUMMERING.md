@@ -50,7 +50,7 @@ respektere om dere fortsetter å bygge videre:
   players: [{id, name}],           // hele stallen
   onField: [id, id, ...],          // ordnet array, rekkefølge har ingen visuell betydning lenger
   onBench: [id, id, ...],
-  fieldTimers: { [id]: {baseRemainingMs, sinceTs} },   // nedtelling for utespillere
+  fieldTimers: { [id]: {baseElapsedMs, sinceTs} },     // stoppeklokke for utespillere (teller oppover)
   benchTimers: { [id]: {baseElapsedMs, sinceTs} },     // stoppeklokke for benkespillere
   cumulative:  { [id]: {fieldMs, benchMs} },           // livstids-total, tvers av bytter og "Kampslutt"
   matchClock:  { baseElapsedMs, sinceTs },             // overordnet kampklokke
@@ -61,12 +61,13 @@ respektere om dere fortsetter å bygge videre:
 }
 ```
 
-Persisteres i `localStorage` under nøkkelen `spillerbytte_v3`. Nøkkelen er
-versjonert — den er bumpet manuelt tre ganger tidligere når datastrukturen endret
+Persisteres i `localStorage` under nøkkelen `spillerbytte_v4`. Nøkkelen er
+versjonert — den er bumpet manuelt fire ganger tidligere når datastrukturen endret
 seg på en måte som ikke var bakoverkompatibel (f.eks. da `onField` gikk fra objekt
-med koordinater til et rent array). **Viktig regel å videreføre:** enhver endring
-som endrer formen på `state` bør bumpe `STORAGE_KEY`, ellers kan gamle lagrede
-tilstander krasje appen ved oppstart.
+med koordinater til et rent array, og senest da `fieldTimers` gikk fra nedtelling
+til stoppeklokke). **Viktig regel å videreføre:** enhver endring som endrer formen
+på `state` bør bumpe `STORAGE_KEY`, ellers kan gamle lagrede tilstander krasje
+appen ved oppstart.
 
 To andre localStorage-nøkler ved siden av:
 - `spillerbytte_roster_v1` — historikk over alle navn noensinne brukt (for
@@ -85,8 +86,9 @@ To andre localStorage-nøkler ved siden av:
 - Dra-og-slipp spillere mellom bane/benk.
 - Trykk-trykk-bytte: marker én spiller, trykk en i motsatt sone, de bytter og
   tidene resettes.
-- Nedtelling på utespillere (rødt utropstegn + lyd + valgfri skjelving når tiden
-  er ute), stoppeklokke på benkespillere.
+- Stoppeklokke på både ute- og benkespillere (teller alltid oppover fra 0, aldri
+  nedtelling). Utespillere: rødt utropstegn + lyd + rød skrift på klokka når
+  standard byttetid er nådd — klokka fortsetter å telle etter det, ikke stopp.
 - Global Play/Pause som fryser/gjenopptar *alle* klokker samtidig (inkl.
   kampklokke).
 - Utespillere sortert automatisk: lengst til høyre = spilt lengst (klar for
@@ -119,8 +121,13 @@ To andre localStorage-nøkler ved siden av:
 - Systematisk fuzz-testet bytte-/dra-logikk (Node-simuleringer under utvikling)
   for å luke ut duplisering/data-tap.
 
-**Deling mellom enheter (NYTT — se egen seksjon under)**
-- "Ny økt" / "Bli med i eksisterende økt" med tresifret kode, sanntidssynk via
+**Deling mellom enheter (se egen seksjon under)**
+- Ingen valg ved oppstart lenger — appen går alltid rett til navneregistrering
+  (lokal, ikke delt, som standard). Deling styres av en av/på-bryter ("Del økt
+  med andre") i innstillinger: PÅ oppretter en ny delt økt (tresifret kode vises
+  under headeren), AV forlater økten lokalt (raden slettes ikke server-side).
+  En egen knapp i innstillinger ("🔗 Bli med i delt økt") lar deg i stedet koble
+  til en økt noen andre allerede har startet, via koden deres. Sanntidssynk via
   Supabase.
 
 **Utseende**
