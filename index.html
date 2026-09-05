@@ -89,6 +89,47 @@
     border-radius:0; border:none; box-shadow:none;
   }
 
+  /* ---------- Launcher (the very first screen) ---------- */
+  .launcher-screen{
+    position:absolute; inset:0; z-index:300;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
+    padding:28px 26px;
+    transition:opacity .3s ease;
+  }
+  .launcher-screen.hidden{ opacity:0; pointer-events:none; }
+  .launcher-tile{
+    width:100%; max-width:320px;
+    border-radius:26px; overflow:hidden;
+    background:rgba(255,255,255,.09);
+    border:1px solid rgba(255,255,255,.20);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    backdrop-filter:blur(20px) saturate(160%);
+    box-shadow:0 10px 26px rgba(0,0,0,.4);
+    cursor:pointer;
+    transition:transform .5s cubic-bezier(.22,1,.36,1), box-shadow .5s cubic-bezier(.22,1,.36,1);
+  }
+  .launcher-tile.lifted{
+    transform:translateY(-12px) scale(1.045);
+    box-shadow:0 34px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.35) inset;
+  }
+  .launcher-tile-art{
+    width:100%; aspect-ratio:10/7;
+    background:repeating-linear-gradient(180deg, var(--green-1) 0 22px, var(--green-2) 22px 44px);
+  }
+  .launcher-tile-art svg{ width:100%; height:100%; display:block; }
+  .launcher-tile-body{ padding:18px 20px 20px; }
+  .launcher-tile-title{ margin:0 0 5px; font-size:16px; font-weight:700; color:#fff; }
+  .launcher-tile-sub{ margin:0; font-size:13px; line-height:1.45; color:rgba(255,255,255,.72); }
+  .launcher-credit{
+    margin-top:26px; font-size:12px; font-weight:500; font-style:italic;
+    letter-spacing:.03em; color:rgba(255,255,255,.36);
+  }
+  @media (prefers-reduced-motion: reduce){
+    .launcher-tile{ transition:opacity .3s ease; }
+    .launcher-tile.lifted{ transform:none; opacity:.85; }
+  }
+
   /* ---------- Header ---------- */
   header{
     flex:0 0 auto;
@@ -100,6 +141,15 @@
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     border-bottom:1px solid rgba(255,255,255,.08);
     color:#fff;
+  }
+  /* Rotated phone: the back button and the start/avslutt/settings group
+     sit right at the screen's rounded outer corners otherwise - nudge both
+     inward from the safe area. Portrait is untouched. */
+  @media (orientation: landscape){
+    header{
+      padding-left: calc(14px + env(safe-area-inset-left) + 14px);
+      padding-right: calc(14px + env(safe-area-inset-right) + 14px);
+    }
   }
   .header-actions{ display:flex; align-items:center; gap:16px; }
   .icon-btn{
@@ -138,8 +188,8 @@
   .pitch-lines{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .match-clock-wrap{
     position:absolute; top:10px; left:50%; transform:translateX(-50%);
-    display:flex; flex-direction:column; align-items:center; gap:4px;
-    z-index:5; pointer-events:none;
+    display:flex; flex-direction:row; align-items:center; gap:7px;
+    z-index:5;
   }
   #matchClock{
     background:linear-gradient(180deg,#222,#000);
@@ -151,25 +201,32 @@
     font-variant-numeric:tabular-nums; letter-spacing:3px;
     text-shadow:0 0 6px rgba(255,255,255,.6), 0 0 16px rgba(255,255,255,.3);
     box-shadow:0 8px 20px rgba(0,0,0,.65), inset 0 0 10px rgba(0,0,0,.6);
+    cursor:pointer;
   }
-  /* Small countdown-to-zero readout under the main (count-up) match clock -
-     same kampvarighet the coach set in settings, ticking down alongside it. */
+  #matchClock:active{ transform:scale(.97); }
+  /* Overtime badge beside the main clock - hidden until kampvarighet is
+     actually exceeded, since the main clock itself freezes at that point
+     (see updateTimersOnly) rather than counting past it. */
   #matchCountdown{
-    background:rgba(0,0,0,.45);
+    display:none;
+    background:rgba(0,0,0,.5);
+    border:1px solid rgba(255,159,10,.4);
     border-radius:6px;
-    padding:2px 10px;
+    padding:3px 9px;
     font-family:'SF Mono','Courier New',ui-monospace,monospace;
-    font-size:13px; font-weight:600; color:rgba(244,244,242,.8);
-    font-variant-numeric:tabular-nums; letter-spacing:1.5px;
+    font-size:14px; font-weight:700; color:var(--orange);
+    font-variant-numeric:tabular-nums; letter-spacing:1px;
     text-shadow:0 1px 3px rgba(0,0,0,.6);
+    pointer-events:none;
   }
+  #matchCountdown.visible{ display:block; }
   #field{
     position:relative;
     height:100%;
     display:flex; flex-wrap:wrap; align-content:center; justify-content:center;
     align-items:center;
     gap:24px 18px;
-    padding:22px 16px 16px;
+    padding:22px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
     overflow-y:auto;
   }
 
@@ -198,11 +255,11 @@
   }
   .bench-label-row{
     display:flex; align-items:center; justify-content:space-between;
-    padding:10px 16px 2px;
+    padding:10px calc(16px + env(safe-area-inset-right)) 2px calc(16px + env(safe-area-inset-left));
   }
   .bench-label{
-    font-size:12px; font-weight:700; text-transform:none;
-    color:var(--ink-soft);
+    font-size:17px; font-weight:800; letter-spacing:-.01em;
+    color:var(--ink);
   }
   .multi-select-btn{
     border:none; background:none; color:var(--ink-soft);
@@ -217,7 +274,7 @@
     flex:1; min-height:0; overflow-y:auto;
     display:flex; flex-wrap:wrap; align-content:flex-start;
     gap:14px;
-    padding:8px 16px calc(env(safe-area-inset-bottom) + 14px);
+    padding:8px calc(16px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 14px) calc(16px + env(safe-area-inset-left));
   }
 
   /* ---------- Play/Pause pill ---------- */
@@ -299,6 +356,21 @@
     z-index:15;
     max-width:85%;
   }
+  #multiSwapWarning{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:rgba(230,57,70,.92); color:#fff;
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    border:1px solid rgba(255,255,255,.2);
+    padding:12px 20px; border-radius:16px;
+    font-size:13px; font-weight:700; text-align:center; line-height:1.4;
+    box-shadow:var(--shadow-md);
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease;
+    z-index:20;
+    max-width:78%;
+  }
+  #multiSwapWarning.visible{ opacity:1; }
   #selectionInfo.visible{ opacity:1; }
   #selectionInfo .si-name{
     font-size:13px; font-weight:700;
@@ -362,6 +434,9 @@
     display:flex; align-items:center; justify-content:center;
     box-shadow:0 1px 3px rgba(0,0,0,.35);
   }
+  /* Field tokens can carry both the check (multi-select) and the warning
+     (time-up) badge at once - bottom-right keeps them from overlapping. */
+  .field-token .badge-check{ top:auto; bottom:-6px; right:-6px; }
 
   .drag-source-hidden{ opacity:.22; pointer-events:none; }
   .ghost-token{
@@ -434,6 +509,19 @@
   #nameRows{ display:flex; flex-direction:column; gap:8px; }
   .name-row{ display:flex; gap:8px; align-items:center; }
   .name-input-wrap{ position:relative; flex:1; }
+  /* Small red "!" attached to any field that's blocking progress (e.g. a
+     required name field left empty, an invalid join code) - pairs with the
+     .shake on the surrounding modal-card, see markFieldInvalid/shakeElement. */
+  .field-invalid-wrap{ position:relative; }
+  .field-invalid-badge{
+    position:absolute; top:-7px; right:-7px;
+    width:18px; height:18px; border-radius:50%;
+    background:var(--danger); color:#fff;
+    font-size:12px; font-weight:800; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+    pointer-events:none;
+  }
   .name-row input[type=text]{
     width:100%; border:1px solid #dde1e6; border-radius:var(--radius-sm);
     padding:10px 12px; font-size:15px; background:#fafbfc;
@@ -457,6 +545,17 @@
     width:34px; height:34px; border-radius:50%; border:none;
     background:#f0f1f3; color:var(--ink-soft); font-size:16px; cursor:pointer;
   }
+  /* A player currently on the field can't be renamed/removed from settings
+     - the input is disabled (grayed) and there's a lock note instead of the
+     remove button. Only innbyttere stay editable. */
+  .name-row.locked .name-input-wrap input{
+    background:#eceef0; color:var(--ink-soft); cursor:not-allowed;
+  }
+  .locked-row-note{
+    width:34px; height:34px; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; opacity:.55;
+  }
   #addNameBtn{
     margin-top:10px; border:1px dashed #c7cdd6; background:none;
     color:var(--ink-soft); border-radius:var(--radius-sm);
@@ -478,6 +577,17 @@
   }
   .settings-row-label{ font-size:14px; font-weight:600; color:var(--ink); }
   .settings-row-label-wrap{ display:flex; align-items:center; gap:6px; }
+  .share-mode-row{ margin-top:12px; }
+  .share-mode-row[hidden]{ display:none; }
+  .segmented{
+    display:flex; background:#eef0f2; border-radius:100px; padding:3px; gap:2px;
+  }
+  .segmented-btn{
+    border:none; background:none; padding:6px 12px; border-radius:100px;
+    font-size:12px; font-weight:700; color:var(--ink-soft); cursor:pointer;
+    transition:background .15s ease, color .15s ease;
+  }
+  .segmented-btn.active{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
   .info-label-row{ display:flex; align-items:center; gap:6px; }
   .info-btn{
     width:16px; height:16px; border-radius:50%; flex:0 0 auto;
@@ -499,6 +609,24 @@
   }
   .info-popup-close:active{ background:#e2e4e8; }
   #infoPopupText{ margin:0; }
+  .duration-picker-card{ text-align:center; }
+  .duration-picker-wheel{
+    margin:22px 0 4px; padding:26px 0;
+    border-radius:20px;
+    background:linear-gradient(180deg, rgba(15,31,54,.045), rgba(15,31,54,.09));
+    touch-action:none; -webkit-user-select:none; user-select:none;
+    cursor:grab;
+  }
+  .duration-picker-wheel:active{ cursor:grabbing; }
+  .duration-picker-value{
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:60px; font-weight:700; color:var(--navy);
+    font-variant-numeric:tabular-nums;
+  }
+  .duration-picker-unit{
+    margin-top:2px; font-size:12px; font-weight:700; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.08em;
+  }
   .toggle{ position:relative; display:inline-block; width:48px; height:28px; flex:0 0 auto; }
   .toggle input{ opacity:0; width:0; height:0; position:absolute; }
   .toggle-slider{
@@ -611,6 +739,17 @@
   .sync-dot.offline{ background:#ff9500; }
   .session-code-bar.offline{ color:rgba(255,197,138,.9); }
 
+  /* Read-only participant in a shared session: the controls that would
+     mutate shared state are visibly inert, not just functionally blocked. */
+  .view-only #playPauseBtn,
+  .view-only #undoBtn,
+  .view-only #endBtn,
+  .view-only #settingsBtn,
+  .view-only #multiSelectBtn{
+    opacity:.35; pointer-events:none;
+  }
+  .view-only .token{ pointer-events:none; }
+
   .join-code-input{
     width:100%; margin:12px 0; text-align:center;
     font-size:28px; font-weight:700; letter-spacing:8px;
@@ -633,6 +772,25 @@
 <body>
 <div id="viewport-frame">
 <div id="app">
+  <div id="launcherScreen" class="launcher-screen">
+    <div class="launcher-tile" id="launcherTile">
+      <div class="launcher-tile-art">
+        <svg viewBox="0 0 100 72" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="92" height="64" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+          <line x1="50" y1="4" x2="50" y2="68" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+          <circle cx="50" cy="36" r="14" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+          <circle cx="50" cy="36" r="1.6" fill="rgba(255,255,255,.55)"/>
+          <rect x="4" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+          <rect x="80" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+        </svg>
+      </div>
+      <div class="launcher-tile-body">
+        <p class="launcher-tile-title">Trenerappen</p>
+        <p class="launcher-tile-sub">Spill kamp, få oversikt over innbyttere og spilletid</p>
+      </div>
+    </div>
+    <p class="launcher-credit">utviklet av André Nanbjør</p>
+  </div>
   <header>
     <button id="undoBtn" class="icon-btn" aria-label="Angre siste bytte" disabled>↩</button>
     <div class="header-actions">
@@ -655,11 +813,12 @@
       </div>
       <div id="field"></div>
       <div id="selectionInfo"></div>
+      <div id="multiSwapWarning"></div>
     </div>
 
     <div id="bench-wrap">
       <div class="bench-label-row">
-        <div class="bench-label">Benken</div>
+        <div class="bench-label">Innbytterbenken</div>
         <button type="button" id="multiSelectBtn" class="multi-select-btn">Velg flere</button>
       </div>
       <div id="bench"></div>
@@ -719,10 +878,18 @@
       </label>
     </div>
 
+    <div class="settings-row share-mode-row" id="shareModeRow" hidden>
+      <span class="settings-row-label">Tilgang for andre</span>
+      <div class="segmented" id="shareModeSegmented">
+        <button type="button" class="segmented-btn" data-mode="edit">Redigering</button>
+        <button type="button" class="segmented-btn" data-mode="read">Kun les</button>
+      </div>
+    </div>
+
     <div class="settings-row">
       <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Kumulert rangering</span>
-        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert rangering">i</button>
+        <span class="settings-row-label">Kumulert tidsberegning</span>
+        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert tidsberegning">i</button>
       </span>
       <label class="toggle">
         <input type="checkbox" id="rankByCumulativeToggle">
@@ -806,11 +973,25 @@
   </div>
 </div>
 
+<div id="matchDurationPickerModal" class="modal">
+  <div class="modal-card info-popup-card duration-picker-card">
+    <button type="button" id="durationPickerCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Kampvarighet</h2>
+    <p class="sub">Dra tallet opp eller ned for å endre. Rask sveip spinner videre.</p>
+    <div class="duration-picker-wheel" id="durationPickerWheel">
+      <div class="duration-picker-value" id="durationPickerValue">20</div>
+      <div class="duration-picker-unit">minutter</div>
+    </div>
+  </div>
+</div>
+
 <div id="joinCodeModal" class="modal">
   <div class="modal-card">
     <h2>Bli med i økt</h2>
     <p class="sub">Skriv inn den tresifrede koden du har fått.</p>
-    <input type="text" id="joinCodeInput" inputmode="numeric" maxlength="3" class="join-code-input" placeholder="000">
+    <div class="field-invalid-wrap" id="joinCodeInputWrap">
+      <input type="text" id="joinCodeInput" inputmode="numeric" maxlength="3" class="join-code-input" placeholder="000">
+    </div>
     <p id="joinCodeError" class="join-code-error" style="display:none;">Fant ingen økt med den koden.</p>
     <div class="modal-actions">
       <button type="button" id="joinCodeCancelBtn" class="secondary">Avbryt</button>
@@ -867,6 +1048,8 @@
    * @property {number} defaultDurationMs
    * @property {number} matchDurationMs
    * @property {boolean} rankByCumulative
+   * @property {boolean} shareEditable
+   * @property {string|null} sessionOwnerDeviceId
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -881,6 +1064,16 @@
     : null;
   var SESSION_CODE_KEY = 'spillerbytte_session_code_v1';
   var deviceOrigin = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  // Stable per-device id (survives reloads, unlike deviceOrigin above which
+  // is fresh every page load) - used to recognize "this device created the
+  // session" for the read-only sharing mode, so the owner keeps edit rights
+  // even after e.g. checkForUpdate's auto-reload.
+  var DEVICE_ID_KEY = 'spillerbytte_device_id_v1';
+  var deviceId = '';
+  try {
+    deviceId = localStorage.getItem(DEVICE_ID_KEY) || '';
+    if (!deviceId){ deviceId = uid(); localStorage.setItem(DEVICE_ID_KEY, deviceId); }
+  } catch(e){ deviceId = uid(); }
   /** @type {string|null} */
   var sessionCode = null;
   /** @type {any} */
@@ -892,7 +1085,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.3.4';
+  var APP_VERSION = '1.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -960,11 +1153,11 @@
     },
     share: {
       title: 'Del økt med andre',
-      text: 'Slår på sanntidsdeling med en tresifret kode, slik at en medhjelper kan følge med og gjøre byttinger fra sin egen telefon samtidig som deg.'
+      text: 'Slår på sanntidsdeling med en tresifret kode. Du velger om andre får redigeringsrettighet (standard) - alle i økten kan gjøre byttinger og styre kampen - eller kun "les", hvor andre kun kan se hovedskjermen (kampen) live, uten å kunne gjøre endringer selv.'
     },
     rankCumulative: {
-      title: 'Kumulert rangering',
-      text: 'Av: trekantene som viser mest/minst spilletid tar kun hensyn til inneværende periode. På: de viser total spilletid på tvers av alle "Kampslutt" i økten.'
+      title: 'Kumulert tidsberegning',
+      text: 'AV: Trekantene som viser mest/minst spilletid tar kun hensyn til inneværende kamp. PÅ: trekantene tar hensyn til kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
     }
   };
   var resetConfirmArmed = false; // "Avslutt og nullstill" needs a second press to confirm
@@ -999,7 +1192,9 @@
       globalRunning: false,
       defaultDurationMs: 180000,
       matchDurationMs: 1200000,
-      rankByCumulative: false
+      rankByCumulative: false,
+      shareEditable: true,
+      sessionOwnerDeviceId: null
     };
   }
 
@@ -1026,6 +1221,8 @@
     if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 1200000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
+    if (raw.shareEditable === undefined) raw.shareEditable = true;
+    if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
     return raw;
   }
 
@@ -1083,10 +1280,31 @@
   var networkOnline = true;
   var realtimeSubscribed = false;
 
+  // Whether THIS device is allowed to change anything right now: always
+  // true outside a shared session; inside one, true unless the session
+  // owner switched sharing to read-only AND this isn't the owner's device
+  // (owner is recognized by the stable deviceId, not the per-load
+  // deviceOrigin, so it survives reloads).
+  function canEdit(){
+    if (!sessionCode) return true;
+    if (!state || state.shareEditable !== false) return true;
+    return state.sessionOwnerDeviceId === deviceId;
+  }
+
+  // Greys out / disables the controls that mutate state when this device
+  // is a read-only participant in a shared session - called from renderAll
+  // so it stays in sync with every state change (including a remote one
+  // that flips shareEditable).
+  function applyEditPermissionUI(){
+    var editable = canEdit();
+    els.appEl.classList.toggle('view-only', !editable);
+  }
+
   function updateSessionCodeUI(){
     if (!els.sessionCodeBar) return;
     if (sessionCode){
-      els.sessionCodeText.textContent = sessionCode;
+      var readOnly = state && state.shareEditable === false && state.sessionOwnerDeviceId !== deviceId;
+      els.sessionCodeText.textContent = sessionCode + (readOnly ? ' · kun visning' : '');
       els.sessionCodeBar.style.display = '';
       var healthy = networkOnline && realtimeSubscribed;
       els.sessionCodeBar.classList.toggle('offline', !healthy);
@@ -1097,6 +1315,7 @@
     } else {
       els.sessionCodeBar.style.display = 'none';
     }
+    if (els.appEl) applyEditPermissionUI();
   }
 
   function subscribeToSession(code){
@@ -1139,8 +1358,21 @@
     return String(Math.floor(Math.random()*1000)).padStart(3,'0');
   }
 
+  // Shows/hides the "Redigering / Kun les" segmented control (only
+  // meaningful while actually sharing) and reflects the current mode.
+  function updateShareModeUI(){
+    if (!els.shareModeRow) return;
+    els.shareModeRow.hidden = !sessionCode;
+    var editable = !state || state.shareEditable !== false;
+    Array.prototype.forEach.call(els.shareModeSegmented.querySelectorAll('.segmented-btn'), function(btn){
+      var isEdit = btn.dataset.mode !== 'read';
+      btn.classList.toggle('active', isEdit === editable);
+    });
+  }
+
   function createNewSession(callback){
     if (!sb){ callback(null); return; }
+    state.sessionOwnerDeviceId = deviceId;
     var attempts = 0;
     function tryInsert(){
       attempts++;
@@ -1251,12 +1483,16 @@
     return state.globalRunning ? t.baseElapsedMs + (now - t.sinceTs) : t.baseElapsedMs;
   }
 
-  // Countdown companion to the (count-up) match clock, ticking down from
-  // kampvarighet. Goes negative past zero - formatMs already renders that
-  // with a "+" prefix, same as the rest of the app's overtime displays.
+  // How much of kampvarighet is left to show on the big clock: it freezes
+  // at the full duration once reached, rather than counting past it (the
+  // "+MM:SS" overtime badge takes over from there - see updateTimersOnly).
   /** @param {number} now @returns {number} */
-  function matchCountdownMs(now){
-    return state.matchDurationMs - matchClockElapsed(now);
+  function matchClockDisplayMs(now){
+    return Math.min(matchClockElapsed(now), state.matchDurationMs);
+  }
+  /** @param {number} now @returns {number} */
+  function matchOvertimeMs(now){
+    return Math.max(0, matchClockElapsed(now) - state.matchDurationMs);
   }
 
   /** @param {string} id @returns {Cumulative} */
@@ -1357,7 +1593,9 @@
       matchDurationMs: state.matchDurationMs,
       fieldSize: state.fieldSize,
       wakeLockEnabled: !!state.wakeLockEnabled,
-      rankByCumulative: !!state.rankByCumulative
+      rankByCumulative: !!state.rankByCumulative,
+      shareEditable: !!state.shareEditable,
+      sessionOwnerDeviceId: state.sessionOwnerDeviceId
     };
   }
 
@@ -1378,6 +1616,8 @@
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
+    state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
+    state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
   }
 
   // Call BEFORE mutating state for any undoable action - pushes the
@@ -1394,6 +1634,7 @@
   }
 
   function undoLastAction(){
+    if (!canEdit()) return;
     var snap = undoStack.pop();
     if (!snap) return;
     restoreState(snap);
@@ -1448,6 +1689,7 @@
 
   function renderAll(){
     applyFieldDensity();
+    applyEditPermissionUI();
     renderField();
     renderBench();
     updatePlayPauseUI();
@@ -1527,13 +1769,15 @@
       var elapsed = fieldElapsed(id, now);
       var timeUp = elapsed >= state.defaultDurationMs;
       var timeSoon = !timeUp && elapsed >= state.defaultDurationMs - WARNING_LEAD_MS;
+      var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
       var el = document.createElement('div');
-      el.className = 'token field-token token-enter';
+      el.className = 'token field-token token-enter' + (isChecked ? ' multi-checked' : '');
       el.dataset.id = id;
       el.innerHTML =
         '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
           rankBadgeHtml(rankBadges[id]) +
           (timeUp ? '<div class="badge-warning">!</div>' : timeSoon ? '<div class="badge-warning soon">!</div>' : '') +
+          (isChecked ? '<div class="badge-check">✓</div>' : '') +
         '</div>' +
         '<div class="label">' + escapeHtml(p.name) + '</div>' +
         '<div class="timer' + (timeUp ? ' overtime' : timeSoon ? ' soon' : '') + '">' + formatMs(elapsed) + '</div>';
@@ -1607,8 +1851,14 @@
       var id = el.dataset.id;
       el.querySelector('.stopwatch').textContent = formatMs(benchElapsed(id, now));
     });
-    els.matchClock.textContent = formatMs(matchClockElapsed(now));
-    els.matchCountdown.textContent = formatMs(matchCountdownMs(now));
+    els.matchClock.textContent = formatMs(matchClockDisplayMs(now));
+    var overtime = matchOvertimeMs(now);
+    if (overtime > 0){
+      els.matchCountdown.textContent = '+' + formatMs(overtime);
+      els.matchCountdown.classList.add('visible');
+    } else {
+      els.matchCountdown.classList.remove('visible');
+    }
     updateSelectionInfo();
   }
 
@@ -1690,58 +1940,89 @@
     els.playPauseBtn.setAttribute('aria-label', running ? 'Pause' : 'Start');
   }
 
+  /** @returns {string[]} */
+  function multiSelectedOnField(){
+    return multiSelected.filter(function(id){ return state.onField.indexOf(id) !== -1; });
+  }
+  /** @returns {string[]} */
+  function multiSelectedOnBench(){
+    return multiSelected.filter(function(id){ return state.onBench.indexOf(id) !== -1; });
+  }
+
   function updateMultiSelectUI(){
     if (!multiMode){
-      els.multiSelectBtn.textContent = 'Velg flere';
+      els.multiSelectBtn.textContent = 'Gjør flere bytter';
       els.multiSelectBtn.classList.remove('active','ready');
       return;
     }
     els.multiSelectBtn.classList.add('active');
-    if (multiSelected.length > 0){
-      els.multiSelectBtn.textContent = 'Send ' + multiSelected.length + ' ut →';
+    if (multiSelected.length === 0){
+      els.multiSelectBtn.textContent = 'Avbryt valg';
+      els.multiSelectBtn.classList.remove('ready');
+      return;
+    }
+    var fieldN = multiSelectedOnField().length;
+    var benchN = multiSelectedOnBench().length;
+    if (fieldN === benchN){
+      els.multiSelectBtn.textContent = 'Bytt ' + fieldN + ' par →';
       els.multiSelectBtn.classList.add('ready');
     } else {
-      els.multiSelectBtn.textContent = 'Avbryt valg';
+      els.multiSelectBtn.textContent = fieldN + ' ute · ' + benchN + ' inn';
       els.multiSelectBtn.classList.remove('ready');
     }
   }
 
   function onMultiSelectBtnClick(){
+    if (!canEdit()) return;
     if (!multiMode){
       multiMode = true;
       multiSelected = [];
       updateMultiSelectUI();
-      renderBench();
+      renderAll();
       return;
     }
     if (multiSelected.length === 0){
       multiMode = false;
       updateMultiSelectUI();
-      renderBench();
+      renderAll();
       return;
     }
-    sendMultiSelectedToField();
+    performMultiSwap();
   }
 
   function toggleMultiSelect(id){
     var idx = multiSelected.indexOf(id);
     if (idx === -1) multiSelected.push(id); else multiSelected.splice(idx,1);
     updateMultiSelectUI();
-    renderBench();
+    renderAll();
   }
 
-  function sendMultiSelectedToField(){
+  var multiSwapWarningTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+  function showMultiSwapWarning(){
+    els.multiSwapWarning.textContent = 'Velg like mange innbyttere som utespillere for å bytte dem samtidig.';
+    els.multiSwapWarning.classList.add('visible');
+    clearTimeout(multiSwapWarningTimer);
+    multiSwapWarningTimer = setTimeout(function(){
+      els.multiSwapWarning.classList.remove('visible');
+    }, 2800);
+  }
+
+  // Pairs up the selected utespillere with the selected innbyttere (in
+  // selection order - the pairing itself doesn't affect anyone's resulting
+  // time, each player's own clock only depends on their own elapsed time)
+  // and swaps each pair. Requires equal counts on both sides.
+  function performMultiSwap(){
+    var fieldSelected = multiSelectedOnField();
+    var benchSelected = multiSelectedOnBench();
+    if (fieldSelected.length === 0 || fieldSelected.length !== benchSelected.length){
+      shakeElement(els.appEl);
+      showMultiSwapWarning();
+      return;
+    }
     pushUndoSnapshot();
-    var now = Date.now();
-    multiSelected.forEach(function(id){
-      if (state.onBench.indexOf(id) === -1) return;
-      commitBenchStint(id, now);
-      state.onBench = state.onBench.filter(function(x){ return x !== id; });
-      state.onField.push(id);
-      state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-      delete state.benchTimers[id];
-      delete timeUpNotified[id];
-    });
+    for (var i = 0; i < fieldSelected.length; i++){
+      swapFieldAndBench(fieldSelected[i], benchSelected[i]);
+    }
     multiMode = false;
     multiSelected = [];
     saveState();
@@ -1775,12 +2056,14 @@
     renderAll();
   }
 
+  // Core swap mutation, no undo snapshot of its own - callers decide the
+  // undo granularity (performSwap snapshots once per swap; a multi-swap
+  // batch snapshots once for the whole batch, see performMultiSwap).
   /** @param {string} fieldId @param {string} benchId */
-  function performSwap(fieldId, benchId){
+  function swapFieldAndBench(fieldId, benchId){
     if (state.onField.indexOf(fieldId) === -1 || state.onBench.indexOf(benchId) === -1){
       return;
     }
-    pushUndoSnapshot();
     var now = Date.now();
     commitFieldStint(fieldId, now);
     commitBenchStint(benchId, now);
@@ -1798,6 +2081,15 @@
     delete timeUpNotified[fieldId];
   }
 
+  /** @param {string} fieldId @param {string} benchId */
+  function performSwap(fieldId, benchId){
+    if (state.onField.indexOf(fieldId) === -1 || state.onBench.indexOf(benchId) === -1){
+      return;
+    }
+    pushUndoSnapshot();
+    swapFieldAndBench(fieldId, benchId);
+  }
+
   /* ---------------- Drag & drop ---------------- */
 
   function attachTokenEvents(el, id, zone){
@@ -1805,7 +2097,8 @@
   }
 
   function onPointerDown(e, id, zone){
-    if (multiMode && zone === 'bench'){
+    if (!canEdit()) return;
+    if (multiMode){
       e.preventDefault();
       toggleMultiSelect(id);
       return;
@@ -1876,6 +2169,35 @@
   function handleDrop(id, fromZone, clientX, clientY){
     selected = null;
     applySelectionStyles();
+
+    // Dropped directly on top of another player -> swap with them
+    // specifically. field-onto-bench or bench-onto-field pairs swap;
+    // dropping on a token in the SAME zone (bench-on-bench, field-on-field)
+    // is invalid - falls through to the reject path below like any other
+    // no-op drop.
+    var targetEl = /** @type {HTMLElement|null} */ (document.elementFromPoint(clientX, clientY));
+    var targetTokenEl = targetEl ? targetEl.closest('.token') : null;
+    var targetId = targetTokenEl ? /** @type {HTMLElement} */ (targetTokenEl).dataset.id : null;
+    if (targetId && targetId !== id){
+      var targetIsField = state.onField.indexOf(targetId) !== -1;
+      var targetIsBench = state.onBench.indexOf(targetId) !== -1;
+      if (fromZone === 'field' && targetIsBench){
+        performSwap(id, targetId);
+        saveState();
+        renderAll();
+        return;
+      }
+      if (fromZone === 'bench' && targetIsField){
+        performSwap(targetId, id);
+        saveState();
+        renderAll();
+        return;
+      }
+      renderAll();
+      flashDropRejected(id, fromZone);
+      return;
+    }
+
     var fieldRect = els.fieldWrap.getBoundingClientRect();
     var benchRect = els.benchWrap.getBoundingClientRect();
 
@@ -1885,6 +2207,11 @@
 
     if (inField && fromZone === 'bench'){
       if (state.onBench.indexOf(id) === -1){ renderAll(); return; }
+      if (state.onField.length >= (state.fieldSize || 3)){
+        renderAll();
+        flashDropRejected(id, fromZone);
+        return;
+      }
       pushUndoSnapshot();
       commitBenchStint(id, now);
       state.onBench = state.onBench.filter(function(x){ return x !== id; });
@@ -1926,6 +2253,7 @@
   /* ---------------- Play / Pause ---------------- */
 
   function togglePlayPause(){
+    if (!canEdit()) return;
     ensureAudioUnlocked();
     var now = Date.now();
     if (state.globalRunning){
@@ -1999,6 +2327,94 @@
     els.durSec.value = 0;
   }
 
+  /* ---------------- Match duration picker (tap the match clock) ---------------- */
+
+  var durationPickerValue = 20; // live value while the popup is open, minutes
+
+  function setDurationPickerDisplay(mins){
+    durationPickerValue = Math.max(1, Math.min(180, mins));
+    els.durationPickerValue.textContent = String(durationPickerValue);
+  }
+
+  function commitDurationPickerValue(){
+    state.matchDurationMs = durationPickerValue * 60000;
+    saveState();
+    renderAll();
+  }
+
+  function openDurationPicker(){
+    if (!canEdit()) return;
+    setDurationPickerDisplay(Math.max(1, Math.round(state.matchDurationMs / 60000)));
+    els.matchDurationPickerModal.classList.add('open');
+  }
+
+  // Eased "spin down" for a fast flick - animates from the value the drag
+  // ended on to a further value (capped in openDurationPicker's caller),
+  // decelerating like a wheel losing momentum, then commits.
+  function animateDurationSpin(from, to){
+    to = Math.max(1, Math.min(180, to));
+    if (to === from){ commitDurationPickerValue(); return; }
+    var start = /** @type {number} */ (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    var duration = 420;
+    function frame(){
+      var now = /** @type {number} */ (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      var t = Math.min(1, (now - start) / duration);
+      var eased = 1 - Math.pow(1 - t, 3);
+      setDurationPickerDisplay(Math.round(from + (to - from) * eased));
+      if (t < 1){
+        requestAnimationFrame(frame);
+      } else {
+        commitDurationPickerValue();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  var DURATION_PX_PER_MIN = 14;
+
+  function initDurationPickerDrag(){
+    els.durationPickerWheel.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      var startY = e.clientY;
+      var startVal = durationPickerValue;
+      var pointerId = e.pointerId;
+      var lastY = startY;
+      var lastT = performance.now();
+      var velocity = 0; // minutes-per-ms equivalent, up = positive
+
+      try { els.durationPickerWheel.setPointerCapture(pointerId); } catch(err){}
+
+      function onMove(ev){
+        var dy = startY - ev.clientY; // dragging up = positive = increase
+        var steps = Math.round(dy / DURATION_PX_PER_MIN);
+        setDurationPickerDisplay(startVal + steps);
+        var now = performance.now();
+        var dt = now - lastT;
+        if (dt > 0) velocity = (lastY - ev.clientY) / dt / DURATION_PX_PER_MIN;
+        lastY = ev.clientY;
+        lastT = now;
+      }
+      function onUp(){
+        els.durationPickerWheel.removeEventListener('pointermove', onMove);
+        els.durationPickerWheel.removeEventListener('pointerup', onUp);
+        els.durationPickerWheel.removeEventListener('pointercancel', onUp);
+        try { els.durationPickerWheel.releasePointerCapture(pointerId); } catch(err){}
+        // A careful, slow drag ends with velocity ~0 -> commits exactly
+        // where the finger left it. A fast flick keeps "spinning" a bit
+        // further, capped at 20 extra minutes either direction.
+        var flingSteps = Math.max(-20, Math.min(20, Math.round(velocity * 55)));
+        if (Math.abs(flingSteps) >= 2){
+          animateDurationSpin(durationPickerValue, durationPickerValue + flingSteps);
+        } else {
+          commitDurationPickerValue();
+        }
+      }
+      els.durationPickerWheel.addEventListener('pointermove', onMove);
+      els.durationPickerWheel.addEventListener('pointerup', onUp);
+      els.durationPickerWheel.addEventListener('pointercancel', onUp);
+    });
+  }
+
   function openSettings(isFirstRun){
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
@@ -2006,9 +2422,11 @@
 
     if (state.players.length === 0){
       var rowCount = defaultNameRowCount(state.fieldSize || 3);
-      for (var i=0;i<rowCount;i++) addNameRow(null, '', i+1);
+      for (var i=0;i<rowCount;i++) addNameRow(null, '', i+1, false);
     } else {
-      state.players.forEach(function(p, idx){ addNameRow(p.id, p.name, idx+1); });
+      state.players.forEach(function(p, idx){
+        addNameRow(p.id, p.name, idx+1, state.onField.indexOf(p.id) !== -1);
+      });
     }
     els.matchDurationInput.value = Math.round(state.matchDurationMs/60000);
     var totalMs = state.defaultDurationMs;
@@ -2016,26 +2434,33 @@
     els.durSec.value = Math.floor((totalMs%60000)/1000);
     els.wakeLockToggle.checked = !!state.wakeLockEnabled;
     els.shareSessionToggle.checked = !!sessionCode;
+    updateShareModeUI();
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
     els.fieldSizeInput.value = state.fieldSize || 3;
     els.fieldSizeInput.disabled = !isFirstRun;
     els.fieldSizeLockedNote.style.display = isFirstRun ? 'none' : '';
   }
 
-  function addNameRow(id, name, indexHint){
+  /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] */
+  function addNameRow(id, name, indexHint, locked){
     var row = document.createElement('div');
-    row.className = 'name-row';
+    row.className = 'name-row' + (locked ? ' locked' : '');
     row.dataset.id = id || '';
     row.innerHTML =
       '<div class="name-input-wrap">' +
-        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off">' +
+        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (locked ? ' disabled' : '') + '>' +
       '</div>' +
-      '<button type="button" class="removeRow" aria-label="Fjern">×</button>';
+      (locked
+        ? '<span class="locked-row-note" title="Utespillere kan ikke endres eller fjernes her mens de er på banen">🔒</span>'
+        : '<button type="button" class="removeRow" aria-label="Fjern">×</button>');
+    els.nameRows.appendChild(row);
+    var wrap = row.querySelector('.name-input-wrap');
+    if (locked) return;
     /** @type {HTMLElement} */ (row.querySelector('.removeRow')).addEventListener('click', function(){
       if (els.nameRows.children.length > 1) row.remove();
     });
-    els.nameRows.appendChild(row);
-    attachSuggestions(row.querySelector('input'), row.querySelector('.name-input-wrap'));
+    /** @type {HTMLElement} */ (row.querySelector('input')).addEventListener('input', function(){ clearFieldInvalid(wrap); });
+    attachSuggestions(row.querySelector('input'), wrap);
   }
 
   function attachSuggestions(input, wrap){
@@ -2096,12 +2521,41 @@
     });
   }
 
+  // Re-triggers the shake animation on any element (modal-card, a button,
+  // etc.) even if it's already mid-animation from a previous attempt.
+  function shakeElement(el){
+    if (!el) return;
+    el.classList.remove('shake');
+    void el.offsetWidth;
+    el.classList.add('shake');
+  }
+
+  // Small red "!" pinned to a field that's blocking progress - pairs with
+  // shakeElement() on the surrounding card so there's always a visible
+  // reason, not just a rejected/shaking screen. wrapEl must already be
+  // position:relative (see .field-invalid-wrap / .name-input-wrap).
+  function markFieldInvalid(wrapEl){
+    if (!wrapEl || wrapEl.querySelector('.field-invalid-badge')) return;
+    var badge = document.createElement('span');
+    badge.className = 'field-invalid-badge';
+    badge.textContent = '!';
+    wrapEl.appendChild(badge);
+  }
+  function clearFieldInvalid(wrapEl){
+    if (!wrapEl) return;
+    var badge = wrapEl.querySelector('.field-invalid-badge');
+    if (badge) badge.remove();
+  }
+
   function saveSettings(){
+    if (!canEdit()) return;
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     var newPlayers = [];
     var keptIds = {};
 
     rows.forEach(function(row){
+      var wrap = row.querySelector('.name-input-wrap');
+      clearFieldInvalid(wrap);
       var input = row.querySelector('input');
       var name = input.value.trim();
       if (!name) return;
@@ -2112,10 +2566,8 @@
     });
 
     if (newPlayers.length === 0){
-      var card = els.settingsModal.querySelector('.modal-card');
-      card.classList.remove('shake');
-      void card.offsetWidth;
-      card.classList.add('shake');
+      shakeElement(els.settingsModal.querySelector('.modal-card'));
+      rows.forEach(function(row){ markFieldInvalid(row.querySelector('.name-input-wrap')); });
       return;
     }
 
@@ -2305,6 +2757,10 @@
     els.selectionInfo = qs('selectionInfo');
     els.pitchLines = qs('pitchLines');
     els.viewportFrame = qs('viewport-frame');
+    els.appEl = qs('app');
+    els.launcherScreen = qs('launcherScreen');
+    els.launcherTile = qs('launcherTile');
+    els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
     els.nameRows = qs('nameRows');
@@ -2340,13 +2796,20 @@
     els.infoPopupTitle = qs('infoPopupTitle');
     els.infoPopupText = qs('infoPopupText');
     els.infoPopupCloseBtn = qs('infoPopupCloseBtn');
+    els.matchDurationPickerModal = qs('matchDurationPickerModal');
+    els.durationPickerCloseBtn = qs('durationPickerCloseBtn');
+    els.durationPickerWheel = qs('durationPickerWheel');
+    els.durationPickerValue = qs('durationPickerValue');
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.shareSessionToggle = qs('shareSessionToggle');
+    els.shareModeRow = qs('shareModeRow');
+    els.shareModeSegmented = qs('shareModeSegmented');
     els.rankByCumulativeToggle = qs('rankByCumulativeToggle');
     els.joinExistingBtn = qs('joinExistingBtn');
     els.joinCodeModal = qs('joinCodeModal');
     els.joinCodeInput = qs('joinCodeInput');
+    els.joinCodeInputWrap = qs('joinCodeInputWrap');
     els.joinCodeError = qs('joinCodeError');
     els.joinCodeCancelBtn = qs('joinCodeCancelBtn');
     els.joinCodeConfirmBtn = qs('joinCodeConfirmBtn');
@@ -2375,13 +2838,14 @@
 
     els.playPauseBtn.addEventListener('click', togglePlayPause);
     els.undoBtn.addEventListener('click', undoLastAction);
-    els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
+    els.settingsBtn.addEventListener('click', function(){ if (canEdit()) openSettings(false); });
     els.addNameBtn.addEventListener('click', function(){ addNameRow(null, '', els.nameRows.children.length+1); });
     els.fieldSizeInput.addEventListener('input', resizeNameRowsToFieldSize);
     els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
     els.endBtn.addEventListener('click', function(){
+      if (!canEdit()) return;
       disarmResetConfirm();
       renderEndMatchSummary();
       els.endMatchModal.classList.add('open');
@@ -2447,6 +2911,9 @@
       });
     });
     els.infoPopupCloseBtn.addEventListener('click', function(){ els.infoPopupModal.classList.remove('open'); });
+    els.matchClock.addEventListener('click', openDurationPicker);
+    els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
+    initDurationPickerDrag();
     els.exportCopyBtn.addEventListener('click', function(){
       els.exportText.select();
       if (navigator.clipboard && navigator.clipboard.writeText){
@@ -2459,14 +2926,24 @@
     });
     els.shareSessionToggle.addEventListener('change', function(){
       if (els.shareSessionToggle.checked){
-        if (sessionCode){ updateSessionCodeUI(); return; } // already sharing (e.g. via join)
+        if (sessionCode){ updateSessionCodeUI(); updateShareModeUI(); return; } // already sharing (e.g. via join)
         createNewSession(function(code){
           if (!code) els.shareSessionToggle.checked = false; // couldn't create (offline?) - revert
           updateSessionCodeUI();
+          updateShareModeUI();
         });
       } else {
         leaveSession();
       }
+      updateShareModeUI();
+    });
+    els.shareModeSegmented.addEventListener('click', function(e){
+      var btn = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('.segmented-btn'));
+      if (!btn) return;
+      state.shareEditable = btn.dataset.mode !== 'read';
+      saveState();
+      updateShareModeUI();
+      updateSessionCodeUI();
     });
     els.rankByCumulativeToggle.addEventListener('change', function(){
       state.rankByCumulative = els.rankByCumulativeToggle.checked;
@@ -2477,17 +2954,24 @@
       els.settingsModal.classList.remove('open');
       els.joinCodeInput.value = '';
       els.joinCodeError.style.display = 'none';
+      clearFieldInvalid(els.joinCodeInputWrap);
       els.joinCodeModal.classList.add('open');
     });
     els.joinCodeCancelBtn.addEventListener('click', function(){
       els.joinCodeModal.classList.remove('open');
       els.settingsModal.classList.add('open');
     });
+    els.joinCodeInput.addEventListener('input', function(){
+      els.joinCodeError.style.display = 'none';
+      clearFieldInvalid(els.joinCodeInputWrap);
+    });
     els.joinCodeConfirmBtn.addEventListener('click', function(){
       var code = els.joinCodeInput.value.trim();
       if (!/^[0-9]{3}$/.test(code)){
         els.joinCodeError.textContent = 'Skriv inn en gyldig tresifret kode.';
         els.joinCodeError.style.display = '';
+        markFieldInvalid(els.joinCodeInputWrap);
+        shakeElement(els.joinCodeModal.querySelector('.modal-card'));
         return;
       }
       joinSession(code, function(){
@@ -2496,6 +2980,8 @@
       }, function(){
         els.joinCodeError.textContent = 'Fant ingen økt med den koden.';
         els.joinCodeError.style.display = '';
+        markFieldInvalid(els.joinCodeInputWrap);
+        shakeElement(els.joinCodeModal.querySelector('.modal-card'));
       });
     });
     els.sessionCodeBar.addEventListener('click', function(){
@@ -2510,6 +2996,13 @@
     // players to swap) would otherwise never get an unlocked AudioContext
     // and silently never beep on time-up.
     document.addEventListener('pointerdown', ensureAudioUnlocked, { once: true });
+
+    els.launcherTile.addEventListener('click', function(){
+      els.launcherTile.classList.add('lifted');
+      setTimeout(function(){
+        els.launcherScreen.classList.add('hidden');
+      }, 500);
+    });
 
     updateFrameFit();
     renderPitchMarkings();
