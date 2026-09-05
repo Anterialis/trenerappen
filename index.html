@@ -762,10 +762,14 @@
   }
   .legend-swatch.warning{ background:var(--danger); color:#fff; }
   .legend-swatch.warning.soon{ background:var(--orange); }
-  .legend-swatch.rank-most{ background:#dc2626; color:#fff; }
-  .legend-swatch.rank-most2{ background:var(--orange); color:#fff; }
-  .legend-swatch.rank-least2{ background:#7dd3fc; color:#0c3a52; }
-  .legend-swatch.rank-least{ background:#2563eb; color:#fff; }
+  /* Rank swatches show the same SVG polygon+stroke markup rankBadgeHtml()
+     draws on a player's avatar - a navy backdrop (matching the avatar
+     itself) so the white outline reads the same way it does in the app,
+     rather than a plain colored circle with a unicode arrow. */
+  .legend-swatch.rank-most,
+  .legend-swatch.rank-most2,
+  .legend-swatch.rank-least2,
+  .legend-swatch.rank-least{ background:var(--navy); }
   .legend-swatch.check{ background:#32b45a; color:#fff; }
   .legend-swatch.ring-orange{ box-shadow:0 0 0 3px rgba(255,138,61,.65); }
   .legend-swatch.order{ background:var(--navy); color:#fff; font-size:16px; }
@@ -1096,10 +1100,10 @@
     <div class="legend-list">
       <div class="legend-row"><span class="legend-swatch warning soon">!</span><span class="legend-text">Snart tid for bytte (siste 30 sek) – utespiller.</span></div>
       <div class="legend-row"><span class="legend-swatch warning">!</span><span class="legend-text">Tiden er ute for en utespiller – klar for bytte.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most">▲</span><span class="legend-text">Har spilt mest – vurder benk til neste kamp. Rød trekant på spilleren.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most2">▲</span><span class="legend-text">Har spilt nest mest. Oransje trekant.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least2">▼</span><span class="legend-text">Har spilt nest minst. Lyseblå trekant.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least">▼</span><span class="legend-text">Har spilt minst – vurder start til neste kamp. Blå trekant.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt mest – vurder benk til neste kamp. Rød trekant på spilleren.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#ff9500" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest mest. Oransje trekant.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#7dd3fc" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest minst. Lyseblå trekant.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt minst – vurder start til neste kamp. Blå trekant.</span></div>
       <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert – trykk på en spiller i motsatt sone for å bytte dem.</span></div>
       <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i "Velg flere"-modus (grønn ring), klar til å sendes ut.</span></div>
       <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre = har spilt/ventet lengst.</span></div>
@@ -1232,7 +1236,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.5';
+  var APP_VERSION = '1.5.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
