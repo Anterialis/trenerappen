@@ -204,22 +204,22 @@
     cursor:pointer;
   }
   #matchClock:active{ transform:scale(.97); }
-  /* Overtime badge beside the main clock - hidden until kampvarighet is
-     actually exceeded, since the main clock itself freezes at that point
-     (see updateTimersOnly) rather than counting past it. */
+  /* Small always-visible countdown beside the main (frozen) clock - counts
+     down to kampvarighet, then flips to orange "+MM:SS" overtime (see
+     matchCountdownMs). Deliberately much smaller than the big clock. */
   #matchCountdown{
-    display:none;
-    background:rgba(0,0,0,.5);
-    border:1px solid rgba(255,159,10,.4);
+    background:rgba(0,0,0,.45);
+    border:1px solid rgba(255,255,255,.15);
     border-radius:6px;
     padding:3px 9px;
     font-family:'SF Mono','Courier New',ui-monospace,monospace;
-    font-size:14px; font-weight:700; color:var(--orange);
+    font-size:14px; font-weight:700; color:rgba(244,244,242,.82);
     font-variant-numeric:tabular-nums; letter-spacing:1px;
     text-shadow:0 1px 3px rgba(0,0,0,.6);
     pointer-events:none;
+    transition:color .2s ease, border-color .2s ease;
   }
-  #matchCountdown.visible{ display:block; }
+  #matchCountdown.overtime{ color:var(--orange); border-color:rgba(255,159,10,.4); }
   #field{
     position:relative;
     height:100%;
@@ -1085,7 +1085,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.4';
+  var APP_VERSION = '1.4.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1484,15 +1484,20 @@
   }
 
   // How much of kampvarighet is left to show on the big clock: it freezes
-  // at the full duration once reached, rather than counting past it (the
-  // "+MM:SS" overtime badge takes over from there - see updateTimersOnly).
+  // at the full duration once reached, rather than counting past it - the
+  // small countdown beside it (see matchCountdownMs) keeps going instead.
   /** @param {number} now @returns {number} */
   function matchClockDisplayMs(now){
     return Math.min(matchClockElapsed(now), state.matchDurationMs);
   }
+
+  // Small always-visible companion to the (frozen) big clock: counts down
+  // to 0:00 same as before, then goes negative - formatMs already renders
+  // negative values with a "+" prefix, so it reads as "+MM:SS" overtime
+  // once kampvarighet is exceeded, with no separate show/hide state needed.
   /** @param {number} now @returns {number} */
-  function matchOvertimeMs(now){
-    return Math.max(0, matchClockElapsed(now) - state.matchDurationMs);
+  function matchCountdownMs(now){
+    return state.matchDurationMs - matchClockElapsed(now);
   }
 
   /** @param {string} id @returns {Cumulative} */
@@ -1852,13 +1857,9 @@
       el.querySelector('.stopwatch').textContent = formatMs(benchElapsed(id, now));
     });
     els.matchClock.textContent = formatMs(matchClockDisplayMs(now));
-    var overtime = matchOvertimeMs(now);
-    if (overtime > 0){
-      els.matchCountdown.textContent = '+' + formatMs(overtime);
-      els.matchCountdown.classList.add('visible');
-    } else {
-      els.matchCountdown.classList.remove('visible');
-    }
+    var countdown = matchCountdownMs(now);
+    els.matchCountdown.textContent = formatMs(countdown);
+    els.matchCountdown.classList.toggle('overtime', countdown < 0);
     updateSelectionInfo();
   }
 
