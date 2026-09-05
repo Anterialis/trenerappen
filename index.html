@@ -563,6 +563,28 @@
   }
   .modal.open .modal-card{ transform:translateY(0); }
   .modal-card.shake{ animation:shake .4s; }
+
+  /* Centered, frosted-glass variant of the shared bottom-sheet .modal -
+     used for short informational popups (the info-btn "?" tooltips) where
+     a full bottom sheet would feel heavy for a sentence or two of text. */
+  .modal.modal-centered{ align-items:center; padding:0 28px; }
+  .modal-centered .modal-card{
+    width:100%; max-width:380px;
+    max-height:none;
+    background:rgba(255,255,255,.78);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+    border:1px solid rgba(255,255,255,.5);
+    border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-md);
+    padding:20px 20px 22px;
+    transform:scale(.92);
+    transition:transform .3s cubic-bezier(.25,.8,.25,1);
+  }
+  .modal-centered.open .modal-card{ transform:scale(1); }
+  @media (prefers-reduced-motion: reduce){
+    .modal-centered .modal-card{ transition:none; }
+  }
   @keyframes shake{
     0%,100%{ transform:translateX(0); }
     20%{ transform:translateX(-8px); }
@@ -1088,7 +1110,7 @@
   </div>
 </div>
 
-<div id="infoPopupModal" class="modal">
+<div id="infoPopupModal" class="modal modal-centered">
   <div class="modal-card info-popup-card">
     <button type="button" id="infoPopupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2 id="infoPopupTitle"></h2>
