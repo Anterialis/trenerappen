@@ -99,6 +99,7 @@
   }
   .launcher-screen.hidden{ opacity:0; pointer-events:none; }
   .launcher-tile{
+    position:relative;
     width:100%; max-width:320px;
     border-radius:26px; overflow:hidden;
     background:rgba(255,255,255,.09);
@@ -131,32 +132,27 @@
   }
 
   /* Glass popup shown on tapping the launcher tile: choose new vs. join an
-     existing session. Matches the launcher's own dark/glass language
-     (--navy, blur+saturate), not the white .modal-card system used
-     elsewhere in the app - this is the very first thing a coach sees. */
+     existing session. Nested INSIDE .launcher-tile (which is already
+     position:relative + border-radius + overflow:hidden) so inset:0 makes
+     it exactly cover the tile's full pitch-graphic + body area for free,
+     with matching rounded corners via the parent's clip - no separate
+     sizing/radius to keep in sync. A single element (not an outer
+     transparent overlay + an inner glass card) with one opacity+transform
+     transition, so the opaque background and the text/buttons always
+     appear together - a separate translucent+backdrop-filter card here
+     previously caused a visible lag where the blur "caught up" a beat
+     after the content had already faded in. */
   .launcher-choice-overlay{
-    position:absolute; inset:0; z-index:310;
+    position:absolute; inset:0; z-index:5;
     display:flex; align-items:center; justify-content:center;
-    padding:28px;
-    opacity:0; pointer-events:none;
-    transition:opacity .3s cubic-bezier(.25,.8,.25,1);
-  }
-  .launcher-choice-overlay.open{ opacity:1; pointer-events:auto; }
-  .launcher-choice-card{
-    position:relative;
-    width:100%; max-width:320px;
-    border-radius:var(--radius-lg);
-    background:rgba(255,255,255,.10);
-    border:1px solid rgba(255,255,255,.22);
-    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
-    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
-    box-shadow:var(--shadow-md);
     padding:26px 22px;
-    transform:scale(.94);
-    transition:transform .3s cubic-bezier(.25,.8,.25,1);
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 65%, #081120);
+    opacity:0; pointer-events:none; transform:scale(1.04);
+    transition:opacity .28s ease, transform .28s ease;
   }
-  .launcher-choice-overlay.open .launcher-choice-card{ transform:scale(1); }
-  .launcher-choice-card.shake{ animation:shake .4s; }
+  .launcher-choice-overlay.open{ opacity:1; pointer-events:auto; transform:scale(1); }
+  .launcher-choice-overlay.shake{ animation:shake .4s; }
+  .launcher-choice-panel{ width:100%; }
   .launcher-choice-title{ margin:0 0 4px; color:#fff; font-size:19px; font-weight:700; text-align:center; }
   .launcher-choice-sub{ margin:0 0 20px; color:rgba(255,255,255,.65); font-size:13px; text-align:center; }
   .glass-choice-btn{
@@ -196,8 +192,7 @@
   }
   .launcher-join-enter:active{ transform:scale(.94); }
   @media (prefers-reduced-motion: reduce){
-    .launcher-choice-overlay{ transition:opacity .3s ease; }
-    .launcher-choice-card{ transition:none; }
+    .launcher-choice-overlay{ transition:opacity .3s ease; transform:none; }
   }
 
   /* ---------- Header ---------- */
@@ -883,11 +878,8 @@
         <p class="launcher-tile-title">Trenerappen</p>
         <p class="launcher-tile-sub">Spill kamp, få oversikt over innbyttere og spilletid</p>
       </div>
-    </div>
-    <p class="launcher-credit">utviklet av André Nanbjør</p>
 
-    <div id="launcherChoiceOverlay" class="launcher-choice-overlay">
-      <div class="launcher-choice-card" id="launcherChoiceCard">
+      <div id="launcherChoiceOverlay" class="launcher-choice-overlay">
         <div class="launcher-choice-panel" id="launcherChoicePanelChoice">
           <p class="launcher-choice-title">Trenerappen</p>
           <p class="launcher-choice-sub">Hvordan vil du starte?</p>
@@ -907,6 +899,7 @@
         </div>
       </div>
     </div>
+    <p class="launcher-credit">utviklet av André Nanbjør</p>
   </div>
   <header>
     <button id="undoBtn" class="icon-btn" aria-label="Angre, gjør om eller gå tilbake til hovedmeny">↩<span id="undoCountBadge" class="icon-btn-badge" hidden>0</span></button>
@@ -2988,7 +2981,6 @@
     els.launcherScreen = qs('launcherScreen');
     els.launcherTile = qs('launcherTile');
     els.launcherChoiceOverlay = qs('launcherChoiceOverlay');
-    els.launcherChoiceCard = qs('launcherChoiceCard');
     els.launcherChoicePanelChoice = qs('launcherChoicePanelChoice');
     els.launcherChoicePanelJoin = qs('launcherChoicePanelJoin');
     els.newSessionChoiceBtn = qs('newSessionChoiceBtn');
@@ -3294,7 +3286,7 @@
         els.launcherJoinError.textContent = 'Skriv inn en gyldig tresifret kode.';
         els.launcherJoinError.hidden = false;
         markFieldInvalid(els.launcherJoinInputWrap);
-        shakeElement(els.launcherChoiceCard);
+        shakeElement(els.launcherChoiceOverlay);
         return;
       }
       joinSession(code, function(){
@@ -3304,7 +3296,7 @@
         els.launcherJoinError.textContent = 'Fant ingen økt med den koden.';
         els.launcherJoinError.hidden = false;
         markFieldInvalid(els.launcherJoinInputWrap);
-        shakeElement(els.launcherChoiceCard);
+        shakeElement(els.launcherChoiceOverlay);
       });
     }
 
@@ -3315,6 +3307,11 @@
       if (launcherEnteredOnce){ enterAppFromLauncher(); return; }
       openLauncherChoice();
     });
+    // The popup is nested inside .launcher-tile (so it can inherit the
+    // tile's exact bounds/rounded corners for free) - without this, any
+    // click inside it would bubble up and re-trigger the tile's own
+    // click handler above.
+    els.launcherChoiceOverlay.addEventListener('click', function(e){ e.stopPropagation(); });
     els.newSessionChoiceBtn.addEventListener('click', enterAppFromLauncher);
     els.joinSessionChoiceBtn.addEventListener('click', showLauncherJoinPanel);
     els.launcherChoiceCancelBtn.addEventListener('click', closeLauncherChoice);
