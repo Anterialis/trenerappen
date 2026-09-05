@@ -1,4 +1,4 @@
-# Spillerbytte — prosjektoppsummering
+# Trenerappen — prosjektoppsummering
 
 ## Hva dette er
 
