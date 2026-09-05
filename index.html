@@ -188,7 +188,7 @@
   .pitch-lines{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .match-clock-wrap{
     position:absolute; top:10px; left:50%; transform:translateX(-50%);
-    display:flex; flex-direction:row; align-items:center; gap:7px;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
     z-index:5;
   }
   #matchClock{
@@ -1085,7 +1085,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.4.1';
+  var APP_VERSION = '1.4.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
