@@ -1372,7 +1372,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.7';
+  var APP_VERSION = '1.6.8';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2096,18 +2096,34 @@
     // aspect-ratio check below only distinguishes "this window happens to
     // be phone-shaped" from "this is a resized desktop browser" for the
     // letterboxed preview frame. Touch + no-hover is a direct, reliable
-    // signal for "this is an actual phone" - and .fullscreen-fit itself
-    // is position:fixed + inset:0 (see its CSS), not a measured pixel
-    // value, specifically because window.innerHeight, 100dvh AND
-    // window.visualViewport can all still report a short value right
-    // after a cold launch of a standalone/home-screen PWA in portrait,
-    // only correcting on a genuine orientation event - nothing measured
-    // here would reliably catch that, so nothing here needs to.
+    // signal for "this is an actual phone".
     var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
     if (isTouchDevice){
       els.viewportFrame.classList.add('fullscreen-fit');
+      // window.innerHeight, 100vh/100dvh, window.visualViewport AND even
+      // position:fixed+inset:0 all still reported a short height on a
+      // standalone/home-screen PWA's cold launch in portrait (only
+      // correcting on a genuine orientation event) - every one of those
+      // ultimately derives from WebKit's own dynamic "current viewport"
+      // tracking, which is exactly what's wrong in that window. screen.
+      // width/height come from the OS display info directly instead -
+      // a completely different, static source unrelated to that tracking.
+      var scr = window.screen;
+      if (scr && scr.width && scr.height){
+        var isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        var sw = isLandscape ? Math.max(scr.width, scr.height) : Math.min(scr.width, scr.height);
+        var sh = isLandscape ? Math.min(scr.width, scr.height) : Math.max(scr.width, scr.height);
+        els.viewportFrame.style.width = sw + 'px';
+        els.viewportFrame.style.height = sh + 'px';
+        els.appEl.style.width = sw + 'px';
+        els.appEl.style.height = sh + 'px';
+      }
       return;
     }
+    els.viewportFrame.style.width = '';
+    els.viewportFrame.style.height = '';
+    els.appEl.style.width = '';
+    els.appEl.style.height = '';
     var vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
     var targetRatio = vw > vh ? 956/440 : 440/956;
