@@ -45,11 +45,6 @@
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
   }
-  /* #viewport-frame is position:fixed (out of normal flow), so body has
-     nothing in normal flow to scroll on its own - this guarantees 1px of
-     real scrollable overflow so the standalone-PWA viewport "nudge" (see
-     nudgeViewportForStandalone) has something to actually scroll into. */
-  body{ min-height:calc(100% + 1px); }
   body{ -webkit-user-select:none; user-select:none; }
 
   /* ---------- Layout ---------- */
@@ -108,6 +103,25 @@
       width:min(100vw, calc((100dvh) * 956 / 440));
       height:min(100vh, calc(100vw * 440 / 956));
       height:min(100dvh, calc(100vw * 440 / 956));
+    }
+  }
+
+  /* iOS reserves a fixed bottom strip in standalone/home-screen display
+     mode regardless of CSS approach tried (see applyStandaloneMargin) -
+     rather than keep chasing an exact pixel match, deliberately stop
+     short of the real bottom edge by a generous, fixed amount so
+     whatever that strip actually is, it's always comfortably covered
+     instead of looking cut off. Rounded bottom corners make the shorter
+     frame read as an intentional floating window. Portrait only - the
+     top edge (and landscape entirely) were already confirmed correct,
+     so this doesn't touch either. Regular browser tabs never get this
+     class at all. */
+  @media (orientation: portrait){
+    #viewport-frame.standalone-mode{
+      bottom:56px;
+    }
+    #viewport-frame.standalone-mode #app{
+      border-radius:0 0 24px 24px;
     }
   }
 
@@ -1379,7 +1393,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.10';
+  var APP_VERSION = '1.6.11';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2116,21 +2130,20 @@
   }
 
   // A standalone/home-screen iOS PWA has repeatedly rendered short at the
-  // bottom even with plain, JS-independent position:fixed;inset:0 CSS -
-  // confirmed not a timing race (still wrong with JS disabled entirely)
-  // and not a caching issue (sw.js is network-first for navigations), so
-  // something about how WebKit computes the fixed-position containing
-  // block specifically in standalone display-mode is short by a fixed
-  // amount. A momentary real scroll (not just reading a value) is a long-
-  // documented way to force Safari to recompute/settle that - body has a
-  // guaranteed 1px of real overflow to scroll into (see body's
-  // min-height) since #viewport-frame itself is position:fixed and
-  // contributes nothing to normal document flow to scroll otherwise.
-  function nudgeViewportForStandalone(){
+  // bottom regardless of CSS mechanism (plain position:fixed;inset:0,
+  // confirmed correct with JS disabled entirely, still came up short
+  // there specifically) or JS-measurement approach tried - genuinely
+  // seems to be a fixed reserved strip WebKit keeps in that display mode
+  // specifically, not a timing/measurement problem this app can correct.
+  // Rather than keep guessing at exact pixel-perfect fixes, standalone
+  // mode gets a deliberate, generous bottom margin instead - so whatever
+  // that reserved strip turns out to be, it's always comfortably covered
+  // and never looks like a bug. Regular browser tabs (confirmed correct
+  // full-bleed) are entirely unaffected - this only ever adds a class,
+  // never removes .desktop-preview's own logic above.
+  function applyStandaloneMargin(){
     var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || !!(/** @type {any} */ (window.navigator).standalone);
-    if (!isStandalone) return;
-    window.scrollTo(0, 1);
-    setTimeout(function(){ window.scrollTo(0, 0); }, 60);
+    els.viewportFrame.classList.toggle('standalone-mode', isStandalone);
   }
 
   // SVG (not a CSS border-triangle) specifically so the white outline
@@ -3751,12 +3764,9 @@
     els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
 
     updateFrameFit();
+    applyStandaloneMargin();
     renderPitchMarkings();
     requestWakeLock();
-    nudgeViewportForStandalone();
-    document.addEventListener('visibilitychange', function(){
-      if (!document.hidden) nudgeViewportForStandalone(); // covers returning from background, not just cold launch
-    });
     window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
     window.addEventListener('orientationchange', function(){ updateFrameFit(); renderPitchMarkings(); });
     if (window.visualViewport){
