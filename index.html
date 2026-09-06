@@ -165,6 +165,10 @@
   .glass-choice-btn:active{ transform:scale(.97); background:rgba(255,255,255,.16); }
   .glass-choice-btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
   .glass-choice-btn.primary:active{ opacity:.85; }
+  /* "Ny økt" when a session already exists - starting over would discard
+     it, so it needs the same press-again-to-confirm pattern as "Avslutt
+     og nullstill" rather than firing on a single tap. */
+  .glass-choice-btn.armed{ background:var(--danger); color:#fff; border-color:transparent; }
   .launcher-choice-cancel{
     display:block; width:100%; margin:4px 0 0; padding:10px;
     background:none; border:none; color:rgba(255,255,255,.5);
@@ -749,6 +753,7 @@
     transition:background .12s ease;
   }
   .info-popup-close:active{ background:#e2e4e8; }
+  .settings-home-btn{ right:54px; font-size:15px; }
   #infoPopupText{ margin:0; }
   .duration-picker-card{ text-align:center; }
   .duration-picker-wheel{
@@ -969,6 +974,7 @@
         <div class="launcher-choice-panel" id="launcherChoicePanelChoice">
           <p class="launcher-choice-title">Trenerappen</p>
           <p class="launcher-choice-sub">Hvordan vil du starte?</p>
+          <button type="button" id="continueSessionChoiceBtn" class="glass-choice-btn primary" hidden>Fortsett fra forrige økt</button>
           <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
           <button type="button" id="joinSessionChoiceBtn" class="glass-choice-btn">Delta i eksisterende økt</button>
           <button type="button" id="launcherChoiceCancelBtn" class="launcher-choice-cancel">Avbryt</button>
@@ -1032,6 +1038,7 @@
 
   <div id="settingsModal" class="modal">
   <div class="modal-card settings-card">
+    <button type="button" id="settingsHomeBtn" class="info-popup-close settings-home-btn" aria-label="Til hovedmeny">⌂</button>
     <button type="button" id="settingsCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2>Innstillinger</h2>
     <p class="sub">Skriv inn navn på spillerne og standard byttetid.</p>
@@ -1318,7 +1325,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6';
+  var APP_VERSION = '1.6.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1370,7 +1377,10 @@
   /** @type {AppState[]} */
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
-  var launcherEnteredOnce = false; // true once the app has actually been entered this page-load, so the tile skips the new/join choice on repeat visits
+  var newSessionConfirmArmed = false; // "Ny økt" needs a second press to confirm when there's already a session to discard - see disarmNewSessionConfirm()
+  var newSessionConfirmTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+  var NEW_SESSION_LABEL = 'Ny økt';
+  var NEW_SESSION_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
   var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
@@ -3217,6 +3227,7 @@
     els.launcherChoiceOverlay = qs('launcherChoiceOverlay');
     els.launcherChoicePanelChoice = qs('launcherChoicePanelChoice');
     els.launcherChoicePanelJoin = qs('launcherChoicePanelJoin');
+    els.continueSessionChoiceBtn = qs('continueSessionChoiceBtn');
     els.newSessionChoiceBtn = qs('newSessionChoiceBtn');
     els.joinSessionChoiceBtn = qs('joinSessionChoiceBtn');
     els.launcherChoiceCancelBtn = qs('launcherChoiceCancelBtn');
@@ -3236,6 +3247,7 @@
     els.okBtn = qs('settingsOkBtn');
     els.cancelBtn = qs('settingsCancelBtn');
     els.settingsCloseBtn = qs('settingsCloseBtn');
+    els.settingsHomeBtn = qs('settingsHomeBtn');
     els.settingsCloseConfirmModal = qs('settingsCloseConfirmModal');
     els.settingsCloseSaveBtn = qs('settingsCloseSaveBtn');
     els.settingsCloseDiscardBtn = qs('settingsCloseDiscardBtn');
@@ -3343,20 +3355,34 @@
       var t = /** @type {HTMLInputElement} */ (e.target);
       if (t && t.tagName === 'INPUT' && t.type !== 'checkbox') settingsDirty = true;
     });
-    els.settingsCloseBtn.addEventListener('click', function(){
+    // Shared by both the × (just close, back to whatever's running behind
+    // settings) and the ⌂ (go all the way home) buttons - only the intent
+    // differs, so the dirty-check/confirm dance below only needs writing
+    // once. settingsCloseIntent records which of the two to finish with
+    // once a pending "save changes?" resolves.
+    var settingsCloseIntent = 'close';
+    function requestCloseSettings(intent){
+      settingsCloseIntent = intent;
       if (!settingsDirty){
         els.settingsModal.classList.remove('open');
+        if (intent === 'home') showLauncherMenu();
         return;
       }
       els.settingsCloseConfirmModal.classList.add('open');
-    });
+    }
+    els.settingsCloseBtn.addEventListener('click', function(){ requestCloseSettings('close'); });
+    els.settingsHomeBtn.addEventListener('click', function(){ requestCloseSettings('home'); });
     els.settingsCloseSaveBtn.addEventListener('click', function(){
       els.settingsCloseConfirmModal.classList.remove('open');
-      saveSettings();
+      saveSettings(); // only actually closes settingsModal if the names are valid
+      if (settingsCloseIntent === 'home' && !els.settingsModal.classList.contains('open')){
+        showLauncherMenu();
+      }
     });
     els.settingsCloseDiscardBtn.addEventListener('click', function(){
       els.settingsCloseConfirmModal.classList.remove('open');
       els.settingsModal.classList.remove('open');
+      if (settingsCloseIntent === 'home') showLauncherMenu();
     });
     els.settingsCloseCancelBtn.addEventListener('click', function(){
       els.settingsCloseConfirmModal.classList.remove('open');
@@ -3517,16 +3543,31 @@
 
     function enterAppFromLauncher(){
       closeLauncherChoice();
-      launcherEnteredOnce = true;
       els.launcherTile.classList.add('lifted');
       setTimeout(function(){
         els.launcherScreen.classList.add('hidden');
       }, 500);
     }
 
+    function disarmNewSessionConfirm(){
+      clearTimeout(newSessionConfirmTimer);
+      newSessionConfirmArmed = false;
+      els.newSessionChoiceBtn.textContent = NEW_SESSION_LABEL;
+      els.newSessionChoiceBtn.classList.remove('armed', 'shake-btn');
+    }
+
+    // Re-run every time the choice panel is (re)shown - not just on the
+    // very first launcher visit - so "Fortsett fra forrige økt" only
+    // appears when there's an actual team to go back to, and "Ny økt"
+    // picks up whichever of the two is the more likely tap right now.
     function showLauncherChoicePanel(){
       els.launcherChoicePanelChoice.hidden = false;
       els.launcherChoicePanelJoin.hidden = true;
+      disarmNewSessionConfirm();
+      var hasSession = state.players.length > 0;
+      els.continueSessionChoiceBtn.hidden = !hasSession;
+      els.continueSessionChoiceBtn.classList.toggle('primary', hasSession);
+      els.newSessionChoiceBtn.classList.toggle('primary', !hasSession);
     }
 
     function showLauncherJoinPanel(){
@@ -3545,6 +3586,7 @@
 
     function closeLauncherChoice(){
       els.launcherChoiceOverlay.classList.remove('open');
+      disarmNewSessionConfirm();
     }
 
     function submitLauncherJoin(){
@@ -3567,11 +3609,10 @@
       });
     }
 
-    // Tapping the tile only offers the New/Join choice the first time the
-    // app is entered this page-load - once inside, "back to menu" from the
-    // action sheet just needs to re-play the same reveal, not re-ask.
+    // The choice popup now opens on every tap of the tile (not just the
+    // first visit this page-load), so returning from "Gå tilbake til
+    // hovedmeny" always offers all three options again.
     els.launcherTile.addEventListener('click', function(){
-      if (launcherEnteredOnce){ enterAppFromLauncher(); return; }
       openLauncherChoice();
     });
     // The popup is nested inside .launcher-tile (so it can inherit the
@@ -3579,7 +3620,31 @@
     // click inside it would bubble up and re-trigger the tile's own
     // click handler above.
     els.launcherChoiceOverlay.addEventListener('click', function(e){ e.stopPropagation(); });
-    els.newSessionChoiceBtn.addEventListener('click', enterAppFromLauncher);
+    els.continueSessionChoiceBtn.addEventListener('click', enterAppFromLauncher);
+    // "Ny økt" discards the current team/match when there is one, so it
+    // needs the same press-again-to-confirm pattern as "Avslutt og
+    // nullstill" - with nothing to lose (a genuinely fresh app), it just
+    // proceeds straight in, same as "Fortsett" would.
+    els.newSessionChoiceBtn.addEventListener('click', function(){
+      if (state.players.length === 0){
+        enterAppFromLauncher();
+        return;
+      }
+      if (!newSessionConfirmArmed){
+        newSessionConfirmArmed = true;
+        els.newSessionChoiceBtn.textContent = NEW_SESSION_CONFIRM_LABEL;
+        els.newSessionChoiceBtn.classList.add('armed');
+        els.newSessionChoiceBtn.classList.remove('shake-btn');
+        void els.newSessionChoiceBtn.offsetWidth; // restart the shake if pressed again quickly
+        els.newSessionChoiceBtn.classList.add('shake-btn');
+        clearTimeout(newSessionConfirmTimer);
+        newSessionConfirmTimer = setTimeout(disarmNewSessionConfirm, 2500);
+        return;
+      }
+      disarmNewSessionConfirm();
+      resetMatch();
+      enterAppFromLauncher();
+    });
     els.joinSessionChoiceBtn.addEventListener('click', showLauncherJoinPanel);
     els.launcherChoiceCancelBtn.addEventListener('click', closeLauncherChoice);
     els.launcherChoiceBackBtn.addEventListener('click', showLauncherChoicePanel);
