@@ -642,6 +642,15 @@
   }
   #nameRows{ display:flex; flex-direction:column; gap:8px; }
   .name-row{ display:flex; gap:8px; align-items:center; }
+  /* The name list manages its own row count (see syncNameRows) - a new
+     blank row fades in as soon as you fill the second-to-last one, and
+     fades out again if a name is deleted leaving too many spares. */
+  .name-row-enter{ animation:nameRowEnter .3s cubic-bezier(.25,.8,.25,1) both; }
+  @keyframes nameRowEnter{
+    from{ opacity:0; transform:translateY(-4px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  .name-row-exit{ opacity:0; transition:opacity .3s ease; pointer-events:none; }
   .name-input-wrap{ position:relative; flex:1; }
   /* Small red "!" attached to any field that's blocking progress (e.g. a
      required name field left empty, an invalid join code) - pairs with the
@@ -689,11 +698,6 @@
     width:34px; height:34px; flex:0 0 auto;
     display:flex; align-items:center; justify-content:center;
     font-size:15px; opacity:.55;
-  }
-  #addNameBtn{
-    margin-top:10px; border:1px dashed #c7cdd6; background:none;
-    color:var(--ink-soft); border-radius:var(--radius-sm);
-    padding:10px; width:100%; font-size:14px; font-weight:600; cursor:pointer;
   }
   .duration-input{ display:flex; align-items:center; gap:8px; }
   .duration-input input{
@@ -929,6 +933,8 @@
     .export-link-btn, .stack-btn, .modal-actions button, .bench-action-btn{ transition:none; }
     .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
     .swap-flight-token{ transition:none; }
+    .name-row-enter{ animation:none; }
+    .name-row-exit{ transition:none; }
   }
 </style>
 </head>
@@ -1032,7 +1038,6 @@
 
     <label class="section-label">Spillere</label>
     <div id="nameRows"></div>
-    <button type="button" id="addNameBtn">+ Legg til spiller</button>
 
     <label class="section-label">Kampvarighet</label>
     <div class="duration-input">
@@ -1293,7 +1298,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.5.3';
+  var APP_VERSION = '1.5.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2724,33 +2729,54 @@
 
   /* ---------------- Settings modal ---------------- */
 
-  // How many blank name fields to show by default, driven by "Antall
-  // utespillere" - always a few more than the field itself so there's room
-  // for a bench without immediately needing "+ Legg til spiller".
-  /** @param {number} fieldSize @returns {number} */
-  function defaultNameRowCount(fieldSize){
-    if (fieldSize <= 3) return 5;
-    if (fieldSize <= 6) return 8;
-    return 10;
+  // A row counts as "blank" (safe to auto-add/auto-trim) only if it's an
+  // ordinary editable row with nothing typed in it - a locked row (a
+  // player currently on the field) never counts, even though its input
+  // can't be edited here.
+  /** @param {HTMLElement} row @returns {boolean} */
+  function isBlankRow(row){
+    if (row.classList.contains('locked')) return false;
+    var input = /** @type {HTMLInputElement|null} */ (row.querySelector('input'));
+    return !!input && !input.value.trim();
   }
 
-  // Grows/shrinks the visible name rows to match the current "Antall
-  // utespillere" value, live as it's being typed during first-run setup.
-  // Never removes a row that already has a name typed into it - only trims
-  // trailing blank rows, and stops as soon as it hits a non-blank one.
-  function resizeNameRowsToFieldSize(){
-    if (els.fieldSizeInput.disabled) return;
+  /** @param {HTMLElement} row */
+  function fadeOutRow(row){
+    row.classList.add('name-row-exit');
+    setTimeout(function(){ row.remove(); }, 300);
+  }
+
+  // Keeps the name list self-managing, replacing the old fixed 5/8/10
+  // ladder and the "+ Legg til spiller" button entirely:
+  //  - never fewer than fieldSize+1 rows total (a full XI plus one sub -
+  //    the practical minimum to actually run a match)
+  //  - always exactly 2 blank rows available at the tail, so there's
+  //    always room to type the next name without any extra step - a new
+  //    one fades in the moment the second-to-last blank is filled, and
+  //    spares fade back out if a name is deleted and leaves too many.
+  // Called after anything that could change the count: a name field
+  // losing focus, a row being deleted, or (first-run only, before "Antall
+  // utespillere" locks) the field size changing.
+  function syncNameRows(){
     var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 3));
-    var target = defaultNameRowCount(fieldSize);
+    var floor = fieldSize + 1;
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
-    if (rows.length < target){
-      for (var i = rows.length; i < target; i++) addNameRow(null, '', i+1);
-    } else {
-      for (var j = rows.length - 1; j >= target; j--){
-        var input = rows[j].querySelector('input');
-        if (input && input.value.trim()) break;
-        if (els.nameRows.children.length > 1) rows[j].remove();
-      }
+
+    while (rows.length < floor){
+      rows.push(addNameRow(null, '', rows.length + 1));
+    }
+
+    function trailingBlankCount(){
+      var n = 0;
+      for (var i = rows.length - 1; i >= 0 && isBlankRow(rows[i]); i--) n++;
+      return n;
+    }
+
+    while (trailingBlankCount() > 2 && rows.length > floor){
+      fadeOutRow(/** @type {HTMLElement} */ (rows.pop()));
+    }
+    while (trailingBlankCount() < 2){
+      rows.push(addNameRow(null, '', rows.length + 1, false, true));
     }
   }
 
@@ -2856,15 +2882,13 @@
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.nameRows.innerHTML = '';
+    els.fieldSizeInput.value = state.fieldSize || 3;
 
-    if (state.players.length === 0){
-      var rowCount = defaultNameRowCount(state.fieldSize || 3);
-      for (var i=0;i<rowCount;i++) addNameRow(null, '', i+1, false);
-    } else {
-      state.players.forEach(function(p, idx){
-        addNameRow(p.id, p.name, idx+1, state.onField.indexOf(p.id) !== -1);
-      });
-    }
+    state.players.forEach(function(p, idx){
+      addNameRow(p.id, p.name, idx+1, state.onField.indexOf(p.id) !== -1);
+    });
+    syncNameRows(); // tops up to fieldSize+1 rows and the 2 trailing blanks
+
     els.matchDurationInput.value = Math.round(state.matchDurationMs/60000);
     var totalMs = state.defaultDurationMs;
     els.durMin.value = Math.floor(totalMs/60000);
@@ -2873,15 +2897,14 @@
     els.shareSessionToggle.checked = !!sessionCode;
     updateShareModeUI();
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
-    els.fieldSizeInput.value = state.fieldSize || 3;
     els.fieldSizeInput.disabled = !isFirstRun;
     els.fieldSizeLockedNote.style.display = isFirstRun ? 'none' : '';
   }
 
-  /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] */
-  function addNameRow(id, name, indexHint, locked){
+  /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
+  function addNameRow(id, name, indexHint, locked, fadeIn){
     var row = document.createElement('div');
-    row.className = 'name-row' + (locked ? ' locked' : '');
+    row.className = 'name-row' + (locked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
     row.innerHTML =
       '<div class="name-input-wrap">' +
@@ -2889,15 +2912,26 @@
       '</div>' +
       (locked
         ? '<span class="locked-row-note" title="Utespillere kan ikke endres eller fjernes her mens de er på banen">🔒</span>'
-        : '<button type="button" class="removeRow" aria-label="Fjern">×</button>');
+        : '<button type="button" class="removeRow" aria-label="Fjern"' + (name && name.trim() ? '' : ' style="display:none;"') + '>×</button>');
     els.nameRows.appendChild(row);
     var wrap = row.querySelector('.name-input-wrap');
-    if (locked) return;
-    /** @type {HTMLElement} */ (row.querySelector('.removeRow')).addEventListener('click', function(){
-      if (els.nameRows.children.length > 1) row.remove();
+    if (locked) return row;
+    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.removeRow'));
+    var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
+    removeBtn.addEventListener('click', function(){
+      row.remove();
+      syncNameRows();
     });
-    /** @type {HTMLElement} */ (row.querySelector('input')).addEventListener('input', function(){ clearFieldInvalid(wrap); });
-    attachSuggestions(row.querySelector('input'), wrap);
+    // A blank row manages itself (syncNameRows keeps exactly 2 spares) -
+    // the remove button only makes sense once there's an actual name to
+    // take back out.
+    input.addEventListener('input', function(){
+      clearFieldInvalid(wrap);
+      removeBtn.style.display = input.value.trim() ? '' : 'none';
+    });
+    input.addEventListener('blur', syncNameRows);
+    attachSuggestions(input, wrap);
+    return row;
   }
 
   function attachSuggestions(input, wrap){
@@ -3222,7 +3256,6 @@
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
     els.nameRows = qs('nameRows');
-    els.addNameBtn = qs('addNameBtn');
     els.durMin = qs('durMin');
     els.durSec = qs('durSec');
     els.fieldSizeInput = qs('fieldSizeInput');
@@ -3319,8 +3352,7 @@
       els.backActionModal.classList.remove('open');
     });
     els.settingsBtn.addEventListener('click', function(){ if (canEdit()) openSettings(false); });
-    els.addNameBtn.addEventListener('click', function(){ addNameRow(null, '', els.nameRows.children.length+1); });
-    els.fieldSizeInput.addEventListener('input', resizeNameRowsToFieldSize);
+    els.fieldSizeInput.addEventListener('input', syncNameRows);
     els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
