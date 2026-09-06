@@ -1356,7 +1356,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.4';
+  var APP_VERSION = '1.6.5';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2095,12 +2095,20 @@
     var vh = vv ? vv.height : window.innerHeight;
     if (isTouchDevice){
       els.viewportFrame.classList.add('fullscreen-fit');
+      // Pin the OUTER frame too, not just #app - #app was centered inside
+      // #viewport-frame, whose own 100vh/100dvh was just as capable of
+      // being stale, in which case #app (now correctly sized) simply had
+      // nowhere to grow into and stayed clipped by its short parent.
       if (vw && vh){
+        els.viewportFrame.style.width = vw + 'px';
+        els.viewportFrame.style.height = vh + 'px';
         els.appEl.style.width = vw + 'px';
         els.appEl.style.height = vh + 'px';
       }
       return;
     }
+    els.viewportFrame.style.width = '';
+    els.viewportFrame.style.height = '';
     els.appEl.style.width = '';
     els.appEl.style.height = '';
     if (!vw || !vh) return;
