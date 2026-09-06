@@ -45,6 +45,11 @@
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
   }
+  /* #viewport-frame is position:fixed (out of normal flow), so body has
+     nothing in normal flow to scroll on its own - this guarantees 1px of
+     real scrollable overflow so the standalone-PWA viewport "nudge" (see
+     nudgeViewportForStandalone) has something to actually scroll into. */
+  body{ min-height:calc(100% + 1px); }
   body{ -webkit-user-select:none; user-select:none; }
 
   /* ---------- Layout ---------- */
@@ -1374,7 +1379,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.9';
+  var APP_VERSION = '1.6.10';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2089,10 +2094,6 @@
       '<rect x="' + goalX + '" y="' + (H - margin - goalH) + '" width="' + goalW + '" height="' + goalH + '" fill="none" stroke="' + lc + '" stroke-width="' + stroke + '"/>';
   }
 
-  /* Fills the real screen edge-to-edge with no rounding/border when the
-     viewport already closely matches the target phone ratio (iPhone 17
-     lineup); falls back to a rounded, bordered letterbox frame otherwise
-     (e.g. a resized desktop browser window). */
   // Plain full-bleed is the CSS default now (see #viewport-frame) - a
   // real phone needs this function to do nothing at all to look right.
   // Its only job is deciding whether to ADD .desktop-preview (the
@@ -2112,6 +2113,24 @@
     var actualRatio = vw/vh;
     var diff = Math.abs(actualRatio - targetRatio) / targetRatio;
     els.viewportFrame.classList.toggle('desktop-preview', diff >= 0.04);
+  }
+
+  // A standalone/home-screen iOS PWA has repeatedly rendered short at the
+  // bottom even with plain, JS-independent position:fixed;inset:0 CSS -
+  // confirmed not a timing race (still wrong with JS disabled entirely)
+  // and not a caching issue (sw.js is network-first for navigations), so
+  // something about how WebKit computes the fixed-position containing
+  // block specifically in standalone display-mode is short by a fixed
+  // amount. A momentary real scroll (not just reading a value) is a long-
+  // documented way to force Safari to recompute/settle that - body has a
+  // guaranteed 1px of real overflow to scroll into (see body's
+  // min-height) since #viewport-frame itself is position:fixed and
+  // contributes nothing to normal document flow to scroll otherwise.
+  function nudgeViewportForStandalone(){
+    var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || !!(/** @type {any} */ (window.navigator).standalone);
+    if (!isStandalone) return;
+    window.scrollTo(0, 1);
+    setTimeout(function(){ window.scrollTo(0, 0); }, 60);
   }
 
   // SVG (not a CSS border-triangle) specifically so the white outline
@@ -3734,6 +3753,10 @@
     updateFrameFit();
     renderPitchMarkings();
     requestWakeLock();
+    nudgeViewportForStandalone();
+    document.addEventListener('visibilitychange', function(){
+      if (!document.hidden) nudgeViewportForStandalone(); // covers returning from background, not just cold launch
+    });
     window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
     window.addEventListener('orientationchange', function(){ updateFrameFit(); renderPitchMarkings(); });
     if (window.visualViewport){
