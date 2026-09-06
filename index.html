@@ -84,8 +84,23 @@
       height:min(100dvh, calc(100vw * 440 / 956));
     }
   }
+  /* position:fixed + inset:0 (not a computed 100vw/100dvh length) so this
+     stays anchored to the real viewport edges continuously, however/
+     whenever iOS actually settles them - a fixed-position box's geometry
+     tracks the browser's own live viewport, it isn't a one-time snapshot
+     the way a vh/dvh length (or a JS-measured pixel value written once)
+     is. That distinction matters specifically for standalone/home-screen
+     PWAs on iOS: window.innerHeight, 100dvh AND window.visualViewport
+     can all still report a short value right after a cold launch in
+     portrait, only correcting themselves on a genuine orientation event -
+     no fixed delay or event listener reliably catches that, but this
+     doesn't need to catch it, since it isn't a snapshot in the first place. */
+  #viewport-frame.fullscreen-fit{
+    position:fixed; inset:0;
+    width:auto; height:auto;
+  }
   #viewport-frame.fullscreen-fit #app{
-    width:100vw; height:100vh; height:100dvh;
+    width:100%; height:100%;
     border-radius:0; border:none; box-shadow:none;
   }
 
@@ -1356,7 +1371,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.5';
+  var APP_VERSION = '1.6.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2077,40 +2092,22 @@
      (e.g. a resized desktop browser window). */
   function updateFrameFit(){
     // A real phone always goes edge-to-edge, in either orientation - the
-    // aspect-ratio check below is only meant to distinguish "this window
-    // happens to be phone-shaped" from "this is a resized desktop
-    // browser" for the letterboxed preview frame. Touch + no-hover is a
-    // direct, reliable signal for "this is an actual phone".
+    // aspect-ratio check below only distinguishes "this window happens to
+    // be phone-shaped" from "this is a resized desktop browser" for the
+    // letterboxed preview frame. Touch + no-hover is a direct, reliable
+    // signal for "this is an actual phone" - and .fullscreen-fit itself
+    // is position:fixed + inset:0 (see its CSS), not a measured pixel
+    // value, specifically because window.innerHeight, 100dvh AND
+    // window.visualViewport can all still report a short value right
+    // after a cold launch of a standalone/home-screen PWA in portrait,
+    // only correcting on a genuine orientation event - nothing measured
+    // here would reliably catch that, so nothing here needs to.
     var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
-    // visualViewport reflects Safari's *actual* currently-visible area
-    // (its address bar collapsing/expanding included) more reliably than
-    // window.innerHeight or the CSS 100vh/100dvh units, which can be
-    // briefly stale right after load - especially in standalone PWA mode
-    // - and only self-correct once a real resize/orientationchange fires.
-    // That's exactly why toggling orientation "fixed" it: this measures
-    // and applies the same corrected value immediately instead of
-    // depending on the CSS unit to catch up on its own.
-    var vv = window.visualViewport;
-    var vw = vv ? vv.width : window.innerWidth;
-    var vh = vv ? vv.height : window.innerHeight;
     if (isTouchDevice){
       els.viewportFrame.classList.add('fullscreen-fit');
-      // Pin the OUTER frame too, not just #app - #app was centered inside
-      // #viewport-frame, whose own 100vh/100dvh was just as capable of
-      // being stale, in which case #app (now correctly sized) simply had
-      // nowhere to grow into and stayed clipped by its short parent.
-      if (vw && vh){
-        els.viewportFrame.style.width = vw + 'px';
-        els.viewportFrame.style.height = vh + 'px';
-        els.appEl.style.width = vw + 'px';
-        els.appEl.style.height = vh + 'px';
-      }
       return;
     }
-    els.viewportFrame.style.width = '';
-    els.viewportFrame.style.height = '';
-    els.appEl.style.width = '';
-    els.appEl.style.height = '';
+    var vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
     var targetRatio = vw > vh ? 956/440 : 440/956;
     var actualRatio = vw/vh;
@@ -3741,14 +3738,15 @@
     window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
     window.addEventListener('orientationchange', function(){ updateFrameFit(); renderPitchMarkings(); });
     if (window.visualViewport){
-      // Fires as Safari's own address bar collapses/expands, independent
-      // of (and often earlier than) window's own resize event - the
-      // exact case that left portrait cut off on first load.
-      window.visualViewport.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
+      // #viewport-frame/#app size themselves now (see updateFrameFit),
+      // but renderPitchMarkings() reads #field-wrap's rendered box as a
+      // one-off snapshot each call - re-run it whenever Safari's chrome
+      // settles so the pitch lines aren't drawn against a still-short box.
+      window.visualViewport.addEventListener('resize', renderPitchMarkings);
     }
-    // Defensive follow-up in case the very first measurement (above) was
-    // still mid-settle on load - cheap, and self-correcting if not needed.
-    setTimeout(function(){ updateFrameFit(); renderPitchMarkings(); }, 400);
+    // Same reasoning as above, in case the very first measurement (on
+    // load) was still mid-settle - cheap, and harmless if not needed.
+    setTimeout(renderPitchMarkings, 400);
     if (window.ResizeObserver){
       new ResizeObserver(function(){ renderPitchMarkings(); }).observe(els.fieldWrap);
     }
