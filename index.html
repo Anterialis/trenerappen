@@ -1356,7 +1356,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.3';
+  var APP_VERSION = '1.6.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2079,18 +2079,30 @@
     // A real phone always goes edge-to-edge, in either orientation - the
     // aspect-ratio check below is only meant to distinguish "this window
     // happens to be phone-shaped" from "this is a resized desktop
-    // browser" for the letterboxed preview frame, and it's an unreliable
-    // way to detect an actual phone: Safari's address bar can still be
-    // expanded right after load, shrinking window.innerHeight in portrait
-    // only (landscape auto-collapses it), which was throwing portrait off
-    // the ratio threshold on real iPhones while landscape passed. Touch +
-    // no-hover is a direct, reliable signal instead.
+    // browser" for the letterboxed preview frame. Touch + no-hover is a
+    // direct, reliable signal for "this is an actual phone".
     var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    // visualViewport reflects Safari's *actual* currently-visible area
+    // (its address bar collapsing/expanding included) more reliably than
+    // window.innerHeight or the CSS 100vh/100dvh units, which can be
+    // briefly stale right after load - especially in standalone PWA mode
+    // - and only self-correct once a real resize/orientationchange fires.
+    // That's exactly why toggling orientation "fixed" it: this measures
+    // and applies the same corrected value immediately instead of
+    // depending on the CSS unit to catch up on its own.
+    var vv = window.visualViewport;
+    var vw = vv ? vv.width : window.innerWidth;
+    var vh = vv ? vv.height : window.innerHeight;
     if (isTouchDevice){
       els.viewportFrame.classList.add('fullscreen-fit');
+      if (vw && vh){
+        els.appEl.style.width = vw + 'px';
+        els.appEl.style.height = vh + 'px';
+      }
       return;
     }
-    var vw = window.innerWidth, vh = window.innerHeight;
+    els.appEl.style.width = '';
+    els.appEl.style.height = '';
     if (!vw || !vh) return;
     var targetRatio = vw > vh ? 956/440 : 440/956;
     var actualRatio = vw/vh;
@@ -3720,6 +3732,15 @@
     requestWakeLock();
     window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
     window.addEventListener('orientationchange', function(){ updateFrameFit(); renderPitchMarkings(); });
+    if (window.visualViewport){
+      // Fires as Safari's own address bar collapses/expands, independent
+      // of (and often earlier than) window's own resize event - the
+      // exact case that left portrait cut off on first load.
+      window.visualViewport.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
+    }
+    // Defensive follow-up in case the very first measurement (above) was
+    // still mid-settle on load - cheap, and self-correcting if not needed.
+    setTimeout(function(){ updateFrameFit(); renderPitchMarkings(); }, 400);
     if (window.ResizeObserver){
       new ResizeObserver(function(){ renderPitchMarkings(); }).observe(els.fieldWrap);
     }
