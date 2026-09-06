@@ -334,15 +334,20 @@
     font-size:17px; font-weight:800; letter-spacing:-.01em;
     color:var(--ink);
   }
-  .multi-select-btn{
-    border:none; background:none; color:var(--ink-soft);
-    font-size:12px; font-weight:700; padding:4px 6px;
+  .bench-actions{ display:flex; gap:8px; }
+  .bench-action-btn{
+    display:flex; align-items:center; gap:5px;
+    border:none; border-radius:999px;
+    background:rgba(15,31,54,.08); color:var(--ink-soft);
+    font-size:12px; font-weight:700; padding:6px 10px;
     cursor:pointer;
-    transition:transform .12s ease;
+    transition:transform .12s ease, background .15s ease, color .15s ease;
   }
-  .multi-select-btn:active{ transform:scale(.94); }
-  .multi-select-btn.active{ color:var(--danger); }
-  .multi-select-btn.ready{ color:#1f9d4c; }
+  .bench-action-btn .btn-icon{ font-size:14px; line-height:1; }
+  .bench-action-btn:active{ transform:scale(.94); }
+  .bench-action-btn.shake{ animation:shake .4s; }
+  .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
+  .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }
   #bench{
     flex:1; min-height:0; overflow-y:auto;
     display:flex; flex-wrap:wrap; align-content:flex-start;
@@ -483,6 +488,16 @@
   }
   .token.multi-checked .avatar{
     box-shadow:0 0 0 4px rgba(50,180,90,.7), var(--shadow-sm);
+  }
+  /* Pulsing (vs. multi-checked's solid) green ring - marks the bench
+     player a "Forslag" tap recommends completing the swap with, so it
+     reads as "please tap me" rather than "already chosen". */
+  .token.suggested-partner .avatar{
+    animation:suggestPulse 1.3s ease-in-out infinite;
+  }
+  @keyframes suggestPulse{
+    0%,100%{ box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
+    50%{ box-shadow:0 0 0 8px rgba(50,180,90,.3), var(--shadow-sm); }
   }
   /* Small solid triangle with a true, uniform white outline (an SVG
      polygon's stroke, not a CSS border-triangle) - up-triangles (most/
@@ -772,7 +787,9 @@
   .legend-swatch.rank-least{ background:var(--navy); }
   .legend-swatch.check{ background:#32b45a; color:#fff; }
   .legend-swatch.ring-orange{ box-shadow:0 0 0 3px rgba(255,138,61,.65); }
+  .legend-swatch.suggest-ring{ box-shadow:0 0 0 3px rgba(50,180,90,.75); }
   .legend-swatch.order{ background:var(--navy); color:#fff; font-size:16px; }
+  .legend-swatch.icon-btn-swatch{ background:var(--navy); color:#fff; font-size:16px; }
   .legend-text{ font-size:13px; color:var(--ink); line-height:1.35; }
 
   .modal-actions{ display:flex; gap:10px; margin-top:22px; }
@@ -861,7 +878,8 @@
   .view-only #undoBtn,
   .view-only #endBtn,
   .view-only #settingsBtn,
-  .view-only #multiSelectBtn{
+  .view-only #multiSelectBtn,
+  .view-only #swapSuggestionBtn{
     opacity:.35; pointer-events:none;
   }
   .view-only .token{ pointer-events:none; }
@@ -881,7 +899,8 @@
     .stack-btn.danger{ transition:none; }
     .ghost-token{ transition:none; }
     .avatar{ transition:none; }
-    .export-link-btn, .stack-btn, .modal-actions button, .multi-select-btn{ transition:none; }
+    .export-link-btn, .stack-btn, .modal-actions button, .bench-action-btn{ transition:none; }
+    .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
   }
 </style>
 </head>
@@ -957,7 +976,14 @@
     <div id="bench-wrap">
       <div class="bench-label-row">
         <div class="bench-label">Innbytterbenken</div>
-        <button type="button" id="multiSelectBtn" class="multi-select-btn">Velg flere</button>
+        <div class="bench-actions">
+          <button type="button" id="swapSuggestionBtn" class="bench-action-btn" aria-label="Bytteforslag">
+            <span class="btn-icon" aria-hidden="true">⇄</span><span>Forslag</span>
+          </button>
+          <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="Gjør flere bytter">
+            <span class="btn-icon" aria-hidden="true">⇅</span><span id="multiSelectBtnLabel">Gjør flere bytter</span>
+          </button>
+        </div>
       </div>
       <div id="bench"></div>
     </div>
@@ -1106,7 +1132,10 @@
       <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt minst – vurder start til neste kamp. Blå trekant.</span></div>
       <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert – trykk på en spiller i motsatt sone for å bytte dem.</span></div>
       <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i "Velg flere"-modus (grønn ring), klar til å sendes ut.</span></div>
+      <div class="legend-row"><span class="legend-swatch suggest-ring"></span><span class="legend-text">Foreslått byttepartner (pulserende grønn ring) – trykk for å bekrefte bytteforslaget.</span></div>
       <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre = har spilt/ventet lengst.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄</span><span class="legend-text">Bytteforslag – foreslår å bytte ut utespilleren med mest spilletid som også har spilt lenger enn byttetiden, med innbytteren som har sittet lengst på benken.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅</span><span class="legend-text">Gjør flere bytter – velg flere utespillere og innbyttere og bytt dem samtidig.</span></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>
@@ -1236,7 +1265,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.5.1';
+  var APP_VERSION = '1.5.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1279,6 +1308,8 @@
   var state = /** @type {AppState} */ (/** @type {unknown} */ (null)); // set by loadState()/joinSession() before any function below runs
   /** @type {Selection|null} */
   var selected = null; // {id, zone} of the currently tap-selected token, if any
+  /** @type {string|null} */
+  var suggestedPartnerId = null; // bench player id a "Forslag" tap recommends completing the swap with - see computeSwapSuggestion()
   /** @type {string[]} */
   var roster = []; // remembered player names, alphabetical
   /** @type {AppState[]} */
@@ -1730,6 +1761,24 @@
     return badges;
   }
 
+  // Picks the swap the "Forslag" button recommends: whoever on the field
+  // has the most playtime (same metric/toggle as computeRankBadges above)
+  // AMONG those who have actually exceeded the defined swap time (byttetid)
+  // in their current stint - not just whoever has the most playtime
+  // overall, since that player might have only just come on - paired with
+  // whoever has waited longest on the bench. Returns null when nobody on
+  // the field is actually due yet, or the bench is empty.
+  /** @param {number} now @returns {{fieldId:string, benchId:string}|null} */
+  function computeSwapSuggestion(now){
+    if (state.onBench.length === 0) return null;
+    var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
+    var due = state.onField.filter(function(id){ return fieldElapsed(id, now) >= state.defaultDurationMs; });
+    if (due.length === 0) return null;
+    due.sort(function(a,b){ return msFor(b, now) - msFor(a, now); });
+    var benchSorted = state.onBench.slice().sort(function(a,b){ return benchElapsed(b, now) - benchElapsed(a, now); });
+    return { fieldId: due[0], benchId: benchSorted[0] };
+  }
+
   /** @template T @param {T} value @returns {T} */
   function cloneStateValue(value){
     try { return JSON.parse(JSON.stringify(value)); }
@@ -1810,6 +1859,7 @@
     if (redoStack.length > UNDO_MAX) redoStack.shift();
     restoreState(snap);
     selected = null;
+    suggestedPartnerId = null;
     saveState();
     updateUndoUI();
     renderAll();
@@ -1823,6 +1873,7 @@
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     restoreState(snap);
     selected = null;
+    suggestedPartnerId = null;
     saveState();
     updateUndoUI();
     renderAll();
@@ -2062,6 +2113,7 @@
     Array.prototype.forEach.call(document.querySelectorAll('.token'), function(el){
       var isSel = selected && selected.id === el.dataset.id;
       el.classList.toggle('selected', !!isSel);
+      el.classList.toggle('suggested-partner', suggestedPartnerId === el.dataset.id);
     });
     updateSelectionInfo();
   }
@@ -2147,25 +2199,38 @@
 
   function updateMultiSelectUI(){
     if (!multiMode){
-      els.multiSelectBtn.textContent = 'Gjør flere bytter';
+      els.multiSelectBtnLabel.textContent = 'Gjør flere bytter';
       els.multiSelectBtn.classList.remove('active','ready');
       return;
     }
     els.multiSelectBtn.classList.add('active');
     if (multiSelected.length === 0){
-      els.multiSelectBtn.textContent = 'Avbryt valg';
+      els.multiSelectBtnLabel.textContent = 'Avbryt valg';
       els.multiSelectBtn.classList.remove('ready');
       return;
     }
     var fieldN = multiSelectedOnField().length;
     var benchN = multiSelectedOnBench().length;
     if (fieldN === benchN){
-      els.multiSelectBtn.textContent = 'Bytt ' + fieldN + ' par →';
+      els.multiSelectBtnLabel.textContent = 'Bytt ' + fieldN + ' par →';
       els.multiSelectBtn.classList.add('ready');
     } else {
-      els.multiSelectBtn.textContent = fieldN + ' ute · ' + benchN + ' inn';
+      els.multiSelectBtnLabel.textContent = fieldN + ' ute · ' + benchN + ' inn';
       els.multiSelectBtn.classList.remove('ready');
     }
+  }
+
+  // "Forslag" - marks (doesn't auto-perform) the swap computeSwapSuggestion()
+  // recommends, by driving the exact same selected+tap-to-confirm mechanism
+  // as a manual tap - see handleTap(). Shakes when multi-select mode is on
+  // (the two flows don't mix) or no suggestion is currently available.
+  function onSwapSuggestionBtnClick(){
+    if (!canEdit() || multiMode){ shakeElement(els.swapSuggestionBtn); return; }
+    var suggestion = computeSwapSuggestion(Date.now());
+    if (!suggestion){ shakeElement(els.swapSuggestionBtn); return; }
+    selected = { id: suggestion.fieldId, zone: 'field' };
+    suggestedPartnerId = suggestion.benchId;
+    applySelectionStyles();
   }
 
   function onMultiSelectBtnClick(){
@@ -2173,6 +2238,8 @@
     if (!multiMode){
       multiMode = true;
       multiSelected = [];
+      selected = null;
+      suggestedPartnerId = null;
       updateMultiSelectUI();
       renderAll();
       return;
@@ -2229,6 +2296,9 @@
   /* ---------------- Tap select / swap ---------------- */
 
   function handleTap(id, zone){
+    // Any real tap - whether it confirms a "Forslag" suggestion or not -
+    // drops that highlight before its own logic runs below.
+    suggestedPartnerId = null;
     if (!selected){
       selected = {id:id, zone:zone};
       applySelectionStyles();
@@ -2364,6 +2434,7 @@
   /** @param {string} id @param {'field'|'bench'} fromZone @param {number} clientX @param {number} clientY */
   function handleDrop(id, fromZone, clientX, clientY){
     selected = null;
+    suggestedPartnerId = null;
     applySelectionStyles();
 
     // Dropped directly on top of another player -> swap with them
@@ -2927,6 +2998,7 @@
     // lifetime cumulative.
     state.periodStartCumulative = cloneStateValue(state.cumulative);
     selected = null;
+    suggestedPartnerId = null;
     undoStack = [];
     redoStack = [];
     multiMode = false;
@@ -2957,6 +3029,7 @@
 
   function resetMatch(){
     selected = null;
+    suggestedPartnerId = null;
     undoStack = [];
     redoStack = [];
     timeUpNotified = {};
@@ -3037,6 +3110,8 @@
     els.reorgNoBtn = qs('reorgNoBtn');
     els.reorgYesBtn = qs('reorgYesBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
+    els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
+    els.swapSuggestionBtn = qs('swapSuggestionBtn');
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
     els.matchDurationInput = qs('matchDurationInput');
@@ -3161,6 +3236,7 @@
       resetMatch();
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
+    els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
     els.wakeLockToggle.addEventListener('change', function(){
       state.wakeLockEnabled = els.wakeLockToggle.checked;
       saveState();
