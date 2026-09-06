@@ -39,9 +39,9 @@
 
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body{
-    height:100%; margin:0; padding:0;
+    height:100%; height:-webkit-fill-available; margin:0; padding:0;
     overscroll-behavior:none;
-    background:#05070a;
+    background:var(--navy);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
   }
@@ -60,11 +60,16 @@
      carries that class and never needs to. */
   #viewport-frame{
     position:fixed; inset:0;
-    background:#05070a;
+    background:var(--navy);
     overflow:hidden;
   }
+  /* inset:0 (not a percentage height) so this doesn't depend on a
+     WebKit percentage-height resolving correctly inside a position:fixed
+     ancestor - a known unreliable edge case, and the one part of this
+     layout that hadn't yet been switched to the same "live edges" offset
+     mechanism already used successfully on #viewport-frame itself. */
   #app{
-    width:100%; height:100%;
+    position:absolute; inset:0;
     display:flex; flex-direction:column;
     background:var(--navy);
     overflow:hidden;
