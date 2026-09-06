@@ -350,6 +350,32 @@
   .bench-action-btn .btn-icon{ font-size:14px; line-height:1; }
   .bench-action-btn:active{ transform:scale(.94); }
   .bench-action-btn.shake{ animation:shake .4s; }
+  /* Sits directly under multiBytte - a plain, always-tappable "×" to bail
+     out of multi-select entirely (clear the marks and exit the mode),
+     rather than a drag gesture the button offers no hint of. Ordinary
+     flex flow (not position:absolute) so the row simply grows taller
+     while it's showing, instead of overlapping the bench list below. */
+  .multi-select-group{ display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .multi-cancel-btn{
+    width:26px; height:26px; border-radius:50%; border:none;
+    background:var(--danger); color:#fff;
+    font-size:15px; font-weight:800; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:transform .12s ease;
+  }
+  .multi-cancel-btn:active{ transform:scale(.9); }
+  /* Landscape: #bench-wrap is only ~36% of the width (see the layout
+     media query above), too narrow for icon+text pills without wrapping
+     - icon-only circular buttons instead, same icons the legend already
+     explains, so nothing is lost. */
+  @media (orientation: landscape){
+    .bench-action-btn{
+      width:38px; height:38px; padding:0; border-radius:50%;
+      justify-content:center;
+    }
+    .bench-action-btn .btn-label{ display:none; }
+    .bench-action-btn .btn-icon{ font-size:16px; }
+  }
   .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
   .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }
   #bench{
@@ -921,6 +947,7 @@
   .view-only #endBtn,
   .view-only #settingsBtn,
   .view-only #multiSelectBtn,
+  .view-only #multiSelectCancelBtn,
   .view-only #swapSuggestionBtn{
     opacity:.35; pointer-events:none;
   }
@@ -1025,11 +1052,14 @@
         <div class="bench-label">Innbytterbenken</div>
         <div class="bench-actions">
           <button type="button" id="swapSuggestionBtn" class="bench-action-btn" aria-label="Bytteforslag">
-            <span class="btn-icon" aria-hidden="true">⇄</span><span>Forslag</span>
+            <span class="btn-icon" aria-hidden="true">⇄</span><span class="btn-label">Forslag</span>
           </button>
-          <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="Gjør flere bytter">
-            <span class="btn-icon" aria-hidden="true">⇅</span><span id="multiSelectBtnLabel">Gjør flere bytter</span>
-          </button>
+          <div class="multi-select-group">
+            <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="multiBytte">
+              <span class="btn-icon" aria-hidden="true">⇅</span><span class="btn-label" id="multiSelectBtnLabel">multiBytte</span>
+            </button>
+            <button type="button" id="multiSelectCancelBtn" class="multi-cancel-btn" aria-label="Avbryt multiBytte" hidden>×</button>
+          </div>
         </div>
       </div>
       <div id="bench"></div>
@@ -1195,7 +1225,8 @@
       <div class="legend-row"><span class="legend-swatch suggest-ring"></span><span class="legend-text">Foreslått byttepartner (pulserende grønn ring) – trykk for å bekrefte bytteforslaget.</span></div>
       <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre = har spilt/ventet lengst.</span></div>
       <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄</span><span class="legend-text">Bytteforslag – foreslår å bytte ut utespilleren med mest spilletid som også har spilt lenger enn byttetiden, med innbytteren som har sittet lengst på benken.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅</span><span class="legend-text">Gjør flere bytter – velg flere utespillere og innbyttere og bytt dem samtidig.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅</span><span class="legend-text">multiBytte – velg flere utespillere og innbyttere og bytt dem samtidig.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="background:var(--danger);">×</span><span class="legend-text">Avbryt multiBytte – fjerner markeringen og avslutter valgmodus. Vises kun mens multiBytte er aktivert.</span></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>
@@ -1325,7 +1356,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.1';
+  var APP_VERSION = '1.6.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2265,8 +2296,9 @@
   }
 
   function updateMultiSelectUI(){
+    els.multiSelectCancelBtn.hidden = !multiMode;
     if (!multiMode){
-      els.multiSelectBtnLabel.textContent = 'Gjør flere bytter';
+      els.multiSelectBtnLabel.textContent = 'multiBytte';
       els.multiSelectBtn.classList.remove('active','ready');
       return;
     }
@@ -2285,6 +2317,18 @@
       els.multiSelectBtnLabel.textContent = fieldN + ' ute · ' + benchN + ' inn';
       els.multiSelectBtn.classList.remove('ready');
     }
+  }
+
+  // Bails out of multi-select entirely - clears any marked players and
+  // exits the mode in one tap, regardless of how many (if any) are
+  // currently marked. The red × below multiBytte drives this; the main
+  // button's own "0 selected" tap also reuses it (see onMultiSelectBtnClick).
+  function cancelMultiSelect(){
+    if (!canEdit()) return;
+    multiMode = false;
+    multiSelected = [];
+    updateMultiSelectUI();
+    renderAll();
   }
 
   // "Forslag" - marks (doesn't auto-perform) the swap computeSwapSuggestion()
@@ -2312,9 +2356,7 @@
       return;
     }
     if (multiSelected.length === 0){
-      multiMode = false;
-      updateMultiSelectUI();
-      renderAll();
+      cancelMultiSelect();
       return;
     }
     performMultiSwap();
@@ -3262,6 +3304,7 @@
     els.reorgYesBtn = qs('reorgYesBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
+    els.multiSelectCancelBtn = qs('multiSelectCancelBtn');
     els.swapSuggestionBtn = qs('swapSuggestionBtn');
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
@@ -3427,6 +3470,7 @@
       resetMatch();
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
+    els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
     els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
     els.wakeLockToggle.addEventListener('change', function(){
       state.wakeLockEnabled = els.wakeLockToggle.checked;
