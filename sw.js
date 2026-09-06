@@ -18,7 +18,7 @@
 // changes index.html, so the old cached shell gets purged on activate
 // instead of lingering.
 var CACHE_NAME = 'trenerapp-shell-v1.6.10';
-var APP_SHELL = ['/', '/index.html', '/icon-180.png', '/icon-512.png'];
+var APP_SHELL = ['/', '/index.html', '/manifest.json', '/icon-180.png', '/icon-512.png'];
 
 self.addEventListener('install', function(event){
   self.skipWaiting();
