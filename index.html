@@ -499,6 +499,22 @@
     0%,100%{ box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
     50%{ box-shadow:0 0 0 8px rgba(50,180,90,.3), var(--shadow-sm); }
   }
+  /* Live drag-over cue - shown on whichever token is currently under the
+     cursor/finger while dragging another token over it, so it's clear a
+     drop here will swap the two (see onMove's hover detection). Covers
+     the initials with a green tint + swap icon rather than a corner badge,
+     since a corner would collide with the warning/rank badges that can
+     already be showing on the same avatar. */
+  .token.drop-target .avatar{
+    box-shadow:0 0 0 4px rgba(50,180,90,.85), var(--shadow-sm);
+  }
+  .token.drop-target .avatar::after{
+    content:'⇄';
+    position:absolute; inset:0; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(31,157,76,.6);
+    color:#fff; font-size:22px; font-weight:800;
+  }
   /* Small solid triangle with a true, uniform white outline (an SVG
      polygon's stroke, not a CSS border-triangle) - up-triangles (most/
      most2) point up, down-triangles (least/least2) point down. */
@@ -530,6 +546,17 @@
   }
   .ghost-token .avatar{
     box-shadow:0 16px 30px rgba(0,0,0,.4), 0 4px 10px rgba(0,0,0,.22);
+  }
+  /* Temporary fixed-position clones used only to animate a confirmed swap
+     (see animateAndPerformSwap) - .ghost-token gives the same "lifted"
+     look as the drag-follow ghost; this adds the actual flight, a soft
+     glide with an ease-out landing from wherever the drag ended to each
+     player's real new resting slot. Position (not the field/bench
+     containers' own overflow-clipped children) is what crosses between
+     the pitch and the bench visually, since #field-wrap/#bench clip
+     anything that tries to move outside their own bounds. */
+  .swap-flight-token{
+    transition:left .7s cubic-bezier(.16,1,.3,1), top .7s cubic-bezier(.16,1,.3,1);
   }
 
   /* Quick, quiet settle for every token whenever the field/bench list is
@@ -901,6 +928,7 @@
     .avatar{ transition:none; }
     .export-link-btn, .stack-btn, .modal-actions button, .bench-action-btn{ transition:none; }
     .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
+    .swap-flight-token{ transition:none; }
   }
 </style>
 </head>
@@ -1265,7 +1293,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.5.2';
+  var APP_VERSION = '1.5.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2377,8 +2405,14 @@
     var settled = false;
     /** @type {HTMLElement|null} */
     var ghost = null;
+    /** @type {HTMLElement|null} */
+    var hoverTargetEl = null; // token currently under the cursor that a drop would swap with - see .token.drop-target
 
     try { sourceEl.setPointerCapture(pointerId); } catch(err){}
+
+    function clearHoverTarget(){
+      if (hoverTargetEl){ hoverTargetEl.classList.remove('drop-target'); hoverTargetEl = null; }
+    }
 
     function onMove(ev){
       var dx = ev.clientX - startX, dy = ev.clientY - startY;
@@ -2391,6 +2425,23 @@
       if (dragging && ghost){
         ghost.style.left = ev.clientX + 'px';
         ghost.style.top = (ev.clientY - 36) + 'px';
+
+        var overEl = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY));
+        var overToken = overEl ? /** @type {HTMLElement|null} */ (overEl.closest('.token')) : null;
+        var overId = overToken ? overToken.dataset.id : null;
+        var isValidTarget = false;
+        if (overToken && overId && overId !== id){
+          var overIsField = state.onField.indexOf(overId) !== -1;
+          var overIsBench = state.onBench.indexOf(overId) !== -1;
+          isValidTarget = (zone === 'field' && overIsBench) || (zone === 'bench' && overIsField);
+        }
+        if (isValidTarget && overToken && overToken !== hoverTargetEl){
+          clearHoverTarget();
+          hoverTargetEl = overToken;
+          hoverTargetEl.classList.add('drop-target');
+        } else if (!isValidTarget){
+          clearHoverTarget();
+        }
       }
     }
 
@@ -2402,6 +2453,7 @@
       sourceEl.removeEventListener('pointerup', onUp);
       sourceEl.removeEventListener('pointercancel', onUp);
       sourceEl.classList.remove('drag-source-hidden');
+      clearHoverTarget();
 
       if (dragging){
         if (ghost) ghost.remove();
@@ -2431,6 +2483,86 @@
     return g;
   }
 
+  /** @typedef {{left:number, top:number, width:number, height:number}} FlightRect */
+
+  // Start rect for a swap-flight clone: the dragged token's own current
+  // size, but anchored at the drop point rather than its old slot - "flight
+  // starts where you released it," not where it began the drag.
+  /** @param {HTMLElement} el @param {number} dropX @param {number} dropY @returns {FlightRect} */
+  function dropPointRect(el, dropX, dropY){
+    var r = el.getBoundingClientRect();
+    return { left: dropX - r.width/2, top: dropY - r.height/2, width: r.width, height: r.height };
+  }
+
+  // Fixed-position clone used only to animate a confirmed swap - lives in
+  // <body> (not the field/bench containers, which clip anything moving
+  // outside their own bounds) so it can visibly glide all the way across
+  // the screen from the pitch to the bench or back.
+  /** @param {HTMLElement} el @param {FlightRect} rect @returns {HTMLElement} */
+  function createFlightClone(el, rect){
+    var clone = /** @type {HTMLElement} */ (el.cloneNode(true));
+    clone.classList.remove('token-enter', 'selected', 'suggested-partner', 'multi-checked', 'drop-target');
+    clone.classList.add('ghost-token', 'swap-flight-token');
+    clone.style.position = 'fixed';
+    clone.style.left = rect.left + 'px';
+    clone.style.top = rect.top + 'px';
+    clone.style.width = rect.width + 'px';
+    clone.style.margin = '0';
+    clone.style.pointerEvents = 'none';
+    clone.style.zIndex = '1000';
+    document.body.appendChild(clone);
+    return clone;
+  }
+
+  // Hides destEl (the real, already-in-place token) and glides clone from
+  // its start rect to destEl's actual position, then swaps them back -
+  // clone removed, destEl revealed - once the glide finishes.
+  /** @param {HTMLElement|null} clone @param {HTMLElement|null} destEl */
+  function flyCloneTo(clone, destEl){
+    if (!clone) return;
+    if (!destEl){ clone.remove(); return; }
+    var destRect = destEl.getBoundingClientRect();
+    destEl.style.visibility = 'hidden';
+    requestAnimationFrame(function(){
+      void clone.offsetWidth; // force layout so the move below is a transition, not the initial position
+      clone.style.left = destRect.left + 'px';
+      clone.style.top = destRect.top + 'px';
+    });
+    setTimeout(function(){
+      clone.remove();
+      destEl.style.visibility = '';
+    }, 700);
+  }
+
+  // Swaps fieldId/benchId with a ~0.7s soft glide showing both players
+  // actually crossing paths, instead of the field/bench lists just
+  // instantly re-rendering. draggedId is whichever of the two the user
+  // was dragging - its flight starts at the drop point; the other one
+  // (not dragged) starts from its own real, current position.
+  /** @param {string} fieldId @param {string} benchId @param {string} draggedId @param {number} dropX @param {number} dropY */
+  function animateAndPerformSwap(fieldId, benchId, draggedId, dropX, dropY){
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion){
+      performSwap(fieldId, benchId);
+      saveState();
+      renderAll();
+      return;
+    }
+
+    var fieldEl = /** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + fieldId + '"]'));
+    var benchEl = /** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + benchId + '"]'));
+    var outgoingClone = fieldEl ? createFlightClone(fieldEl, draggedId === fieldId ? dropPointRect(fieldEl, dropX, dropY) : fieldEl.getBoundingClientRect()) : null;
+    var incomingClone = benchEl ? createFlightClone(benchEl, draggedId === benchId ? dropPointRect(benchEl, dropX, dropY) : benchEl.getBoundingClientRect()) : null;
+
+    performSwap(fieldId, benchId);
+    saveState();
+    renderAll();
+
+    // The field player now lives in the bench list, and vice versa.
+    flyCloneTo(outgoingClone, /** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + fieldId + '"]')));
+    flyCloneTo(incomingClone, /** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + benchId + '"]')));
+  }
+
   /** @param {string} id @param {'field'|'bench'} fromZone @param {number} clientX @param {number} clientY */
   function handleDrop(id, fromZone, clientX, clientY){
     selected = null;
@@ -2449,15 +2581,11 @@
       var targetIsField = state.onField.indexOf(targetId) !== -1;
       var targetIsBench = state.onBench.indexOf(targetId) !== -1;
       if (fromZone === 'field' && targetIsBench){
-        performSwap(id, targetId);
-        saveState();
-        renderAll();
+        animateAndPerformSwap(id, targetId, id, clientX, clientY);
         return;
       }
       if (fromZone === 'bench' && targetIsField){
-        performSwap(targetId, id);
-        saveState();
-        renderAll();
+        animateAndPerformSwap(targetId, id, id, clientX, clientY);
         return;
       }
       renderAll();
