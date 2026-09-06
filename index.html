@@ -407,17 +407,20 @@
     position:absolute; top:-7px; right:-7px;
     width:var(--field-badge-size, 23px); height:var(--field-badge-size, 23px);
     border-radius:50%;
-    background:var(--danger); color:#fff;
+    color:#fff;
     font-size:var(--field-badge-font, 14px); font-weight:800;
     display:flex; align-items:center; justify-content:center;
     box-shadow:0 1px 3px rgba(0,0,0,.35);
-    animation:badgePulse 1.1s ease-in-out infinite;
     transition:background .25s ease;
   }
-  .badge-warning.soon{ background:var(--orange); }
+  /* Orange, still - byttetiden (standard spilletid) er nådd. */
+  .badge-warning.due{ background:var(--orange); }
+  /* Red, gently pulsing - spilt 50% mer enn byttetiden; only this tier
+     pulses, so the pulse itself signals "this one's more overdue". */
+  .badge-warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
   @keyframes badgePulse{
-    0%,100%{ transform:scale(1); }
-    50%{ transform:scale(1.2); }
+    0%,100%{ opacity:1; }
+    50%{ opacity:.55; }
   }
 
   #selectionInfo{
@@ -477,7 +480,7 @@
   }
   .field-token .timer{ font-size:var(--field-timer-font, 16px); margin-top:3px; }
   .timer.overtime{ color:#ff3b30; }
-  .timer.soon{ color:var(--orange); }
+  .timer.due{ color:var(--orange); }
   .stopwatch{
     margin-top:2px; font-size:12px; font-weight:600;
     font-variant-numeric:tabular-nums; color:var(--ink-soft);
@@ -515,6 +518,17 @@
     background:rgba(31,157,76,.6);
     color:#fff; font-size:22px; font-weight:800;
   }
+  /* Quick confirmation flash on a token that just landed in a swap - same
+     green as the drag-over cue above, just pulsed once instead of held,
+     rather than a movement animation. */
+  .token.swap-flash .avatar{
+    animation:swapFlash .3s ease-out;
+  }
+  @keyframes swapFlash{
+    0%{ box-shadow:0 0 0 0 rgba(50,180,90,.85), var(--shadow-sm); }
+    45%{ box-shadow:0 0 0 9px rgba(50,180,90,.5), var(--shadow-sm); }
+    100%{ box-shadow:0 0 0 0 rgba(50,180,90,0), var(--shadow-sm); }
+  }
   /* Small solid triangle with a true, uniform white outline (an SVG
      polygon's stroke, not a CSS border-triangle) - up-triangles (most/
      most2) point up, down-triangles (least/least2) point down. */
@@ -546,17 +560,6 @@
   }
   .ghost-token .avatar{
     box-shadow:0 16px 30px rgba(0,0,0,.4), 0 4px 10px rgba(0,0,0,.22);
-  }
-  /* Temporary fixed-position clones used only to animate a confirmed swap
-     (see animateAndPerformSwap) - .ghost-token gives the same "lifted"
-     look as the drag-follow ghost; this adds the actual flight, a soft
-     glide with an ease-out landing from wherever the drag ended to each
-     player's real new resting slot. Position (not the field/bench
-     containers' own overflow-clipped children) is what crosses between
-     the pitch and the bench visually, since #field-wrap/#bench clip
-     anything that tries to move outside their own bounds. */
-  .swap-flight-token{
-    transition:left .7s cubic-bezier(.16,1,.3,1), top .7s cubic-bezier(.16,1,.3,1);
   }
 
   /* Quick, quiet settle for every token whenever the field/bench list is
@@ -807,7 +810,8 @@
     background:#eef1f0;
   }
   .legend-swatch.warning{ background:var(--danger); color:#fff; }
-  .legend-swatch.warning.soon{ background:var(--orange); }
+  .legend-swatch.warning.due{ background:var(--orange); }
+  .legend-swatch.warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
   /* Rank swatches show the same SVG polygon+stroke markup rankBadgeHtml()
      draws on a player's avatar - a navy backdrop (matching the avatar
      itself) so the white outline reads the same way it does in the app,
@@ -865,8 +869,10 @@
   #endMatchModal{ z-index:110; }
   #exportModal{ z-index:110; }
   #legendModal{ z-index:110; }
+  #settingsCloseConfirmModal{ z-index:110; }
   #joinCodeModal{ z-index:120; }
   #infoPopupModal{ z-index:130; }
+  .settings-card{ position:relative; padding-top:50px; }
 
   .session-code-bar{
     flex:0 0 auto;
@@ -932,9 +938,10 @@
     .avatar{ transition:none; }
     .export-link-btn, .stack-btn, .modal-actions button, .bench-action-btn{ transition:none; }
     .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
-    .swap-flight-token{ transition:none; }
+    .token.swap-flash .avatar{ animation:none; }
     .name-row-enter{ animation:none; }
     .name-row-exit{ transition:none; }
+    .badge-warning.overtime{ animation:none; opacity:1; }
   }
 </style>
 </head>
@@ -1024,7 +1031,8 @@
   </div>
 
   <div id="settingsModal" class="modal">
-  <div class="modal-card">
+  <div class="modal-card settings-card">
+    <button type="button" id="settingsCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2>Innstillinger</h2>
     <p class="sub">Skriv inn navn på spillerne og standard byttetid.</p>
 
@@ -1106,6 +1114,18 @@
   </div>
 </div>
 
+<div id="settingsCloseConfirmModal" class="modal">
+  <div class="modal-card">
+    <h2>Lagre endringer?</h2>
+    <p class="sub">Du har gjort endringer som ikke er lagret ennå.</p>
+    <div class="modal-actions modal-actions-col">
+      <button type="button" id="settingsCloseSaveBtn" class="stack-btn period">Lagre endringer</button>
+      <button type="button" id="settingsCloseDiscardBtn" class="stack-btn danger">Ikke lagre</button>
+      <button type="button" id="settingsCloseCancelBtn" class="stack-btn secondary">Avbryt</button>
+    </div>
+  </div>
+</div>
+
 <div id="backActionModal" class="modal">
   <div class="modal-card">
     <div class="modal-actions modal-actions-col">
@@ -1157,8 +1177,8 @@
   <div class="modal-card">
     <h2>Symbolforklaring</h2>
     <div class="legend-list">
-      <div class="legend-row"><span class="legend-swatch warning soon">!</span><span class="legend-text">Snart tid for bytte (siste 30 sek) – utespiller.</span></div>
-      <div class="legend-row"><span class="legend-swatch warning">!</span><span class="legend-text">Tiden er ute for en utespiller – klar for bytte.</span></div>
+      <div class="legend-row"><span class="legend-swatch warning due">!</span><span class="legend-text">Byttetiden er nådd for en utespiller – klar for bytte.</span></div>
+      <div class="legend-row"><span class="legend-swatch warning overtime">!</span><span class="legend-text">Spilt 50% lenger enn byttetiden – utropstegnet pulserer forsiktig.</span></div>
       <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt mest – vurder benk til neste kamp. Rød trekant på spilleren.</span></div>
       <div class="legend-row"><span class="legend-swatch rank-most2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#ff9500" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest mest. Oransje trekant.</span></div>
       <div class="legend-row"><span class="legend-swatch rank-least2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#7dd3fc" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest minst. Lyseblå trekant.</span></div>
@@ -1298,7 +1318,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.5.4';
+  var APP_VERSION = '1.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1351,19 +1371,20 @@
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
   var launcherEnteredOnce = false; // true once the app has actually been entered this page-load, so the tile skips the new/join choice on repeat visits
+  var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
   var multiMode = false; // bulk "send several bench players to field" mode
   /** @type {string[]} */
   var multiSelected = []; // ids currently checked while in multiMode
-  var WARNING_LEAD_MS = 30000; // yellow pre-warning starts this long before the red time-up badge
+  var OVERTIME_FACTOR = 1.5; // the red, gently-pulsing badge kicks in once elapsed reaches this multiple of byttetiden (defaultDurationMs) - the orange, still badge covers everything from byttetiden itself up to that point
 
   // Explanations shown by the small "i" info buttons in settings, keyed by
   // their data-info attribute.
   var INFO_TEXTS = {
     byttetid: {
       title: 'Standard byttetid',
-      text: 'Tiden en utespiller har vært på banen før spilleren varsles med gult (siste 30 sekunder) og deretter rødt utropstegn. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
+      text: 'Tiden en utespiller skal spille før et oransje utropstegn varsler at byttetiden er nådd. Spiller de 50% lenger enn byttetiden, blir utropstegnet rødt og pulserer forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
     },
     wakelock: {
       title: 'Hold skjermen våken',
@@ -2052,7 +2073,7 @@
       if (!p) return;
       var elapsed = fieldElapsed(id, now);
       var timeUp = elapsed >= state.defaultDurationMs;
-      var timeSoon = !timeUp && elapsed >= state.defaultDurationMs - WARNING_LEAD_MS;
+      var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
       var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
       var el = document.createElement('div');
       el.className = 'token field-token token-enter' + (isChecked ? ' multi-checked' : '');
@@ -2060,11 +2081,11 @@
       el.innerHTML =
         '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
           rankBadgeHtml(rankBadges[id]) +
-          (timeUp ? '<div class="badge-warning">!</div>' : timeSoon ? '<div class="badge-warning soon">!</div>' : '') +
+          (farOver ? '<div class="badge-warning overtime">!</div>' : timeUp ? '<div class="badge-warning due">!</div>' : '') +
           (isChecked ? '<div class="badge-check">✓</div>' : '') +
         '</div>' +
         '<div class="label">' + escapeHtml(p.name) + '</div>' +
-        '<div class="timer' + (timeUp ? ' overtime' : timeSoon ? ' soon' : '') + '">' + formatMs(elapsed) + '</div>';
+        '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>';
       attachTokenEvents(el, id, 'field');
       els.field.appendChild(el);
     });
@@ -2111,21 +2132,24 @@
       var avatarEl = el.querySelector('.avatar');
       timerEl.textContent = formatMs(elapsed);
       var timeUp = elapsed >= state.defaultDurationMs;
-      var timeSoon = !timeUp && elapsed >= state.defaultDurationMs - WARNING_LEAD_MS;
-      timerEl.classList.toggle('overtime', timeUp);
-      timerEl.classList.toggle('soon', timeSoon);
+      var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
+      timerEl.classList.toggle('overtime', farOver);
+      timerEl.classList.toggle('due', timeUp && !farOver);
       avatarEl.classList.toggle('time-up', timeUp);
       var badge = avatarEl.querySelector('.badge-warning');
-      if ((timeUp || timeSoon) && !badge){
+      if (timeUp && !badge){
         badge = document.createElement('div');
         badge.className = 'badge-warning';
         badge.textContent = '!';
         avatarEl.appendChild(badge);
-      } else if (!timeUp && !timeSoon && badge){
+      } else if (!timeUp && badge){
         badge.remove();
         badge = null;
       }
-      if (badge) badge.classList.toggle('soon', timeSoon);
+      if (badge){
+        badge.classList.toggle('due', timeUp && !farOver);
+        badge.classList.toggle('overtime', farOver);
+      }
       if (timeUp && !timeUpNotified[id]){
         timeUpNotified[id] = true;
         playTimeUpBeep();
@@ -2488,84 +2512,30 @@
     return g;
   }
 
-  /** @typedef {{left:number, top:number, width:number, height:number}} FlightRect */
-
-  // Start rect for a swap-flight clone: the dragged token's own current
-  // size, but anchored at the drop point rather than its old slot - "flight
-  // starts where you released it," not where it began the drag.
-  /** @param {HTMLElement} el @param {number} dropX @param {number} dropY @returns {FlightRect} */
-  function dropPointRect(el, dropX, dropY){
-    var r = el.getBoundingClientRect();
-    return { left: dropX - r.width/2, top: dropY - r.height/2, width: r.width, height: r.height };
+  // Quick (0.3s) green pulse on a just-swapped token - the same green
+  // used for the drag-over cue, just flashed rather than held - enough to
+  // register "something happened here" without a distinct animation
+  // language of its own.
+  /** @param {HTMLElement|null} el */
+  function flashSwapped(el){
+    if (!el) return;
+    el.classList.remove('swap-flash');
+    void el.offsetWidth;
+    el.classList.add('swap-flash');
+    setTimeout(function(){ el.classList.remove('swap-flash'); }, 300);
   }
 
-  // Fixed-position clone used only to animate a confirmed swap - lives in
-  // <body> (not the field/bench containers, which clip anything moving
-  // outside their own bounds) so it can visibly glide all the way across
-  // the screen from the pitch to the bench or back.
-  /** @param {HTMLElement} el @param {FlightRect} rect @returns {HTMLElement} */
-  function createFlightClone(el, rect){
-    var clone = /** @type {HTMLElement} */ (el.cloneNode(true));
-    clone.classList.remove('token-enter', 'selected', 'suggested-partner', 'multi-checked', 'drop-target');
-    clone.classList.add('ghost-token', 'swap-flight-token');
-    clone.style.position = 'fixed';
-    clone.style.left = rect.left + 'px';
-    clone.style.top = rect.top + 'px';
-    clone.style.width = rect.width + 'px';
-    clone.style.margin = '0';
-    clone.style.pointerEvents = 'none';
-    clone.style.zIndex = '1000';
-    document.body.appendChild(clone);
-    return clone;
-  }
-
-  // Hides destEl (the real, already-in-place token) and glides clone from
-  // its start rect to destEl's actual position, then swaps them back -
-  // clone removed, destEl revealed - once the glide finishes.
-  /** @param {HTMLElement|null} clone @param {HTMLElement|null} destEl */
-  function flyCloneTo(clone, destEl){
-    if (!clone) return;
-    if (!destEl){ clone.remove(); return; }
-    var destRect = destEl.getBoundingClientRect();
-    destEl.style.visibility = 'hidden';
-    requestAnimationFrame(function(){
-      void clone.offsetWidth; // force layout so the move below is a transition, not the initial position
-      clone.style.left = destRect.left + 'px';
-      clone.style.top = destRect.top + 'px';
-    });
-    setTimeout(function(){
-      clone.remove();
-      destEl.style.visibility = '';
-    }, 700);
-  }
-
-  // Swaps fieldId/benchId with a ~0.7s soft glide showing both players
-  // actually crossing paths, instead of the field/bench lists just
-  // instantly re-rendering. draggedId is whichever of the two the user
-  // was dragging - its flight starts at the drop point; the other one
-  // (not dragged) starts from its own real, current position.
-  /** @param {string} fieldId @param {string} benchId @param {string} draggedId @param {number} dropX @param {number} dropY */
-  function animateAndPerformSwap(fieldId, benchId, draggedId, dropX, dropY){
-    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion){
-      performSwap(fieldId, benchId);
-      saveState();
-      renderAll();
-      return;
-    }
-
-    var fieldEl = /** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + fieldId + '"]'));
-    var benchEl = /** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + benchId + '"]'));
-    var outgoingClone = fieldEl ? createFlightClone(fieldEl, draggedId === fieldId ? dropPointRect(fieldEl, dropX, dropY) : fieldEl.getBoundingClientRect()) : null;
-    var incomingClone = benchEl ? createFlightClone(benchEl, draggedId === benchId ? dropPointRect(benchEl, dropX, dropY) : benchEl.getBoundingClientRect()) : null;
-
+  // Swaps fieldId/benchId and flashes both their new tokens once the
+  // render settles - simple, minimal feedback in place of a movement
+  // animation.
+  /** @param {string} fieldId @param {string} benchId */
+  function animateAndPerformSwap(fieldId, benchId){
     performSwap(fieldId, benchId);
     saveState();
     renderAll();
-
     // The field player now lives in the bench list, and vice versa.
-    flyCloneTo(outgoingClone, /** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + fieldId + '"]')));
-    flyCloneTo(incomingClone, /** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + benchId + '"]')));
+    flashSwapped(/** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + fieldId + '"]')));
+    flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + benchId + '"]')));
   }
 
   /** @param {string} id @param {'field'|'bench'} fromZone @param {number} clientX @param {number} clientY */
@@ -2586,11 +2556,11 @@
       var targetIsField = state.onField.indexOf(targetId) !== -1;
       var targetIsBench = state.onBench.indexOf(targetId) !== -1;
       if (fromZone === 'field' && targetIsBench){
-        animateAndPerformSwap(id, targetId, id, clientX, clientY);
+        animateAndPerformSwap(id, targetId);
         return;
       }
       if (fromZone === 'bench' && targetIsField){
-        animateAndPerformSwap(targetId, id, id, clientX, clientY);
+        animateAndPerformSwap(targetId, id);
         return;
       }
       renderAll();
@@ -2881,6 +2851,8 @@
   function openSettings(isFirstRun){
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
+    els.settingsCloseBtn.style.display = isFirstRun ? 'none' : '';
+    settingsDirty = false;
     els.nameRows.innerHTML = '';
     els.fieldSizeInput.value = state.fieldSize || 3;
 
@@ -2921,6 +2893,7 @@
     removeBtn.addEventListener('click', function(){
       row.remove();
       syncNameRows();
+      settingsDirty = true;
     });
     // A blank row manages itself (syncNameRows keeps exactly 2 spares) -
     // the remove button only makes sense once there's an actual name to
@@ -3123,7 +3096,7 @@
     els.endMatchSummary.innerHTML = rows.map(function(r){
       return '<div class="ems-row">' +
         '<span class="ems-name">' + escapeHtml(r.name) + '</span>' +
-        '<span class="ems-time">' + formatCumulative(r.fieldMs) + ' spilt · ' + formatCumulative(r.benchMs) + ' benk</span>' +
+        '<span class="ems-time">spilt: ' + formatCumulative(r.fieldMs) + ' - benk: ' + formatCumulative(r.benchMs) + '</span>' +
       '</div>';
     }).join('');
   }
@@ -3262,6 +3235,11 @@
     els.fieldSizeLockedNote = qs('fieldSizeLockedNote');
     els.okBtn = qs('settingsOkBtn');
     els.cancelBtn = qs('settingsCancelBtn');
+    els.settingsCloseBtn = qs('settingsCloseBtn');
+    els.settingsCloseConfirmModal = qs('settingsCloseConfirmModal');
+    els.settingsCloseSaveBtn = qs('settingsCloseSaveBtn');
+    els.settingsCloseDiscardBtn = qs('settingsCloseDiscardBtn');
+    els.settingsCloseCancelBtn = qs('settingsCloseCancelBtn');
     els.endMatchModal = qs('endMatchModal');
     els.endMatchSummary = qs('endMatchSummary');
     els.endMatchCancelBtn = qs('endMatchCancelBtn');
@@ -3356,6 +3334,33 @@
     els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
+    // Anything that only takes effect on "OK" (see saveSettings) marks the
+    // form dirty, so the × button below knows whether to just close (like
+    // Avbryt) or ask first - checkboxes are excluded since those toggles
+    // (wake lock, share mode, kumulert rangering) already save themselves
+    // instantly on change, nothing to lose by closing without asking.
+    els.settingsModal.addEventListener('input', function(e){
+      var t = /** @type {HTMLInputElement} */ (e.target);
+      if (t && t.tagName === 'INPUT' && t.type !== 'checkbox') settingsDirty = true;
+    });
+    els.settingsCloseBtn.addEventListener('click', function(){
+      if (!settingsDirty){
+        els.settingsModal.classList.remove('open');
+        return;
+      }
+      els.settingsCloseConfirmModal.classList.add('open');
+    });
+    els.settingsCloseSaveBtn.addEventListener('click', function(){
+      els.settingsCloseConfirmModal.classList.remove('open');
+      saveSettings();
+    });
+    els.settingsCloseDiscardBtn.addEventListener('click', function(){
+      els.settingsCloseConfirmModal.classList.remove('open');
+      els.settingsModal.classList.remove('open');
+    });
+    els.settingsCloseCancelBtn.addEventListener('click', function(){
+      els.settingsCloseConfirmModal.classList.remove('open');
+    });
     els.endBtn.addEventListener('click', function(){
       if (!canEdit()) return;
       disarmResetConfirm();
