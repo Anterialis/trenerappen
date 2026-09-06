@@ -221,6 +221,104 @@
     .launcher-choice-overlay{ transition:opacity .3s ease; transform:none; }
   }
 
+  /* ---------- Myntkast (coin toss) launcher tile + screen ---------- */
+  .launcher-tiles-row{ display:flex; gap:12px; width:100%; max-width:380px; align-items:flex-start; }
+  .launcher-tiles-row .launcher-tile{ max-width:none; flex:1 1 auto; min-width:0; }
+  .coin-tile{
+    flex:0 0 104px; width:104px;
+    border-radius:22px; overflow:hidden;
+    background:rgba(255,255,255,.09);
+    border:1px solid rgba(255,255,255,.20);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    backdrop-filter:blur(20px) saturate(160%);
+    box-shadow:0 10px 26px rgba(0,0,0,.4);
+    cursor:pointer;
+    transition:transform .15s ease, box-shadow .15s ease;
+    display:flex; flex-direction:column; align-items:center;
+    padding:0 0 10px;
+  }
+  .coin-tile:active{ transform:scale(.96); }
+  .coin-tile-art{
+    width:100%; aspect-ratio:1/1;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+  }
+  .coin-tile-art svg{ width:56%; height:56%; display:block; }
+  .coin-tile-label{ margin:8px 0 0; font-size:12px; font-weight:700; color:#fff; text-align:center; }
+
+  .coin-flip-screen{
+    position:absolute; inset:0; z-index:310;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
+    padding:28px 26px;
+    opacity:0; pointer-events:none; transform:scale(1.03);
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .coin-flip-screen.open{ opacity:1; pointer-events:auto; transform:scale(1); }
+  .coin-flip-close{
+    position:absolute; top:calc(env(safe-area-inset-top) + 16px); left:16px;
+    width:36px; height:36px; border-radius:50%; border:none;
+    background:rgba(255,255,255,.10); color:#fff; font-size:20px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .coin-flip-panel{ width:100%; max-width:320px; }
+  .coin-flip-title{ margin:0 0 4px; color:#fff; font-size:19px; font-weight:700; text-align:center; }
+  .coin-flip-sub{ margin:0 0 18px; color:rgba(255,255,255,.65); font-size:13px; text-align:center; }
+  .coin-color-section{ margin-bottom:18px; }
+  .coin-color-section:last-of-type{ margin-bottom:6px; }
+  .coin-color-label{
+    margin:0 0 8px; color:rgba(255,255,255,.85); font-size:12px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .coin-color-grid{ display:flex; flex-wrap:wrap; gap:10px; }
+  .coin-swatch{
+    width:34px; height:34px; border-radius:50%; border:2px solid rgba(255,255,255,.25);
+    cursor:pointer; padding:0; position:relative; flex-shrink:0;
+    transition:transform .15s ease, border-color .15s ease;
+  }
+  .coin-swatch[data-color="white"]{ border-color:rgba(255,255,255,.55); }
+  .coin-swatch.selected{ border-color:#fff; transform:scale(1.12); box-shadow:0 0 0 2px rgba(255,255,255,.25); }
+  .coin-swatch.selected::after{
+    content:'✓'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:15px; font-weight:800; text-shadow:0 1px 2px rgba(0,0,0,.5);
+  }
+  .coin-swatch[data-color="white"].selected::after{ color:#16202b; text-shadow:none; }
+  .coin-swatch:active{ transform:scale(.92); }
+  .coin-color-error{ color:#ff8a8a; font-size:13px; text-align:center; margin:10px 0 4px; }
+
+  .coin-stage{ display:flex; align-items:center; justify-content:center; height:240px; perspective:900px; }
+  .coin-arc.flying{ animation:coinArc 3s cubic-bezier(.33,0,.2,1); }
+  @keyframes coinArc{
+    0%{ transform:translateY(0) scale(.88); }
+    45%{ transform:translateY(-120px) scale(1.18); }
+    100%{ transform:translateY(0) scale(1); }
+  }
+  .coin{
+    width:110px; height:110px; position:relative;
+    transform-style:preserve-3d;
+  }
+  .coin-face{
+    position:absolute; inset:0; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+    backface-visibility:hidden; -webkit-backface-visibility:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,.4), inset 0 0 0 4px rgba(255,255,255,.25);
+  }
+  .coin-face svg{ width:56%; height:56%; }
+  .coin-face-back{ transform:rotateY(180deg); }
+  .coin-result-badge{
+    width:110px; height:110px; margin:0 auto 18px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+    box-shadow:0 6px 18px rgba(0,0,0,.4), inset 0 0 0 4px rgba(255,255,255,.25);
+  }
+  .coin-result-badge svg{ width:56%; height:56%; }
+  .coin-result-text{ margin:0 0 20px; color:#fff; font-size:17px; font-weight:700; text-align:center; line-height:1.4; }
+  @media (prefers-reduced-motion: reduce){
+    .coin-flip-screen{ transition:opacity .3s ease; transform:none; }
+    .coin-arc.flying{ animation:none; }
+  }
+
   /* ---------- Header ---------- */
   header{
     flex:0 0 auto;
@@ -1022,44 +1120,83 @@
 <div id="viewport-frame">
 <div id="app">
   <div id="launcherScreen" class="launcher-screen">
-    <div class="launcher-tile" id="launcherTile">
-      <div class="launcher-tile-art">
-        <svg viewBox="0 0 100 72" xmlns="http://www.w3.org/2000/svg">
-          <rect x="4" y="4" width="92" height="64" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
-          <line x1="50" y1="4" x2="50" y2="68" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
-          <circle cx="50" cy="36" r="14" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
-          <circle cx="50" cy="36" r="1.6" fill="rgba(255,255,255,.55)"/>
-          <rect x="4" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
-          <rect x="80" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
-        </svg>
-      </div>
-      <div class="launcher-tile-body">
-        <p class="launcher-tile-title">Trenerappen</p>
-        <p class="launcher-tile-sub">Spill kamp, få oversikt over innbyttere og spilletid</p>
-      </div>
+    <div class="launcher-tiles-row">
+      <div class="launcher-tile" id="launcherTile">
+        <div class="launcher-tile-art">
+          <svg viewBox="0 0 100 72" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="4" width="92" height="64" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+            <line x1="50" y1="4" x2="50" y2="68" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+            <circle cx="50" cy="36" r="14" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+            <circle cx="50" cy="36" r="1.6" fill="rgba(255,255,255,.55)"/>
+            <rect x="4" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+            <rect x="80" y="20" width="16" height="32" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/>
+          </svg>
+        </div>
+        <div class="launcher-tile-body">
+          <p class="launcher-tile-title">Trenerappen</p>
+          <p class="launcher-tile-sub">Spill kamp, få oversikt over innbyttere og spilletid</p>
+        </div>
 
-      <div id="launcherChoiceOverlay" class="launcher-choice-overlay">
-        <div class="launcher-choice-panel" id="launcherChoicePanelChoice">
-          <p class="launcher-choice-title">Trenerappen</p>
-          <p class="launcher-choice-sub">Hvordan vil du starte?</p>
-          <button type="button" id="continueSessionChoiceBtn" class="glass-choice-btn primary" hidden>Fortsett fra forrige økt</button>
-          <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
-          <button type="button" id="joinSessionChoiceBtn" class="glass-choice-btn">Delta i eksisterende økt</button>
-          <button type="button" id="launcherChoiceCancelBtn" class="launcher-choice-cancel">Avbryt</button>
-        </div>
-        <div class="launcher-choice-panel" id="launcherChoicePanelJoin" hidden>
-          <button type="button" id="launcherChoiceBackBtn" class="launcher-choice-back" aria-label="Tilbake">‹</button>
-          <p class="launcher-choice-title">Bli med i økt</p>
-          <p class="launcher-choice-sub">Skriv inn den tresifrede koden</p>
-          <div class="field-invalid-wrap" id="launcherJoinInputWrap">
-            <input type="text" id="launcherJoinInput" inputmode="numeric" maxlength="3" class="launcher-join-input" placeholder="000">
+        <div id="launcherChoiceOverlay" class="launcher-choice-overlay">
+          <div class="launcher-choice-panel" id="launcherChoicePanelChoice">
+            <p class="launcher-choice-title">Trenerappen</p>
+            <p class="launcher-choice-sub">Hvordan vil du starte?</p>
+            <button type="button" id="continueSessionChoiceBtn" class="glass-choice-btn primary" hidden>Fortsett fra forrige økt</button>
+            <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
+            <button type="button" id="joinSessionChoiceBtn" class="glass-choice-btn">Delta i eksisterende økt</button>
+            <button type="button" id="launcherChoiceCancelBtn" class="launcher-choice-cancel">Avbryt</button>
           </div>
-          <p id="launcherJoinError" class="launcher-join-error" hidden>Fant ingen økt med den koden.</p>
-          <button type="button" id="launcherJoinEnterBtn" class="launcher-join-enter" aria-label="Bli med">→</button>
+          <div class="launcher-choice-panel" id="launcherChoicePanelJoin" hidden>
+            <button type="button" id="launcherChoiceBackBtn" class="launcher-choice-back" aria-label="Tilbake">‹</button>
+            <p class="launcher-choice-title">Bli med i økt</p>
+            <p class="launcher-choice-sub">Skriv inn den tresifrede koden</p>
+            <div class="field-invalid-wrap" id="launcherJoinInputWrap">
+              <input type="text" id="launcherJoinInput" inputmode="numeric" maxlength="3" class="launcher-join-input" placeholder="000">
+            </div>
+            <p id="launcherJoinError" class="launcher-join-error" hidden>Fant ingen økt med den koden.</p>
+            <button type="button" id="launcherJoinEnterBtn" class="launcher-join-enter" aria-label="Bli med">→</button>
+          </div>
         </div>
+      </div>
+      <div class="coin-tile" id="coinTile">
+        <div class="coin-tile-art" id="coinTileArt"></div>
+        <p class="coin-tile-label">Myntkast</p>
       </div>
     </div>
     <p class="launcher-credit">utviklet av André Nanbjør</p>
+  </div>
+  <div id="coinFlipScreen" class="coin-flip-screen">
+    <button type="button" id="coinFlipCloseBtn" class="coin-flip-close" aria-label="Lukk myntkast">×</button>
+    <div class="coin-flip-panel" id="coinPanelPick">
+      <p class="coin-flip-title">Myntkast</p>
+      <p class="coin-flip-sub">Velg lagfargene, så avgjør mynten hvem som starter med ballen</p>
+      <div class="coin-color-section">
+        <p class="coin-color-label">Hjemmelag</p>
+        <div class="coin-color-grid" id="coinHomeColorGrid"></div>
+      </div>
+      <div class="coin-color-section">
+        <p class="coin-color-label">Bortelag</p>
+        <div class="coin-color-grid" id="coinAwayColorGrid"></div>
+      </div>
+      <p id="coinColorError" class="coin-color-error" hidden>Lagene må ha ulik farge.</p>
+      <button type="button" id="coinFlipStartBtn" class="glass-choice-btn primary">Kast mynt →</button>
+    </div>
+    <div class="coin-flip-panel" id="coinPanelFlip" hidden>
+      <div class="coin-stage">
+        <div class="coin-arc" id="coinArc">
+          <div class="coin" id="coin">
+            <div class="coin-face coin-face-front" id="coinFaceFront"></div>
+            <div class="coin-face coin-face-back" id="coinFaceBack"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="coin-flip-panel" id="coinPanelResult" hidden>
+      <div class="coin-result-badge" id="coinResultBadge"></div>
+      <p class="coin-result-text" id="coinResultText"></p>
+      <button type="button" id="coinFlipAgainBtn" class="glass-choice-btn primary">Kast på nytt</button>
+      <button type="button" id="coinFlipDoneBtn" class="launcher-choice-cancel">Ferdig</button>
+    </div>
   </div>
   <header>
     <button id="undoBtn" class="icon-btn" aria-label="Angre, gjør om eller gå tilbake til hovedmeny">↩<span id="undoCountBadge" class="icon-btn-badge" hidden>0</span></button>
@@ -1391,13 +1528,14 @@
 
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
+  var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
   var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
 
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.7.1';
+  var APP_VERSION = '1.8';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -3075,6 +3213,173 @@
     el.classList.add('shake');
   }
 
+  // ---------- Myntkast (coin toss) ----------
+  // Standalone pre-match helper reachable only from the launcher (see the
+  // "Tilgjengelighet" decision) - it never touches match state, so it has
+  // its own tiny bit of localStorage-backed state (just the two chosen
+  // colors) instead of living in `state`/STORAGE_KEY.
+  var COIN_COLORS = [
+    { id:'red',    name:'Rød',     hex:'#e6473c' },
+    { id:'blue',   name:'Blå',     hex:'#2f6fed' },
+    { id:'yellow', name:'Gul',     hex:'#f4c430' },
+    { id:'green',  name:'Grønn',   hex:'#3fa34d' },
+    { id:'orange', name:'Oransje', hex:'#f2861d' },
+    { id:'purple', name:'Lilla',   hex:'#8b4fc9' },
+    { id:'pink',   name:'Rosa',    hex:'#f06ea9' },
+    { id:'black',  name:'Svart',   hex:'#2b2b2b' },
+    { id:'white',  name:'Hvit',    hex:'#f6f6f6' },
+    { id:'brown',  name:'Brun',    hex:'#8a5a34' }
+  ];
+  // My son's team is red, so that's the sensible out-of-the-box default
+  // for "Hjemmelag" - see loadCoinFlipColors() for how a saved choice
+  // overrides this on later visits.
+  var coinHomeColorId = 'red';
+  var coinAwayColorId = 'blue';
+  var coinFlipInProgress = false;
+
+  /** @param {string} id @returns {{id:string,name:string,hex:string}|null} */
+  function coinColorById(id){
+    for (var i = 0; i < COIN_COLORS.length; i++){ if (COIN_COLORS[i].id === id) return COIN_COLORS[i]; }
+    return null;
+  }
+
+  // Flat jersey silhouette (straight lines + one shallow neckline curve)
+  // printed in the team's color on top of the coin's gold face.
+  function jerseyIconSvg(hex){
+    var stroke = (hex === '#f6f6f6') ? 'rgba(0,0,0,.35)' : 'rgba(0,0,0,.22)';
+    return '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M12,4 L3,11 L9,15 L9,36 L31,36 L31,15 L37,11 L28,4 Q20,11 12,4 Z" ' +
+      'fill="' + hex + '" stroke="' + stroke + '" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  }
+
+  function loadCoinFlipColors(){
+    try {
+      var raw = localStorage.getItem(COINFLIP_COLORS_KEY);
+      if (!raw) return;
+      var saved = JSON.parse(raw);
+      if (saved && coinColorById(saved.home)) coinHomeColorId = saved.home;
+      if (saved && coinColorById(saved.away)) coinAwayColorId = saved.away;
+    } catch(e){}
+  }
+
+  function saveCoinFlipColors(){
+    try { localStorage.setItem(COINFLIP_COLORS_KEY, JSON.stringify({ home:coinHomeColorId, away:coinAwayColorId })); }
+    catch(e){}
+  }
+
+  function buildCoinColorGrid(container, teamKey){
+    container.innerHTML = '';
+    COIN_COLORS.forEach(function(c){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'coin-swatch';
+      btn.dataset.color = c.id;
+      btn.style.background = c.hex;
+      btn.setAttribute('aria-label', c.name);
+      btn.addEventListener('click', function(){
+        if (teamKey === 'home') coinHomeColorId = c.id; else coinAwayColorId = c.id;
+        els.coinColorError.hidden = true;
+        refreshCoinColorGrids();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function refreshCoinColorGrids(){
+    Array.prototype.forEach.call(els.coinHomeColorGrid.children, function(btn){
+      btn.classList.toggle('selected', btn.dataset.color === coinHomeColorId);
+    });
+    Array.prototype.forEach.call(els.coinAwayColorGrid.children, function(btn){
+      btn.classList.toggle('selected', btn.dataset.color === coinAwayColorId);
+    });
+  }
+
+  function openCoinFlip(){
+    loadCoinFlipColors();
+    refreshCoinColorGrids();
+    els.coinPanelPick.hidden = false;
+    els.coinPanelFlip.hidden = true;
+    els.coinPanelResult.hidden = true;
+    els.coinColorError.hidden = true;
+    els.coinFlipScreen.classList.add('open');
+  }
+
+  function closeCoinFlip(){
+    els.coinFlipScreen.classList.remove('open');
+  }
+
+  function startCoinFlip(){
+    if (coinFlipInProgress) return;
+    if (coinHomeColorId === coinAwayColorId){
+      els.coinColorError.hidden = false;
+      shakeElement(els.coinPanelPick);
+      return;
+    }
+    var homeColor = coinColorById(coinHomeColorId);
+    var awayColor = coinColorById(coinAwayColorId);
+    if (!homeColor || !awayColor) return;
+    saveCoinFlipColors();
+    els.coinFaceFront.innerHTML = jerseyIconSvg(homeColor.hex);
+    els.coinFaceBack.innerHTML = jerseyIconSvg(awayColor.hex);
+    els.coinPanelPick.hidden = true;
+    els.coinPanelResult.hidden = true;
+    els.coinPanelFlip.hidden = false;
+    runCoinFlip();
+  }
+
+  function runCoinFlip(){
+    coinFlipInProgress = true;
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var winner = Math.random() < 0.5 ? 'home' : 'away';
+    var duration = reduced ? 500 : 3000;
+
+    els.coinArc.classList.remove('flying');
+    els.coin.style.transition = 'none';
+    els.coin.style.transform = 'rotateY(0deg)';
+    void els.coin.offsetWidth; // restart the transition cleanly on repeat flips
+
+    els.coin.style.transition = 'transform ' + duration + 'ms cubic-bezier(.18,.82,.18,1)';
+    if (!reduced) els.coinArc.classList.add('flying');
+    var spins = 6;
+    var targetDeg = spins * 360 + (winner === 'away' ? 180 : 0);
+    requestAnimationFrame(function(){
+      els.coin.style.transform = 'rotateY(' + targetDeg + 'deg)';
+    });
+
+    setTimeout(function(){
+      coinFlipInProgress = false;
+      showCoinResult(winner);
+    }, duration + 60);
+  }
+
+  function showCoinResult(winner){
+    var color = coinColorById(winner === 'home' ? coinHomeColorId : coinAwayColorId);
+    if (!color) return;
+    els.coinResultBadge.innerHTML = jerseyIconSvg(color.hex);
+    els.coinResultText.textContent = (winner === 'home' ? 'Hjemmelaget' : 'Bortelaget') +
+      ' (' + color.name.toLowerCase() + ') starter med ballen!';
+    els.coinPanelFlip.hidden = true;
+    els.coinPanelResult.hidden = false;
+  }
+
+  function initCoinFlip(){
+    els.coinTileArt.innerHTML = jerseyIconSvg('#fff8ea');
+    buildCoinColorGrid(els.coinHomeColorGrid, 'home');
+    buildCoinColorGrid(els.coinAwayColorGrid, 'away');
+    loadCoinFlipColors();
+    refreshCoinColorGrids();
+
+    els.coinTile.addEventListener('click', openCoinFlip);
+    els.coinFlipCloseBtn.addEventListener('click', closeCoinFlip);
+    els.coinFlipStartBtn.addEventListener('click', startCoinFlip);
+    els.coinFlipAgainBtn.addEventListener('click', function(){
+      els.coinPanelResult.hidden = true;
+      els.coinPanelFlip.hidden = false;
+      runCoinFlip();
+    });
+    els.coinFlipDoneBtn.addEventListener('click', closeCoinFlip);
+  }
+
   // Small red "!" pinned to a field that's blocking progress - pairs with
   // shakeElement() on the surrounding card so there's always a visible
   // reason, not just a rejected/shaking screen. wrapEl must already be
@@ -3327,6 +3632,25 @@
     els.launcherJoinInput = qs('launcherJoinInput');
     els.launcherJoinError = qs('launcherJoinError');
     els.launcherJoinEnterBtn = qs('launcherJoinEnterBtn');
+    els.coinTile = qs('coinTile');
+    els.coinTileArt = qs('coinTileArt');
+    els.coinFlipScreen = qs('coinFlipScreen');
+    els.coinFlipCloseBtn = qs('coinFlipCloseBtn');
+    els.coinPanelPick = qs('coinPanelPick');
+    els.coinHomeColorGrid = qs('coinHomeColorGrid');
+    els.coinAwayColorGrid = qs('coinAwayColorGrid');
+    els.coinColorError = qs('coinColorError');
+    els.coinFlipStartBtn = qs('coinFlipStartBtn');
+    els.coinPanelFlip = qs('coinPanelFlip');
+    els.coinArc = qs('coinArc');
+    els.coin = qs('coin');
+    els.coinFaceFront = qs('coinFaceFront');
+    els.coinFaceBack = qs('coinFaceBack');
+    els.coinPanelResult = qs('coinPanelResult');
+    els.coinResultBadge = qs('coinResultBadge');
+    els.coinResultText = qs('coinResultText');
+    els.coinFlipAgainBtn = qs('coinFlipAgainBtn');
+    els.coinFlipDoneBtn = qs('coinFlipDoneBtn');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
@@ -3749,6 +4073,8 @@
       if (e.key === 'Enter') submitLauncherJoin();
     });
     els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
+
+    initCoinFlip();
 
     updateFrameFit();
     renderPitchMarkings();
