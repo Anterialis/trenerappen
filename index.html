@@ -1356,7 +1356,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.2';
+  var APP_VERSION = '1.6.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2076,6 +2076,20 @@
      lineup); falls back to a rounded, bordered letterbox frame otherwise
      (e.g. a resized desktop browser window). */
   function updateFrameFit(){
+    // A real phone always goes edge-to-edge, in either orientation - the
+    // aspect-ratio check below is only meant to distinguish "this window
+    // happens to be phone-shaped" from "this is a resized desktop
+    // browser" for the letterboxed preview frame, and it's an unreliable
+    // way to detect an actual phone: Safari's address bar can still be
+    // expanded right after load, shrinking window.innerHeight in portrait
+    // only (landscape auto-collapses it), which was throwing portrait off
+    // the ratio threshold on real iPhones while landscape passed. Touch +
+    // no-hover is a direct, reliable signal instead.
+    var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    if (isTouchDevice){
+      els.viewportFrame.classList.add('fullscreen-fit');
+      return;
+    }
     var vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
     var targetRatio = vw > vh ? 956/440 : 440/956;
