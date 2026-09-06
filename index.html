@@ -106,25 +106,6 @@
     }
   }
 
-  /* iOS reserves a fixed bottom strip in standalone/home-screen display
-     mode regardless of CSS approach tried (see applyStandaloneMargin) -
-     rather than keep chasing an exact pixel match, deliberately stop
-     short of the real bottom edge by a generous, fixed amount so
-     whatever that strip actually is, it's always comfortably covered
-     instead of looking cut off. Rounded bottom corners make the shorter
-     frame read as an intentional floating window. Portrait only - the
-     top edge (and landscape entirely) were already confirmed correct,
-     so this doesn't touch either. Regular browser tabs never get this
-     class at all. */
-  @media (orientation: portrait){
-    #viewport-frame.standalone-mode{
-      bottom:56px;
-    }
-    #viewport-frame.standalone-mode #app{
-      border-radius:0 0 24px 24px;
-    }
-  }
-
   /* ---------- Launcher (the very first screen) ---------- */
   .launcher-screen{
     position:absolute; inset:0; z-index:300;
@@ -1393,7 +1374,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.6.11';
+  var APP_VERSION = '1.6.12';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2127,23 +2108,6 @@
     var actualRatio = vw/vh;
     var diff = Math.abs(actualRatio - targetRatio) / targetRatio;
     els.viewportFrame.classList.toggle('desktop-preview', diff >= 0.04);
-  }
-
-  // A standalone/home-screen iOS PWA has repeatedly rendered short at the
-  // bottom regardless of CSS mechanism (plain position:fixed;inset:0,
-  // confirmed correct with JS disabled entirely, still came up short
-  // there specifically) or JS-measurement approach tried - genuinely
-  // seems to be a fixed reserved strip WebKit keeps in that display mode
-  // specifically, not a timing/measurement problem this app can correct.
-  // Rather than keep guessing at exact pixel-perfect fixes, standalone
-  // mode gets a deliberate, generous bottom margin instead - so whatever
-  // that reserved strip turns out to be, it's always comfortably covered
-  // and never looks like a bug. Regular browser tabs (confirmed correct
-  // full-bleed) are entirely unaffected - this only ever adds a class,
-  // never removes .desktop-preview's own logic above.
-  function applyStandaloneMargin(){
-    var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || !!(/** @type {any} */ (window.navigator).standalone);
-    els.viewportFrame.classList.toggle('standalone-mode', isStandalone);
   }
 
   // SVG (not a CSS border-triangle) specifically so the white outline
@@ -3764,7 +3728,6 @@
     els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
 
     updateFrameFit();
-    applyStandaloneMargin();
     renderPitchMarkings();
     requestWakeLock();
     window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
