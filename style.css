@@ -1070,6 +1070,17 @@
   .goal-player-row-name{ flex:1 1 auto; }
   .goal-player-row-count{ font-size:13px; font-weight:700; color:var(--ink-soft); }
   .goal-player-empty{ margin:14px 0; font-size:13px; color:var(--ink-soft); text-align:center; }
+  /* Quick-remove shortcut above the per-player list in 'remove' mode -
+     removes whichever goal was actually registered most recently,
+     regardless of who it belongs to, so a correction doesn't require
+     knowing/remembering which player it was mistakenly attributed to. */
+  .goal-quick-remove{
+    background:rgba(230,57,70,.1); color:var(--danger);
+    margin-top:12px; margin-bottom:2px;
+  }
+  button.goal-quick-remove:active{ background:rgba(230,57,70,.18); }
+  button.goal-quick-remove:disabled{ opacity:.4; cursor:default; }
+  .goal-quick-remove-icon{ background:var(--danger); }
   .legend-list{ display:flex; flex-direction:column; gap:14px; margin:14px 0; }
   .legend-row{ display:flex; align-items:center; gap:12px; }
   .legend-swatch{

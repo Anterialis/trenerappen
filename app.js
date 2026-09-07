@@ -888,6 +888,20 @@
     renderAll();
   }
 
+  // Quick-remove shortcut (see .goal-quick-remove) - removes whichever
+  // goal was actually registered last for the team, from whichever player
+  // it's attributed to, without having to pick that player from the list.
+  /** @param {'home'|'away'} team */
+  function removeLastGoalOverall(team){
+    if (!canEdit()) return;
+    var last = lastGoalEntry(team);
+    if (!last) return;
+    pushUndoSnapshot();
+    state.goalLog.splice(state.goalLog.indexOf(last), 1);
+    saveState();
+    renderAll();
+  }
+
   var SCORE_LONG_PRESS_MS = 550;
   /** @param {HTMLElement} btn @param {() => void} onTap @param {() => void} onLongPress */
   function bindScoreButton(btn, onTap, onLongPress){
@@ -955,6 +969,8 @@
     goalPlayerMode = mode;
     els.goalPlayerModalTitle.textContent =
       mode === 'add' ? 'Hvem scoret?' : mode === 'remove' ? 'Fjern mål fra hvem?' : 'Målskårere';
+    els.goalRemoveLastBtn.hidden = mode !== 'remove';
+    if (mode === 'remove') els.goalRemoveLastBtn.disabled = teamGoalCount('home') === 0;
     renderGoalPlayerList();
     els.goalPlayerModal.classList.add('open');
   }
@@ -2469,6 +2485,7 @@
     els.goalPlayerModalTitle = qs('goalPlayerModalTitle');
     els.goalPlayerList = qs('goalPlayerList');
     els.goalPlayerCancelBtn = qs('goalPlayerCancelBtn');
+    els.goalRemoveLastBtn = qs('goalRemoveLastBtn');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
     els.exportBtn = qs('exportBtn');
@@ -2675,6 +2692,10 @@
       if (team) registerGoal(team, playerId);
     });
     els.goalPlayerCancelBtn.addEventListener('click', closeGoalPlayerModal);
+    els.goalRemoveLastBtn.addEventListener('click', function(){
+      closeGoalPlayerModal();
+      removeLastGoalOverall('home');
+    });
     els.goalListBtn.addEventListener('click', function(){ openGoalPlayerModal('view'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
     initDurationPickerDrag();
