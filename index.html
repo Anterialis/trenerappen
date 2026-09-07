@@ -321,6 +321,7 @@
 
   /* ---------- Header ---------- */
   header{
+    position:relative;
     flex:0 0 auto;
     display:flex; align-items:center; justify-content:space-between;
     padding:10px 14px;
@@ -331,6 +332,12 @@
     border-bottom:1px solid rgba(255,255,255,.08);
     color:#fff;
   }
+  /* A plain 3rd flex child between undoBtn and .header-actions (see header
+     markup) - header's own justify-content:space-between then places it
+     in the natural gap between them. True mathematical center of the
+     whole header was tried first and rejected: the play/avslutt/
+     innstillinger cluster is wide enough that dead-center overlapped
+     "Avslutt", not the gap the request actually meant. */
   /* Rotated phone: the back button and the start/avslutt/settings group
      sit right at the screen's rounded outer corners otherwise - nudge both
      inward from the safe area. Portrait is untouched. */
@@ -385,8 +392,40 @@
   .pitch-lines{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .match-clock-wrap{
     position:absolute; top:10px; left:50%; transform:translateX(-50%);
-    display:flex; flex-direction:column; align-items:center; gap:4px;
+    display:flex; flex-direction:row; align-items:center; gap:10px;
     z-index:5;
+  }
+  .match-clock-center{
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+  }
+  /* Home/away goal counters flanking the clock - tap to register a goal
+     (home opens the player picker, away registers anonymously - see
+     onHomePlayerPicked/onAwayScoreTap), long-press to correct one. Styled
+     as a small companion scoreboard to the main digital clock, not part
+     of it, so it doesn't compete with the click-to-open-duration-picker
+     affordance on #matchClock itself. */
+  .score-btn{
+    -webkit-appearance:none; appearance:none; border:none; cursor:pointer;
+    background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.18);
+    border-radius:8px; color:#f4f4f2;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:22px; font-weight:800; font-variant-numeric:tabular-nums;
+    min-width:30px; padding:6px 10px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+    transition:transform .12s ease, background .15s ease;
+    -webkit-touch-callout:none; touch-action:manipulation;
+  }
+  .score-btn:active{ transform:scale(.92); background:rgba(0,0,0,.6); }
+  /* Vertical team label identifying which side is "us" at a glance -
+     grows the home side taller than the away side, which is fine since
+     they're only align-items:center'd against the clock, not each other. */
+  .home-score-group{ display:flex; flex-direction:row; align-items:center; gap:5px; }
+  .home-team-label{
+    writing-mode:vertical-rl; text-orientation:mixed;
+    font-size:9px; font-weight:800; letter-spacing:.05em;
+    color:rgba(255,255,255,.8);
+    text-shadow:0 1px 2px rgba(0,0,0,.5);
+    white-space:nowrap;
   }
   #matchClock{
     background:linear-gradient(180deg,#222,#000);
@@ -589,6 +628,19 @@
     0%,100%{ opacity:1; }
     50%{ opacity:.55; }
   }
+  /* Personal goal tally, centered under the initials inside the same
+     circle (not a corner badge like the others above) - blank at 0 (see
+     goalBadgeHtml), white otherwise, yellow for the/a tied top scorer.
+     Blue avatar background + yellow number is a deliberate complementary
+     pairing (see computeGoalBadges/renderField) for max legibility. */
+  .badge-goals{
+    position:absolute; left:50%; bottom:7px; transform:translateX(-50%);
+    font-size:12px; font-weight:800; line-height:1; color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,.5);
+    pointer-events:none;
+  }
+  .badge-goals.top-scorer{ color:#ffd60a; }
+  .bench-avatar .badge-goals{ bottom:4px; font-size:10px; }
 
   #selectionInfo{
     position:absolute; left:50%; top:68%; transform:translate(-50%,-50%);
@@ -970,6 +1022,42 @@
     resize:vertical;
   }
 
+  /* "Om appen" function guide, above the symbol legend in the same modal -
+     one titled block per function rather than the swatch+one-line-text
+     rows below (those pair a specific visual symbol with its meaning;
+     these explain an action you take, so they get a bit more room). */
+  .func-list{ display:flex; flex-direction:column; gap:13px; margin:14px 0 22px; }
+  .func-title{ margin:0 0 2px; font-size:14px; font-weight:700; color:var(--ink); }
+  .func-text{ margin:0; font-size:13px; line-height:1.42; color:var(--ink-soft); }
+  .legend-section-title{
+    margin:0 0 2px; font-size:12px; font-weight:700; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .legend-divider{ border:none; border-top:1px solid #e7e9ec; margin:18px 0; }
+
+  /* Shared by the "hvem scoret / fjern mål / målskårere" player list
+     (goalPlayerModal, three modes - see openGoalPlayerModal) - a plain
+     minimalist tap-list, one row per player. */
+  .goal-player-list{ display:flex; flex-direction:column; gap:6px; margin:14px 0; max-height:52vh; overflow-y:auto; }
+  .goal-player-row{
+    display:flex; align-items:center; gap:12px; width:100%;
+    padding:10px 12px; border:none; border-radius:var(--radius-sm);
+    background:#f5f6f7; color:var(--ink);
+    font-size:15px; font-weight:600; font-family:inherit; text-align:left;
+    cursor:pointer; transition:background .12s ease, transform .12s ease;
+  }
+  button.goal-player-row:active{ transform:scale(.98); background:#eceef0; }
+  button.goal-player-row:disabled{ opacity:.4; cursor:default; }
+  button.goal-player-row:disabled:active{ transform:none; background:#f5f6f7; }
+  .goal-player-row-avatar{
+    width:32px; height:32px; border-radius:50%; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700; color:#fff;
+    background:linear-gradient(160deg,var(--navy-2),var(--navy));
+  }
+  .goal-player-row-name{ flex:1 1 auto; }
+  .goal-player-row-count{ font-size:13px; font-weight:700; color:var(--ink-soft); }
+  .goal-player-empty{ margin:14px 0; font-size:13px; color:var(--ink-soft); text-align:center; }
   .legend-list{ display:flex; flex-direction:column; gap:14px; margin:14px 0; }
   .legend-row{ display:flex; align-items:center; gap:12px; }
   .legend-swatch{
@@ -1086,7 +1174,9 @@
   .view-only #settingsBtn,
   .view-only #multiSelectBtn,
   .view-only #multiSelectCancelBtn,
-  .view-only #swapSuggestionBtn{
+  .view-only #swapSuggestionBtn,
+  .view-only #homeScoreBtn,
+  .view-only #awayScoreBtn{
     opacity:.35; pointer-events:none;
   }
   .view-only .token{ pointer-events:none; }
@@ -1200,6 +1290,7 @@
   </div>
   <header>
     <button id="undoBtn" class="icon-btn" aria-label="Angre, gjør om eller gå tilbake til hovedmeny">↩<span id="undoCountBadge" class="icon-btn-badge" hidden>0</span></button>
+    <button id="goalListBtn" class="icon-btn goal-list-btn" aria-label="Målskårere">⚽</button>
     <div class="header-actions">
       <button id="playPauseBtn" aria-label="Start">
         <span class="pp-icon">▶</span><span class="pp-text">Start</span>
@@ -1217,8 +1308,15 @@
     <div id="field-wrap">
       <svg id="pitchLines" class="pitch-lines" viewBox="0 0 100 150" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="matchClockWrap" class="match-clock-wrap">
-        <div id="matchClock">0:00</div>
-        <div id="matchCountdown">0:00</div>
+        <div class="home-score-group">
+          <span class="home-team-label" aria-hidden="true">Nøtterøy</span>
+          <button type="button" id="homeScoreBtn" class="score-btn" aria-label="Registrer mål for Nøtterøy">0</button>
+        </div>
+        <div class="match-clock-center">
+          <div id="matchClock">0:00</div>
+          <div id="matchCountdown">0:00</div>
+        </div>
+        <button type="button" id="awayScoreBtn" class="score-btn" aria-label="Legg til mål for bortelaget">0</button>
       </div>
       <div id="field"></div>
       <div id="selectionInfo"></div>
@@ -1318,7 +1416,7 @@
     </div>
 
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
-    <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring</button>
+    <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
     <button type="button" id="exportBtn" class="export-link-btn">📋 Eksporter spillerdata</button>
 
     <div class="modal-actions">
@@ -1344,7 +1442,7 @@
 <div id="backActionModal" class="modal">
   <div class="modal-card">
     <div class="modal-actions modal-actions-col">
-      <button type="button" id="undoActionBtn" class="stack-btn">Angre bytte</button>
+      <button type="button" id="undoActionBtn" class="stack-btn">Angre siste</button>
       <button type="button" id="redoActionBtn" class="stack-btn">Endre tilbake</button>
       <button type="button" id="backToMenuActionBtn" class="stack-btn period">Gå tilbake til hovedmeny</button>
       <button type="button" id="backActionCancelBtn" class="stack-btn secondary">Avbryt</button>
@@ -1390,7 +1488,52 @@
 
 <div id="legendModal" class="modal">
   <div class="modal-card">
-    <h2>Symbolforklaring</h2>
+    <h2>Symbolforklaring og om appen</h2>
+    <p class="sub">Kort oversikt over alt du kan gjøre i appen, og hva symbolene betyr.</p>
+    <div class="func-list">
+      <div class="func-item">
+        <p class="func-title">Bytte spillere</p>
+        <p class="func-text">Dra en spiller til motsatt sone. Eller: trykk spilleren, trykk så plassen du vil bytte med.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Forslag ⇄</p>
+        <p class="func-text">Foreslår bytte: mest spilletid + passert byttetid ut, lengst ventet på benk inn. Trykk for å markere, trykk spilleren for å bekrefte.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">multiBytte ⇅</p>
+        <p class="func-text">Velg flere ute- og innbyttere samtidig, bytt alle med ett trykk. Rødt kryss avbryter.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Registrere mål</p>
+        <p class="func-text">Trykk tallet ved klokka - telles med én gang. Trykkes samme lag igjen innen 30 sek: bekreft for å unngå dobbeltregistrering. Langt trykk fjerner ett mål.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Angre siste</p>
+        <p class="func-text">↩ øverst til venstre. Angrer siste handling - bytte eller mål. Kan også gjøres om, eller gå tilbake til hovedmenyen.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Kampklokke og byttetid</p>
+        <p class="func-text">Trykk selve klokka for å endre kampvarighet. «!» varsler når byttetiden er nådd (settes i innstillinger). Pauses automatisk ved lang inaktivitet.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Start, pause og avslutt</p>
+        <p class="func-text">▶/⏸ styrer alle klokker samtidig. «Kampslutt»: ny periode, beholder tallene. «Avslutt og nullstill»: helt på nytt.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Innstillinger ⚙</p>
+        <p class="func-text">Spillernavn, banestørrelse, kampvarighet, byttetid, skjerm-våken, rangeringsmodus, deling av økt.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Del økt</p>
+        <p class="func-text">Del en tresifret kode - andre ser kampen live på sin telefon. Du velger om de kan redigere eller kun se.</p>
+      </div>
+      <div class="func-item">
+        <p class="func-title">Myntkast</p>
+        <p class="func-text">Fra startsiden: velg lagfarger, kast en mynt for å avgjøre hvem som starter med ballen.</p>
+      </div>
+    </div>
+    <hr class="legend-divider">
+    <p class="legend-section-title">Symboler</p>
     <div class="legend-list">
       <div class="legend-row"><span class="legend-swatch warning due">!</span><span class="legend-text">Byttetiden er nådd for en utespiller – klar for bytte.</span></div>
       <div class="legend-row"><span class="legend-swatch warning overtime">!</span><span class="legend-text">Spilt 50% lenger enn byttetiden – utropstegnet pulserer forsiktig.</span></div>
@@ -1417,6 +1560,25 @@
     <button type="button" id="infoPopupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2 id="infoPopupTitle"></h2>
     <p id="infoPopupText" class="sub"></p>
+  </div>
+</div>
+
+<div id="goalConfirmModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Nytt mål?</h2>
+    <p class="sub" id="goalConfirmText">Et mål ble nettopp registrert. Er du sikker?</p>
+    <div class="modal-actions">
+      <button type="button" id="goalConfirmNoBtn" class="secondary">Nei</button>
+      <button type="button" id="goalConfirmYesBtn" class="primary">Ja</button>
+    </div>
+  </div>
+</div>
+
+<div id="goalPlayerModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2 id="goalPlayerModalTitle">Hvem scoret?</h2>
+    <div class="goal-player-list" id="goalPlayerList"></div>
+    <button type="button" id="goalPlayerCancelBtn" class="stack-btn secondary" style="width:100%;">Lukk</button>
   </div>
 </div>
 
@@ -1480,6 +1642,12 @@
    * @property {number} baseElapsedMs
    * @property {number} sinceTs
    *
+   * @typedef {Object} GoalEntry
+   * @property {string} id
+   * @property {'home'|'away'} team
+   * @property {string|null} playerId
+   * @property {number} at
+   *
    * @typedef {Object} AppState
    * @property {Player[]} players
    * @property {string[]} onField
@@ -1497,6 +1665,7 @@
    * @property {boolean} rankByCumulative
    * @property {boolean} shareEditable
    * @property {string|null} sessionOwnerDeviceId
+   * @property {GoalEntry[]} goalLog
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -1535,7 +1704,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.8';
+  var APP_VERSION = '1.8.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1653,7 +1822,8 @@
       matchDurationMs: 1200000,
       rankByCumulative: false,
       shareEditable: true,
-      sessionOwnerDeviceId: null
+      sessionOwnerDeviceId: null,
+      goalLog: []
     };
   }
 
@@ -1682,6 +1852,7 @@
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     if (raw.shareEditable === undefined) raw.shareEditable = true;
     if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
+    if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
     return raw;
   }
 
@@ -2077,7 +2248,8 @@
       wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative,
       shareEditable: !!state.shareEditable,
-      sessionOwnerDeviceId: state.sessionOwnerDeviceId
+      sessionOwnerDeviceId: state.sessionOwnerDeviceId,
+      goalLog: cloneStateValue(state.goalLog || [])
     };
   }
 
@@ -2100,6 +2272,7 @@
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
     state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
     state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
+    state.goalLog = cloneStateValue(snap.goalLog || []);
   }
 
   // Call BEFORE mutating state for any undoable action - pushes the
@@ -2213,6 +2386,194 @@
     updateTimersOnly();
     updateUndoUI();
     updateMultiSelectUI();
+    renderScore();
+  }
+
+  function renderScore(){
+    els.homeScoreBtn.textContent = String(teamGoalCount('home'));
+    els.awayScoreBtn.textContent = String(teamGoalCount('away'));
+  }
+
+  /** @param {'home'|'away'} team */
+  function teamGoalCount(team){
+    var n = 0;
+    state.goalLog.forEach(function(g){ if (g.team === team) n++; });
+    return n;
+  }
+
+  /** @param {'home'|'away'} team @returns {GoalEntry|null} */
+  function lastGoalEntry(team){
+    for (var i = state.goalLog.length - 1; i >= 0; i--){
+      if (state.goalLog[i].team === team) return state.goalLog[i];
+    }
+    return null;
+  }
+
+  // Per-player home-team tallies (for the avatar badge and the top-scorer
+  // highlight) - computed once per render, same pattern as
+  // computeRankBadges above. Away goals are never attributed to a player
+  // (see onAwayScoreTap), so only 'home' entries with a playerId count.
+  function computeGoalBadges(){
+    var counts = {};
+    var max = 0;
+    state.goalLog.forEach(function(g){
+      if (g.team !== 'home' || !g.playerId) return;
+      counts[g.playerId] = (counts[g.playerId] || 0) + 1;
+      if (counts[g.playerId] > max) max = counts[g.playerId];
+    });
+    return { counts: counts, max: max };
+  }
+
+  // A goal is undoable the same way a substitution is (see pushUndoSnapshot
+  // above togglePlayPause) - both just mutate `state` before saving, so the
+  // generic snapshot-based undo stack covers this for free.
+  var GOAL_CONFIRM_WINDOW_MS = 30000;
+  /** @type {'home'|'away'|null} */
+  var pendingGoalTeam = null;
+  /** @type {string|null} */
+  var pendingGoalPlayerId = null;
+
+  /** @param {'home'|'away'} team @param {string|null} playerId */
+  function registerGoal(team, playerId){
+    pushUndoSnapshot();
+    state.goalLog.push({ id: uid(), team: team, playerId: playerId || null, at: Date.now() });
+    saveState();
+    renderAll();
+  }
+
+  // Away goals stay anonymous (see onHomePlayerPicked for the home flow,
+  // gated by the same shared-state 10s duplicate window - keyed on the
+  // synced goalLog, not a local timer, so it also catches a second device
+  // registering the same goal).
+  function onAwayScoreTap(){
+    if (!canEdit()) return;
+    var last = lastGoalEntry('away');
+    var recent = last && (Date.now() - last.at) < GOAL_CONFIRM_WINDOW_MS;
+    if (recent){
+      pendingGoalTeam = 'away';
+      pendingGoalPlayerId = null;
+      els.goalConfirmModal.classList.add('open');
+      return;
+    }
+    registerGoal('away', null);
+  }
+
+  /** @param {string} playerId */
+  function onHomePlayerPicked(playerId){
+    var last = lastGoalEntry('home');
+    var recent = last && (Date.now() - last.at) < GOAL_CONFIRM_WINDOW_MS;
+    if (recent){
+      pendingGoalTeam = 'home';
+      pendingGoalPlayerId = playerId;
+      els.goalConfirmModal.classList.add('open');
+      return;
+    }
+    registerGoal('home', playerId);
+  }
+
+  function closeGoalConfirm(){
+    pendingGoalTeam = null;
+    pendingGoalPlayerId = null;
+    els.goalConfirmModal.classList.remove('open');
+  }
+
+  // Long-press correction for a mis-registered goal - deliberately NOT
+  // routed through the 10s duplicate check (a correction isn't a new
+  // goal), and reachable at any point during the match rather than only
+  // while the mistake is still within reach of the (3-deep) undo stack.
+  // For home goals this removes a SPECIFIC player's most recent goal (see
+  // openGoalPlayerModal('remove')) rather than guessing which one was wrong.
+  /** @param {'home'|'away'} team @param {string|null} playerId */
+  function removeLastGoal(team, playerId){
+    if (!canEdit()) return;
+    var idx = -1;
+    for (var i = state.goalLog.length - 1; i >= 0; i--){
+      var g = state.goalLog[i];
+      if (g.team !== team) continue;
+      if (team === 'home' && g.playerId !== playerId) continue;
+      idx = i;
+      break;
+    }
+    if (idx === -1) return;
+    pushUndoSnapshot();
+    state.goalLog.splice(idx, 1);
+    saveState();
+    renderAll();
+  }
+
+  var SCORE_LONG_PRESS_MS = 550;
+  /** @param {HTMLElement} btn @param {() => void} onTap @param {() => void} onLongPress */
+  function bindScoreButton(btn, onTap, onLongPress){
+    var timer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+    var longPressed = false;
+    btn.addEventListener('pointerdown', function(){
+      longPressed = false;
+      clearTimeout(timer);
+      timer = setTimeout(function(){
+        longPressed = true;
+        onLongPress();
+      }, SCORE_LONG_PRESS_MS);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function(evt){
+      btn.addEventListener(evt, function(){ clearTimeout(timer); });
+    });
+    btn.addEventListener('click', function(){
+      if (longPressed){ longPressed = false; return; } // swallow the click firing right after the long-press
+      onTap();
+    });
+  }
+
+  /** @type {'add'|'remove'|'view'} */
+  var goalPlayerMode = 'add';
+
+  function renderGoalPlayerList(){
+    var goalBadges = computeGoalBadges();
+    var singleLetter = fieldUsesSingleLetter();
+    var rows = state.players.slice();
+    if (goalPlayerMode === 'view'){
+      rows = rows.filter(function(p){ return (goalBadges.counts[p.id] || 0) > 0; });
+      rows.sort(function(a,b){ return (goalBadges.counts[b.id] || 0) - (goalBadges.counts[a.id] || 0); });
+    }
+    if (rows.length === 0){
+      els.goalPlayerList.innerHTML = '<p class="goal-player-empty">Ingen mål registrert ennå.</p>';
+      return;
+    }
+    var interactive = goalPlayerMode !== 'view';
+    var tag = interactive ? 'button' : 'div';
+    els.goalPlayerList.innerHTML = rows.map(function(p){
+      var n = goalBadges.counts[p.id] || 0;
+      var disabled = goalPlayerMode === 'remove' && n === 0;
+      var openTag = '<' + tag + ' class="goal-player-row"' +
+        (interactive ? ' type="button" data-id="' + p.id + '"' + (disabled ? ' disabled' : '') : '') + '>';
+      return openTag +
+        '<span class="goal-player-row-avatar">' + initials(p.name, singleLetter) + '</span>' +
+        '<span class="goal-player-row-name">' + escapeHtml(p.name) + '</span>' +
+        (n > 0 ? '<span class="goal-player-row-count">' + n + '</span>' : '') +
+      '</' + tag + '>';
+    }).join('');
+    if (interactive){
+      Array.prototype.forEach.call(els.goalPlayerList.querySelectorAll('.goal-player-row'), function(row){
+        row.addEventListener('click', function(){
+          var id = row.getAttribute('data-id');
+          closeGoalPlayerModal();
+          if (goalPlayerMode === 'add') onHomePlayerPicked(id);
+          else removeLastGoal('home', id);
+        });
+      });
+    }
+  }
+
+  /** @param {'add'|'remove'|'view'} mode */
+  function openGoalPlayerModal(mode){
+    goalPlayerMode = mode;
+    els.goalPlayerModalTitle.textContent =
+      mode === 'add' ? 'Hvem scoret?' : mode === 'remove' ? 'Fjern mål fra hvem?' : 'Målskårere';
+    renderGoalPlayerList();
+    els.goalPlayerModal.classList.add('open');
+  }
+
+  function closeGoalPlayerModal(){
+    els.goalPlayerModal.classList.remove('open');
   }
 
   /* Draws pitch markings using the field-wrap's real pixel size, so 1 SVG
@@ -2284,10 +2645,19 @@
     '</svg>';
   }
 
+  /** @param {string} playerId @param {{counts:Object<string,number>, max:number}} goalBadges */
+  function goalBadgeHtml(playerId, goalBadges){
+    var n = goalBadges.counts[playerId] || 0;
+    if (n <= 0) return '';
+    var top = goalBadges.max > 0 && n === goalBadges.max;
+    return '<div class="badge-goals' + (top ? ' top-scorer' : '') + '">' + n + '</div>';
+  }
+
   function renderField(){
     Array.prototype.forEach.call(els.field.querySelectorAll('.token'), function(n){ n.remove(); });
     var now = Date.now();
     var rankBadges = computeRankBadges(now);
+    var goalBadges = computeGoalBadges();
     var singleLetter = fieldUsesSingleLetter();
     var sorted = state.onField.filter(function(id, i){ return state.onField.indexOf(id) === i; }).sort(function(a,b){
       var diff = fieldElapsed(a, now) - fieldElapsed(b, now);
@@ -2309,6 +2679,7 @@
       el.innerHTML =
         '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
           rankBadgeHtml(rankBadges[id]) +
+          goalBadgeHtml(id, goalBadges) +
           (farOver ? '<div class="badge-warning overtime">!</div>' : timeUp ? '<div class="badge-warning due">!</div>' : '') +
           (isChecked ? '<div class="badge-check">✓</div>' : '') +
         '</div>' +
@@ -2324,6 +2695,7 @@
     els.bench.innerHTML = '';
     var now = Date.now();
     var rankBadges = computeRankBadges(now);
+    var goalBadges = computeGoalBadges();
     var sorted = state.onBench.filter(function(id, i){ return state.onBench.indexOf(id) === i; }).sort(function(a,b){
       var diff = benchElapsed(a, now) - benchElapsed(b, now);
       if (diff !== 0) return diff;
@@ -2341,6 +2713,7 @@
       el.innerHTML =
         '<div class="avatar bench-avatar">' + initials(p.name) +
           rankBadgeHtml(rankBadges[id]) +
+          goalBadgeHtml(id, goalBadges) +
           (isChecked ? '<div class="badge-check">✓</div>' : '') +
         '</div>' +
         '<div class="label">' + escapeHtml(p.name) + '</div>' +
@@ -3487,11 +3860,13 @@
 
   function renderEndMatchSummary(){
     var now = Date.now();
+    var goalBadges = computeGoalBadges();
     var rows = state.players.map(function(p){
       return {
         name: p.name,
         fieldMs: cumulativeFieldMs(p.id, now),
-        benchMs: cumulativeBenchMs(p.id, now)
+        benchMs: cumulativeBenchMs(p.id, now),
+        goals: goalBadges.counts[p.id] || 0
       };
     });
     rows.sort(function(a,b){ return b.fieldMs - a.fieldMs; });
@@ -3501,7 +3876,7 @@
     }
     els.endMatchSummary.innerHTML = rows.map(function(r){
       return '<div class="ems-row">' +
-        '<span class="ems-name">' + escapeHtml(r.name) + '</span>' +
+        '<span class="ems-name">' + escapeHtml(r.name) + (r.goals > 0 ? ' (' + r.goals + ' mål)' : '') + '</span>' +
         '<span class="ems-time">spilt: ' + formatCumulative(r.fieldMs) + ' - benk: ' + formatCumulative(r.benchMs) + '</span>' +
       '</div>';
     }).join('');
@@ -3681,6 +4056,16 @@
     els.swapSuggestionBtn = qs('swapSuggestionBtn');
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
+    els.homeScoreBtn = qs('homeScoreBtn');
+    els.awayScoreBtn = qs('awayScoreBtn');
+    els.goalConfirmModal = qs('goalConfirmModal');
+    els.goalConfirmNoBtn = qs('goalConfirmNoBtn');
+    els.goalConfirmYesBtn = qs('goalConfirmYesBtn');
+    els.goalListBtn = qs('goalListBtn');
+    els.goalPlayerModal = qs('goalPlayerModal');
+    els.goalPlayerModalTitle = qs('goalPlayerModalTitle');
+    els.goalPlayerList = qs('goalPlayerList');
+    els.goalPlayerCancelBtn = qs('goalPlayerCancelBtn');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
     els.exportBtn = qs('exportBtn');
@@ -3873,6 +4258,21 @@
     });
     els.infoPopupCloseBtn.addEventListener('click', function(){ els.infoPopupModal.classList.remove('open'); });
     els.matchClock.addEventListener('click', openDurationPicker);
+    bindScoreButton(els.homeScoreBtn,
+      function(){ if (!canEdit()) return; openGoalPlayerModal('add'); },
+      function(){ if (!canEdit()) return; openGoalPlayerModal('remove'); });
+    bindScoreButton(els.awayScoreBtn,
+      onAwayScoreTap,
+      function(){ removeLastGoal('away', null); });
+    els.goalConfirmNoBtn.addEventListener('click', closeGoalConfirm);
+    els.goalConfirmYesBtn.addEventListener('click', function(){
+      var team = pendingGoalTeam;
+      var playerId = pendingGoalPlayerId;
+      closeGoalConfirm();
+      if (team) registerGoal(team, playerId);
+    });
+    els.goalPlayerCancelBtn.addEventListener('click', closeGoalPlayerModal);
+    els.goalListBtn.addEventListener('click', function(){ openGoalPlayerModal('view'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
     initDurationPickerDrag();
     els.exportCopyBtn.addEventListener('click', function(){
