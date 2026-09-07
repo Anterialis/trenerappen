@@ -7,7 +7,7 @@
     --accent:#ff8a3d;
     --accent-ink:#5a2d0c;
     --danger:#e63946;
-    --orange:#ff9500;
+    --orange:#d4900a; /* amber, not pure orange - kept a deliberate hue gap from --accent (both used to sit ~11 degrees apart on the color wheel and read as "the same orange") */
     --period-blue:#0a84ff;
     --bench-bg:#eef1f0;
     --card:#ffffff;
@@ -452,7 +452,7 @@
     pointer-events:none;
     transition:color .2s ease, border-color .2s ease;
   }
-  #matchCountdown.overtime{ color:var(--orange); border-color:rgba(255,159,10,.4); }
+  #matchCountdown.overtime{ color:var(--orange); border-color:rgba(212,144,10,.4); }
   #field{
     position:relative;
     height:100%;
@@ -569,8 +569,8 @@
     transition:background .2s ease, color .2s ease, border-color .2s ease;
   }
   #playPauseBtn.running{
-    border-color:rgba(255,149,0,.45);
-    background:rgba(255,149,0,.18); color:#ff9f0a;
+    border-color:rgba(212,144,10,.45);
+    background:rgba(212,144,10,.18); color:#e4a41c;
   }
   #playPauseBtn:active{ transform:scale(.96); }
   #playPauseBtn .pp-icon{ font-size:13px; line-height:1; }
@@ -865,7 +865,7 @@
      a whole new roster into what might be the wrong session. */
   .joined-empty-note{
     margin:0 0 16px; padding:10px 12px;
-    background:rgba(255,149,0,.12); border:1px solid rgba(255,149,0,.35);
+    background:rgba(212,144,10,.12); border:1px solid rgba(212,144,10,.35);
     border-radius:var(--radius-sm);
     font-size:12.5px; line-height:1.42; color:#8a5300;
   }
@@ -1156,7 +1156,7 @@
     background:#32d74b; vertical-align:middle;
     transition:background .3s ease;
   }
-  .sync-dot.offline{ background:#ff9500; }
+  .sync-dot.offline{ background:var(--orange); }
   .session-code-bar.offline{ color:rgba(255,197,138,.9); }
 
   .auto-pause-notice{

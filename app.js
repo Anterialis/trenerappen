@@ -2014,6 +2014,19 @@
       'fill="' + hex + '" stroke="' + stroke + '" stroke-width="1.6" stroke-linejoin="round"/></svg>';
   }
 
+  // Launcher-tile icon only: a coin (rim ring, like an embossed face) with
+  // two curved motion arcs swooshing around it to signal "this spins" -
+  // distinct from jerseyIconSvg, which is what the coin's FACES show once
+  // it lands on a team's color.
+  function coinSpinIconSvg(hex){
+    var stroke = 'rgba(0,0,0,.25)';
+    return '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M6,15 A16,16 0 0,1 15,6" fill="none" stroke="' + hex + '" stroke-width="2.2" stroke-linecap="round" opacity=".6"/>' +
+      '<path d="M34,25 A16,16 0 0,1 25,34" fill="none" stroke="' + hex + '" stroke-width="2.2" stroke-linecap="round" opacity=".6"/>' +
+      '<circle cx="20" cy="20" r="11" fill="' + hex + '" stroke="' + stroke + '" stroke-width="1.6"/>' +
+      '<circle cx="20" cy="20" r="7" fill="none" stroke="' + stroke + '" stroke-width="1.2" opacity=".6"/></svg>';
+  }
+
   function loadCoinFlipColors(){
     try {
       var raw = localStorage.getItem(COINFLIP_COLORS_KEY);
@@ -2125,7 +2138,7 @@
   }
 
   function initCoinFlip(){
-    els.coinTileArt.innerHTML = jerseyIconSvg('#fff8ea');
+    els.coinTileArt.innerHTML = coinSpinIconSvg('#fff8ea');
     buildCoinColorGrid(els.coinHomeColorGrid, 'home');
     buildCoinColorGrid(els.coinAwayColorGrid, 'away');
     loadCoinFlipColors();
