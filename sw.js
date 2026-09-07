@@ -1,24 +1,24 @@
 // Trenerappen - service worker
 //
 // Only job: let the app open from the iPhone home screen (or a browser tab)
-// with zero network connectivity, by keeping a cached copy of index.html
-// (the whole app - see PROSJEKT-OPPSUMMERING.md) around after the first
-// successful load.
+// with zero network connectivity, by keeping a cached copy of the app shell
+// (index.html + style.css + app.js - see PROSJEKT-OPPSUMMERING.md) around
+// after the first successful load.
 //
 // Deliberately NOT a cache-first "offline-first" worker: for navigations it
 // always tries the network first and only falls back to the cached shell
 // when that fails, so a device that DOES have connectivity always gets the
 // live index.html, never a stale cached one. That's what keeps this
-// compatible with the update-check in index.html (checkForUpdate), which
+// compatible with the update-check in app.js (checkForUpdate), which
 // fetches with {cache:'no-store'} - those requests are ignored below and
 // go straight to the network, untouched, so they always see what's truly
 // live on Netlify regardless of what this worker has cached.
 //
-// Bump CACHE_NAME (to match APP_VERSION in index.html) on every deploy that
-// changes index.html, so the old cached shell gets purged on activate
-// instead of lingering.
-var CACHE_NAME = 'trenerapp-shell-v1.8.3';
-var APP_SHELL = ['/', '/index.html', '/manifest.json', '/icon-180.png', '/icon-512.png'];
+// Bump CACHE_NAME (to match APP_VERSION in app.js) on every deploy that
+// changes index.html, style.css or app.js, so the old cached shell gets
+// purged on activate instead of lingering.
+var CACHE_NAME = 'trenerapp-shell-v1.8.4';
+var APP_SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon-180.png', '/icon-512.png'];
 
 self.addEventListener('install', function(event){
   self.skipWaiting();

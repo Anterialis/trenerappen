@@ -1,0 +1,1216 @@
+  :root{
+    --green-1:#1f7a41;
+    --green-2:#1b6b39;
+    --line: rgba(255,255,255,0.55);
+    --navy:#0f1f36;
+    --navy-2:#16294a;
+    --accent:#ff8a3d;
+    --accent-ink:#5a2d0c;
+    --danger:#e63946;
+    --orange:#ff9500;
+    --period-blue:#0a84ff;
+    --bench-bg:#eef1f0;
+    --card:#ffffff;
+    --ink:#16202b;
+    --ink-soft:#6b7686;
+    --radius-lg:22px;
+    --radius-md:14px;
+    --radius-sm:10px;
+    --shadow-sm:0 2px 6px rgba(15,31,54,.16);
+    --shadow-md:0 8px 22px rgba(15,31,54,.22);
+    --glass-blur:24px;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{
+    min-height:100%; margin:0; padding:0;
+    overscroll-behavior:none;
+    background:var(--navy);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    color:var(--ink);
+  }
+  body{ -webkit-user-select:none; user-select:none; overflow-x:hidden; }
+
+  /* ---------- Layout ---------- */
+  /* Normal document flow, sized with min-height - NOT position:fixed+inset:0
+     with a hard height. That locked-canvas approach is exactly the thing
+     iOS standalone-PWA mode is unreliable about: WebKit's viewport-height
+     recalculation in that mode doesn't always land on the real usable
+     height, and with overflow:hidden any shortfall was invisible - it
+     just clipped the bottom of the app (the "black bar" bug). Two other
+     production PWAs of ours (flykalk.no, anestesiappen.no) use this exact
+     min-height + normal-flow approach and don't hit this - min-height
+     gives the same full-bleed look when content fits (the near-universal
+     case), and on the rare device/content combination where it doesn't
+     quite fit, the page scrolls instead of silently cutting content off.
+     The letterboxed "phone in a dark room" mockup below is a separate,
+     opt-in ADDITION (.desktop-preview) purely for previewing the app in
+     a wide desktop browser window - a real phone never carries that
+     class and never needs to. */
+  /* height (not min-height): #field-wrap below is flex:0 0 68% of #main,
+     which needs #app's height to be DEFINITE to resolve that percentage
+     correctly - min-height alone left it indefinite and collapsed the
+     pitch/bench split. Still no position:fixed and no overflow:hidden
+     though, so if 100dvh is ever a hair off from the real safe area in
+     standalone PWA mode, the excess/shortfall is a small natural scroll
+     or gap - never an invisibly clipped, locked-in black bar. */
+  #viewport-frame{
+    position:relative; /* containing block for the modals that are its direct children (siblings of #app, not nested inside it) - without this they fall back to the initial containing block instead of this box */
+    height:100svh; height:100dvh;
+    background:var(--navy);
+  }
+  #app{
+    position:relative; /* containing block for its position:absolute children (.launcher-screen, modals, etc.) - not for #app's own placement */
+    height:100svh; height:100dvh;
+    display:flex; flex-direction:column;
+    background:var(--navy);
+  }
+
+  /* ---------- Desktop preview (letterboxed to a phone aspect ratio) ---------- */
+  /* Added by updateFrameFit() only when it detects a non-touch (mouse/
+     trackpad) context whose window isn't already phone-shaped - e.g. a
+     resized Mac browser. Ratio matches iPhone 17 / 17 Pro / 17 Pro Max
+     (~440x956 pt). Desktop browsers don't have the iOS cold-launch
+     viewport-timing issue above, so measuring against 100vw/100dvh here
+     is fine - this path is never used on a real phone. */
+  #viewport-frame.desktop-preview{
+    position:static; inset:auto;
+    width:100vw;
+    height:100vh; height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #viewport-frame.desktop-preview #app{
+    position:relative;
+    width:min(100vw, calc((100vh) * 440 / 956));
+    width:min(100vw, calc((100dvh) * 440 / 956));
+    height:min(100vh, calc(100vw * 956 / 440));
+    height:min(100dvh, calc(100vw * 956 / 440));
+    max-width:100vw; max-height:100vh; max-height:100dvh;
+    border-radius:30px;
+    border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 0 60px rgba(0,0,0,.5);
+  }
+  /* Rotated preview window: target the landscape version of the same
+     aspect ratio instead of staying portrait-shaped and letterboxing
+     the rotation away. */
+  @media (orientation: landscape){
+    #viewport-frame.desktop-preview #app{
+      width:min(100vw, calc((100vh) * 956 / 440));
+      width:min(100vw, calc((100dvh) * 956 / 440));
+      height:min(100vh, calc(100vw * 440 / 956));
+      height:min(100dvh, calc(100vw * 440 / 956));
+    }
+  }
+
+  /* ---------- Launcher (the very first screen) ---------- */
+  .launcher-screen{
+    position:absolute; inset:0; z-index:300;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
+    padding:28px 26px;
+    transition:opacity .3s ease;
+  }
+  .launcher-screen.hidden{ opacity:0; pointer-events:none; }
+  .launcher-tile{
+    position:relative;
+    width:100%; max-width:320px;
+    border-radius:26px; overflow:hidden;
+    background:rgba(255,255,255,.09);
+    border:1px solid rgba(255,255,255,.20);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    backdrop-filter:blur(20px) saturate(160%);
+    box-shadow:0 10px 26px rgba(0,0,0,.4);
+    cursor:pointer;
+    transition:transform .5s cubic-bezier(.22,1,.36,1), box-shadow .5s cubic-bezier(.22,1,.36,1);
+  }
+  .launcher-tile.lifted{
+    transform:translateY(-12px) scale(1.045);
+    box-shadow:0 34px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.35) inset;
+  }
+  .launcher-tile-art{
+    width:100%; aspect-ratio:10/7;
+    background:repeating-linear-gradient(180deg, var(--green-1) 0 22px, var(--green-2) 22px 44px);
+  }
+  .launcher-tile-art svg{ width:100%; height:100%; display:block; }
+  .launcher-tile-body{ padding:18px 20px 20px; }
+  .launcher-tile-title{ margin:0 0 5px; font-size:16px; font-weight:700; color:#fff; }
+  .launcher-tile-sub{ margin:0; font-size:13px; line-height:1.45; color:rgba(255,255,255,.72); }
+  .launcher-credit{
+    margin-top:26px; font-size:12px; font-weight:500; font-style:italic;
+    letter-spacing:.03em; color:rgba(255,255,255,.36);
+  }
+  @media (prefers-reduced-motion: reduce){
+    .launcher-tile{ transition:opacity .3s ease; }
+    .launcher-tile.lifted{ transform:none; opacity:.85; }
+  }
+
+  /* Glass popup shown on tapping the launcher tile: choose new vs. join an
+     existing session. Nested INSIDE .launcher-tile (which is already
+     position:relative + border-radius + overflow:hidden) so inset:0 makes
+     it exactly cover the tile's full pitch-graphic + body area for free,
+     with matching rounded corners via the parent's clip - no separate
+     sizing/radius to keep in sync. A single element (not an outer
+     transparent overlay + an inner glass card) with one opacity+transform
+     transition, so the opaque background and the text/buttons always
+     appear together - a separate translucent+backdrop-filter card here
+     previously caused a visible lag where the blur "caught up" a beat
+     after the content had already faded in. */
+  .launcher-choice-overlay{
+    position:absolute; inset:0; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+    padding:26px 22px;
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 65%, #081120);
+    opacity:0; pointer-events:none; transform:scale(1.04);
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  .launcher-choice-overlay.open{ opacity:1; pointer-events:auto; transform:scale(1); }
+  .launcher-choice-overlay.shake{ animation:shake .4s; }
+  .launcher-choice-panel{ width:100%; }
+  .launcher-choice-title{ margin:0 0 4px; color:#fff; font-size:19px; font-weight:700; text-align:center; }
+  .launcher-choice-sub{ margin:0 0 20px; color:rgba(255,255,255,.65); font-size:13px; text-align:center; }
+  .glass-choice-btn{
+    display:block; width:100%; padding:14px; margin-bottom:10px;
+    border:1px solid rgba(255,255,255,.22); border-radius:var(--radius-sm);
+    background:rgba(255,255,255,.08); color:#fff;
+    font-size:15px; font-weight:700; cursor:pointer;
+    transition:transform .12s ease, background .15s ease;
+  }
+  .glass-choice-btn:active{ transform:scale(.97); background:rgba(255,255,255,.16); }
+  .glass-choice-btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
+  .glass-choice-btn.primary:active{ opacity:.85; }
+  /* "Ny økt" when a session already exists - starting over would discard
+     it, so it needs the same press-again-to-confirm pattern as "Avslutt
+     og nullstill" rather than firing on a single tap. */
+  .glass-choice-btn.armed{ background:var(--danger); color:#fff; border-color:transparent; }
+  .launcher-choice-cancel{
+    display:block; width:100%; margin:4px 0 0; padding:10px;
+    background:none; border:none; color:rgba(255,255,255,.5);
+    font-size:14px; font-weight:600; cursor:pointer;
+  }
+  .launcher-choice-back{
+    position:absolute; top:18px; left:16px;
+    width:30px; height:30px; border-radius:50%; border:none;
+    background:rgba(255,255,255,.10); color:#fff; font-size:19px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .launcher-join-input{
+    width:100%; margin:6px 0 12px; text-align:center;
+    font-size:28px; font-weight:700; letter-spacing:8px;
+    padding:12px; border:1px solid rgba(255,255,255,.25); border-radius:var(--radius-sm);
+    background:rgba(255,255,255,.10); color:#fff;
+  }
+  .launcher-join-input::placeholder{ color:rgba(255,255,255,.35); }
+  .launcher-join-error{ color:#ff8a8a; font-size:13px; text-align:center; margin:0 0 8px; }
+  .launcher-join-enter{
+    display:flex; align-items:center; justify-content:center;
+    width:52px; height:52px; margin:6px auto 0; border-radius:50%; border:none;
+    background:var(--accent); color:var(--accent-ink); font-size:22px; font-weight:800;
+    cursor:pointer;
+  }
+  .launcher-join-enter:active{ transform:scale(.94); }
+  @media (prefers-reduced-motion: reduce){
+    .launcher-choice-overlay{ transition:opacity .3s ease; transform:none; }
+  }
+
+  /* ---------- Myntkast (coin toss) launcher tile + screen ---------- */
+  .launcher-tiles-row{ display:flex; gap:12px; width:100%; max-width:380px; align-items:flex-start; }
+  .launcher-tiles-row .launcher-tile{ max-width:none; flex:1 1 auto; min-width:0; }
+  .coin-tile{
+    flex:0 0 104px; width:104px;
+    border-radius:22px; overflow:hidden;
+    background:rgba(255,255,255,.09);
+    border:1px solid rgba(255,255,255,.20);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    backdrop-filter:blur(20px) saturate(160%);
+    box-shadow:0 10px 26px rgba(0,0,0,.4);
+    cursor:pointer;
+    transition:transform .15s ease, box-shadow .15s ease;
+    display:flex; flex-direction:column; align-items:center;
+    padding:0 0 10px;
+  }
+  .coin-tile:active{ transform:scale(.96); }
+  .coin-tile-art{
+    width:100%; aspect-ratio:1/1;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+  }
+  .coin-tile-art svg{ width:56%; height:56%; display:block; }
+  .coin-tile-label{ margin:8px 0 0; font-size:12px; font-weight:700; color:#fff; text-align:center; }
+
+  .coin-flip-screen{
+    position:absolute; inset:0; z-index:310;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
+    padding:28px 26px;
+    opacity:0; pointer-events:none; transform:scale(1.03);
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .coin-flip-screen.open{ opacity:1; pointer-events:auto; transform:scale(1); }
+  .coin-flip-close{
+    position:absolute; top:calc(env(safe-area-inset-top) + 16px); left:16px;
+    width:36px; height:36px; border-radius:50%; border:none;
+    background:rgba(255,255,255,.10); color:#fff; font-size:20px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .coin-flip-panel{ width:100%; max-width:320px; }
+  .coin-flip-title{ margin:0 0 4px; color:#fff; font-size:19px; font-weight:700; text-align:center; }
+  .coin-flip-sub{ margin:0 0 18px; color:rgba(255,255,255,.65); font-size:13px; text-align:center; }
+  .coin-color-section{ margin-bottom:18px; }
+  .coin-color-section:last-of-type{ margin-bottom:6px; }
+  .coin-color-label{
+    margin:0 0 8px; color:rgba(255,255,255,.85); font-size:12px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .coin-color-grid{ display:flex; flex-wrap:wrap; gap:10px; }
+  .coin-swatch{
+    width:34px; height:34px; border-radius:50%; border:2px solid rgba(255,255,255,.25);
+    cursor:pointer; padding:0; position:relative; flex-shrink:0;
+    transition:transform .15s ease, border-color .15s ease;
+  }
+  .coin-swatch[data-color="white"]{ border-color:rgba(255,255,255,.55); }
+  .coin-swatch.selected{ border-color:#fff; transform:scale(1.12); box-shadow:0 0 0 2px rgba(255,255,255,.25); }
+  .coin-swatch.selected::after{
+    content:'✓'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:15px; font-weight:800; text-shadow:0 1px 2px rgba(0,0,0,.5);
+  }
+  .coin-swatch[data-color="white"].selected::after{ color:#16202b; text-shadow:none; }
+  .coin-swatch:active{ transform:scale(.92); }
+  .coin-color-error{ color:#ff8a8a; font-size:13px; text-align:center; margin:10px 0 4px; }
+
+  .coin-stage{ display:flex; align-items:center; justify-content:center; height:240px; perspective:900px; }
+  .coin-arc.flying{ animation:coinArc 3s cubic-bezier(.33,0,.2,1); }
+  @keyframes coinArc{
+    0%{ transform:translateY(0) scale(.88); }
+    45%{ transform:translateY(-120px) scale(1.18); }
+    100%{ transform:translateY(0) scale(1); }
+  }
+  .coin{
+    width:110px; height:110px; position:relative;
+    transform-style:preserve-3d;
+  }
+  .coin-face{
+    position:absolute; inset:0; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+    backface-visibility:hidden; -webkit-backface-visibility:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,.4), inset 0 0 0 4px rgba(255,255,255,.25);
+  }
+  .coin-face svg{ width:56%; height:56%; }
+  .coin-face-back{ transform:rotateY(180deg); }
+  .coin-result-badge{
+    width:110px; height:110px; margin:0 auto 18px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+    box-shadow:0 6px 18px rgba(0,0,0,.4), inset 0 0 0 4px rgba(255,255,255,.25);
+  }
+  .coin-result-badge svg{ width:56%; height:56%; }
+  .coin-result-text{ margin:0 0 20px; color:#fff; font-size:17px; font-weight:700; text-align:center; line-height:1.4; }
+  @media (prefers-reduced-motion: reduce){
+    .coin-flip-screen{ transition:opacity .3s ease; transform:none; }
+    .coin-arc.flying{ animation:none; }
+  }
+
+  /* ---------- Header ---------- */
+  header{
+    position:relative;
+    flex:0 0 auto;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px;
+    padding-top:calc(env(safe-area-inset-top) + 10px);
+    background:linear-gradient(180deg, rgba(22,41,74,.82), rgba(15,31,54,.82));
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    border-bottom:1px solid rgba(255,255,255,.08);
+    color:#fff;
+  }
+  /* A plain 3rd flex child between undoBtn and .header-actions (see header
+     markup) - header's own justify-content:space-between then places it
+     in the natural gap between them. True mathematical center of the
+     whole header was tried first and rejected: the play/avslutt/
+     innstillinger cluster is wide enough that dead-center overlapped
+     "Avslutt", not the gap the request actually meant. */
+  /* Rotated phone: the back button and the start/avslutt/settings group
+     sit right at the screen's rounded outer corners otherwise - nudge both
+     inward from the safe area. Portrait is untouched. */
+  @media (orientation: landscape){
+    header{
+      padding-left: calc(14px + env(safe-area-inset-left) + 14px);
+      padding-right: calc(14px + env(safe-area-inset-right) + 14px);
+    }
+  }
+  .header-actions{ display:flex; align-items:center; gap:16px; }
+  .icon-btn{
+    position:relative;
+    width:38px; height:38px; border-radius:50%;
+    border:none; background:rgba(255,255,255,.12); color:#fff;
+    font-size:18px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .icon-btn:active{ background:rgba(255,255,255,.22); }
+  .icon-btn:disabled{ opacity:.28; cursor:default; }
+  .icon-btn:disabled:active{ background:rgba(255,255,255,.12); }
+  .icon-btn-badge{
+    position:absolute; top:-2px; right:-2px;
+    min-width:16px; height:16px; padding:0 3px; border-radius:50%;
+    background:var(--accent); color:var(--accent-ink);
+    font-size:10px; font-weight:800; line-height:16px; text-align:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+  }
+  .end-btn{
+    border:1px solid rgba(255,69,58,.45);
+    background:rgba(255,69,58,.18); color:#ff6259;
+    padding:8px 13px; border-radius:100px;
+    font-size:13px; font-weight:700; cursor:pointer;
+    -webkit-backdrop-filter:blur(10px);
+    backdrop-filter:blur(10px);
+  }
+  .end-btn:active{ transform:scale(.96); }
+
+  /* ---------- Main split ---------- */
+  #main{
+    position:relative;
+    flex:1 1 auto; min-height:0;
+    display:flex; flex-direction:column;
+  }
+
+  #field-wrap{
+    flex:0 0 68%;
+    position:relative;
+    overflow:hidden;
+    background:
+      repeating-linear-gradient(180deg, var(--green-1) 0 40px, var(--green-2) 40px 80px);
+  }
+  .pitch-lines{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .match-clock-wrap{
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    display:flex; flex-direction:row; align-items:center; gap:10px;
+    z-index:5;
+  }
+  .match-clock-center{
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+  }
+  /* Home/away goal counters flanking the clock - tap to register a goal
+     (home opens the player picker, away registers anonymously - see
+     onHomePlayerPicked/onAwayScoreTap), long-press to correct one. Styled
+     as a small companion scoreboard to the main digital clock, not part
+     of it, so it doesn't compete with the click-to-open-duration-picker
+     affordance on #matchClock itself. */
+  .score-btn{
+    -webkit-appearance:none; appearance:none; border:none; cursor:pointer;
+    background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.18);
+    border-radius:8px; color:#f4f4f2;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:22px; font-weight:800; font-variant-numeric:tabular-nums;
+    min-width:30px; padding:6px 10px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+    transition:transform .12s ease, background .15s ease;
+    -webkit-touch-callout:none; touch-action:manipulation;
+  }
+  .score-btn:active{ transform:scale(.92); background:rgba(0,0,0,.6); }
+  /* Team code identifying which side is "us" at a glance, upright to the
+     left of the score - like a real broadcast scoreboard's 3-letter
+     abbreviation. Positioned OUTSIDE .match-clock-wrap's own box (right:100%
+     of itself, i.e. flush against the wrap's left edge) rather than as a
+     normal-flow flex child, specifically so it does NOT count towards the
+     wrap's width - home score/clock/away score stay the thing that's
+     centered on the pitch (left:50%/translateX(-50%) on the wrap), with
+     NØT hanging off to the left of that centered group, uncounted. */
+  .home-team-label{
+    position:absolute; right:100%; top:50%; transform:translateY(-50%);
+    margin-right:6px;
+    font-size:11px; font-weight:800; letter-spacing:.05em;
+    text-transform:uppercase;
+    color:rgba(255,255,255,.8);
+    text-shadow:0 1px 2px rgba(0,0,0,.5);
+    white-space:nowrap;
+  }
+  #matchClock{
+    background:linear-gradient(180deg,#222,#000);
+    border:2px solid rgba(255,255,255,.22);
+    border-radius:8px;
+    padding:5px 22px;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:30px; font-weight:700; color:#f4f4f2;
+    font-variant-numeric:tabular-nums; letter-spacing:3px;
+    text-shadow:0 0 6px rgba(255,255,255,.6), 0 0 16px rgba(255,255,255,.3);
+    box-shadow:0 8px 20px rgba(0,0,0,.65), inset 0 0 10px rgba(0,0,0,.6);
+    cursor:pointer;
+  }
+  #matchClock:active{ transform:scale(.97); }
+  /* Small always-visible countdown beside the main (frozen) clock - counts
+     down to kampvarighet, then flips to orange "+MM:SS" overtime (see
+     matchCountdownMs). Deliberately much smaller than the big clock. */
+  #matchCountdown{
+    background:rgba(0,0,0,.45);
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:6px;
+    padding:3px 9px;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:14px; font-weight:700; color:rgba(244,244,242,.82);
+    font-variant-numeric:tabular-nums; letter-spacing:1px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+    pointer-events:none;
+    transition:color .2s ease, border-color .2s ease;
+  }
+  #matchCountdown.overtime{ color:var(--orange); border-color:rgba(255,159,10,.4); }
+  #field{
+    position:relative;
+    height:100%;
+    display:flex; flex-wrap:wrap; align-content:center; justify-content:center;
+    align-items:center;
+    gap:24px 18px;
+    padding:22px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+    overflow-y:auto;
+  }
+
+  #bench-wrap{
+    flex:0 0 32%;
+    position:relative;
+    background:var(--bench-bg);
+    border-top:1px solid rgba(15,31,54,.08);
+    display:flex; flex-direction:column;
+    min-height:0;
+  }
+
+  /* Rotated phone: bench moves to a left-hand column, pitch takes the rest
+     of the width on the right - order swapped via flex `order`, source
+     order (and therefore all the JS that reads/writes these elements)
+     stays untouched. */
+  @media (orientation: landscape){
+    #main{ flex-direction:row; }
+    #field-wrap{ flex:1 1 auto; order:2; }
+    #bench-wrap{
+      flex:0 0 36%;
+      order:1;
+      border-top:none;
+      border-right:1px solid rgba(15,31,54,.08);
+    }
+  }
+  .bench-label-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px calc(16px + env(safe-area-inset-right)) 2px calc(16px + env(safe-area-inset-left));
+  }
+  .bench-label{
+    font-size:17px; font-weight:800; letter-spacing:-.01em;
+    color:var(--ink);
+  }
+  .bench-actions{ display:flex; gap:8px; }
+  .bench-action-btn{
+    display:flex; align-items:center; gap:5px;
+    border:none; border-radius:999px;
+    background:rgba(15,31,54,.08); color:var(--ink-soft);
+    font-size:12px; font-weight:700; padding:6px 10px;
+    cursor:pointer;
+    transition:transform .12s ease, background .15s ease, color .15s ease;
+  }
+  .bench-action-btn .btn-icon{ font-size:14px; line-height:1; }
+  .bench-action-btn:active{ transform:scale(.94); }
+  .bench-action-btn.shake{ animation:shake .4s; }
+  /* Sits beside multiBytte, hidden (zero-width, not just transparent -
+     see .multi-cancel-btn's resting state below) until multi-select mode
+     is actually active, then springs into view - a plain, always-
+     tappable "×" to bail out entirely (clear the marks and exit the
+     mode), rather than a drag gesture the button offers no hint of. */
+  .multi-select-group{ display:flex; flex-direction:row; align-items:center; }
+  .multi-cancel-btn{
+    -webkit-appearance:none; appearance:none;
+    width:0; height:26px; flex-shrink:0; padding:0; margin-left:0;
+    border-radius:50%; border:none;
+    background:var(--danger); color:#fff;
+    font-size:15px; font-weight:800; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; overflow:hidden; pointer-events:none;
+    transform:scale(.4);
+    transition:width .28s cubic-bezier(.25,.8,.25,1), margin-left .28s cubic-bezier(.25,.8,.25,1),
+      opacity .2s ease, transform .28s cubic-bezier(.25,.8,.25,1);
+  }
+  /* Toggled by updateMultiSelectUI() instead of the hidden attribute -
+     .multi-cancel-btn already sets its own `display`, which silently
+     overrides the browser's default [hidden]{display:none} rule (author
+     styles beat that default regardless of specificity), so `hidden`
+     alone never actually hid it. This class-driven width/opacity
+     transition doubles as the "row flies left to make room" animation:
+     multiBytte has nothing pinning it in place, so the row (right-
+     aligned via .bench-label-row's space-between) naturally slides left
+     as this widens beside it. */
+  .multi-cancel-btn.visible{
+    width:26px; margin-left:8px; opacity:1; transform:scale(1); pointer-events:auto;
+  }
+  .multi-cancel-btn:active{ transform:scale(.9); }
+  /* Landscape: #bench-wrap is only ~36% of the width (see the layout
+     media query above), too narrow for icon+text pills without wrapping
+     - icon-only circular buttons instead, same icons the legend already
+     explains, so nothing is lost. */
+  @media (orientation: landscape){
+    .bench-action-btn{
+      width:38px; height:38px; padding:0; border-radius:50%;
+      justify-content:center;
+    }
+    .bench-action-btn .btn-label{ display:none; }
+    .bench-action-btn .btn-icon{ font-size:16px; }
+  }
+  .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
+  .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }
+  #bench{
+    flex:1; min-height:0; overflow-y:auto;
+    display:flex; flex-wrap:wrap; align-content:flex-start;
+    gap:14px;
+    padding:8px calc(16px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 14px) calc(16px + env(safe-area-inset-left));
+  }
+
+  /* ---------- Play/Pause pill ---------- */
+  #playPauseBtn{
+    display:flex; align-items:center; gap:6px;
+    border:1px solid rgba(50,215,75,.4);
+    background:rgba(50,215,75,.16); color:#32d74b;
+    padding:8px 14px; border-radius:100px;
+    font-size:14px; font-weight:700;
+    cursor:pointer;
+    transition:background .2s ease, color .2s ease, border-color .2s ease;
+  }
+  #playPauseBtn.running{
+    border-color:rgba(255,149,0,.45);
+    background:rgba(255,149,0,.18); color:#ff9f0a;
+  }
+  #playPauseBtn:active{ transform:scale(.96); }
+  #playPauseBtn .pp-icon{ font-size:13px; line-height:1; }
+
+  /* ---------- Tokens ---------- */
+  .token{
+    touch-action:none; -webkit-touch-callout:none;
+    display:flex; flex-direction:column; align-items:center;
+    cursor:grab;
+  }
+  /* Field-token/avatar size is set per render from state.fieldSize (see
+     applyFieldDensity) via these custom properties, so more utespillere
+     packed onto the same pitch get proportionally smaller icons instead of
+     overflowing. Bench tokens stay a fixed size - only the field gets denser. */
+  .field-token{
+    width:var(--field-token-width, 96px);
+  }
+  .bench-token{ width:64px; }
+
+  .avatar{
+    width:var(--field-avatar-size, 68px); height:var(--field-avatar-size, 68px);
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:var(--field-avatar-font, 19px); color:#fff;
+    background:linear-gradient(160deg,var(--navy-2),var(--navy));
+    box-shadow:var(--shadow-sm);
+    border:2px solid rgba(255,255,255,.55);
+    position:relative;
+    transition:box-shadow .15s ease, width .2s ease, height .2s ease;
+  }
+  .bench-avatar{
+    width:48px; height:48px; font-size:14px;
+    background:linear-gradient(160deg,#8c95a3,#6b7686);
+    border-color:rgba(255,255,255,.7);
+  }
+  .badge-warning{
+    position:absolute; top:-7px; right:-7px;
+    width:var(--field-badge-size, 23px); height:var(--field-badge-size, 23px);
+    border-radius:50%;
+    color:#fff;
+    font-size:var(--field-badge-font, 14px); font-weight:800;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+    transition:background .25s ease;
+  }
+  /* Orange, still - byttetiden (standard spilletid) er nådd. */
+  .badge-warning.due{ background:var(--orange); }
+  /* Red, gently pulsing - spilt 50% mer enn byttetiden; only this tier
+     pulses, so the pulse itself signals "this one's more overdue". */
+  .badge-warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
+  @keyframes badgePulse{
+    0%,100%{ opacity:1; }
+    50%{ opacity:.55; }
+  }
+  /* Personal goal tally, centered under the initials inside the same
+     circle (not a corner badge like the others above) - blank at 0 (see
+     goalBadgeHtml), white otherwise, yellow for the/a tied top scorer.
+     Blue avatar background + yellow number is a deliberate complementary
+     pairing (see computeGoalBadges/renderField) for max legibility. */
+  .badge-goals{
+    position:absolute; left:50%; bottom:7px; transform:translateX(-50%);
+    font-size:12px; font-weight:800; line-height:1; color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,.5);
+    pointer-events:none;
+  }
+  .badge-goals.top-scorer{ color:#ffd60a; }
+  .bench-avatar .badge-goals{ bottom:4px; font-size:10px; }
+
+  #selectionInfo{
+    position:absolute; left:50%; top:68%; transform:translate(-50%,-50%);
+    background:rgba(15,31,54,.6); color:#fff;
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    border:1px solid rgba(255,255,255,.12);
+    padding:9px 18px; border-radius:16px;
+    box-shadow:var(--shadow-md);
+    text-align:center;
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease;
+    z-index:15;
+    max-width:85%;
+  }
+  #multiSwapWarning{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:rgba(230,57,70,.92); color:#fff;
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    border:1px solid rgba(255,255,255,.2);
+    padding:12px 20px; border-radius:16px;
+    font-size:13px; font-weight:700; text-align:center; line-height:1.4;
+    box-shadow:var(--shadow-md);
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease;
+    z-index:20;
+    max-width:78%;
+  }
+  #multiSwapWarning.visible{ opacity:1; }
+  #selectionInfo.visible{ opacity:1; }
+  #selectionInfo .si-name{
+    font-size:13px; font-weight:700;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  #selectionInfo .si-stats{
+    font-size:11px; font-weight:600; color:rgba(255,255,255,.85);
+    margin-top:2px; font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  #selectionInfo .si-stats .si-sep{ margin:0 6px; opacity:.5; }
+
+  .label{
+    margin-top:6px; font-size:12px; font-weight:600;
+    color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.55);
+    max-width:78px; text-align:center; line-height:1.15;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .field-token .label{ font-size:var(--field-label-font, 15px); font-weight:700; max-width:var(--field-label-max-w, 96px); margin-top:8px; }
+  .bench-token .label{ color:var(--ink); text-shadow:none; max-width:64px; }
+
+  .timer{
+    margin-top:2px; font-size:13px; font-weight:700;
+    font-variant-numeric:tabular-nums;
+    color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.55);
+  }
+  .field-token .timer{ font-size:var(--field-timer-font, 16px); margin-top:3px; }
+  .timer.overtime{ color:#ff3b30; }
+  .timer.due{ color:var(--orange); }
+  .stopwatch{
+    margin-top:2px; font-size:12px; font-weight:600;
+    font-variant-numeric:tabular-nums; color:var(--ink-soft);
+  }
+
+  .token.selected .avatar{
+    box-shadow:0 0 0 4px rgba(255,138,61,.65), var(--shadow-sm);
+  }
+  .token.multi-checked .avatar{
+    box-shadow:0 0 0 4px rgba(50,180,90,.7), var(--shadow-sm);
+  }
+  /* Pulsing (vs. multi-checked's solid) green ring - marks the bench
+     player a "Forslag" tap recommends completing the swap with, so it
+     reads as "please tap me" rather than "already chosen". */
+  .token.suggested-partner .avatar{
+    animation:suggestPulse 1.3s ease-in-out infinite;
+  }
+  @keyframes suggestPulse{
+    0%,100%{ box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
+    50%{ box-shadow:0 0 0 8px rgba(50,180,90,.3), var(--shadow-sm); }
+  }
+  /* Live drag-over cue - shown on whichever token is currently under the
+     cursor/finger while dragging another token over it, so it's clear a
+     drop here will swap the two (see onMove's hover detection). Covers
+     the initials with a green tint + swap icon rather than a corner badge,
+     since a corner would collide with the warning/rank badges that can
+     already be showing on the same avatar. */
+  .token.drop-target .avatar{
+    box-shadow:0 0 0 4px rgba(50,180,90,.85), var(--shadow-sm);
+  }
+  .token.drop-target .avatar::after{
+    content:'⇄';
+    position:absolute; inset:0; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(31,157,76,.6);
+    color:#fff; font-size:22px; font-weight:800;
+  }
+  /* Quick confirmation flash on a token that just landed in a swap - same
+     green as the drag-over cue above, just pulsed once instead of held,
+     rather than a movement animation. */
+  .token.swap-flash .avatar{
+    animation:swapFlash .3s ease-out;
+  }
+  @keyframes swapFlash{
+    0%{ box-shadow:0 0 0 0 rgba(50,180,90,.85), var(--shadow-sm); }
+    45%{ box-shadow:0 0 0 9px rgba(50,180,90,.5), var(--shadow-sm); }
+    100%{ box-shadow:0 0 0 0 rgba(50,180,90,0), var(--shadow-sm); }
+  }
+  /* Small solid triangle with a true, uniform white outline (an SVG
+     polygon's stroke, not a CSS border-triangle) - up-triangles (most/
+     most2) point up, down-triangles (least/least2) point down. */
+  .badge-rank{
+    position:absolute; top:-4px; left:-4px;
+    display:block;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));
+  }
+  .badge-rank.rank-most polygon{ fill:#dc2626; }
+  .badge-rank.rank-most2 polygon{ fill:var(--orange); }
+  .badge-rank.rank-least2 polygon{ fill:#7dd3fc; }
+  .badge-rank.rank-least polygon{ fill:#2563eb; }
+  .badge-check{
+    position:absolute; top:-6px; right:-6px;
+    width:19px; height:19px; border-radius:50%;
+    background:#32b45a; color:#fff;
+    font-size:11px; font-weight:800;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+  }
+  /* Field tokens can carry both the check (multi-select) and the warning
+     (time-up) badge at once - bottom-right keeps them from overlapping. */
+  .field-token .badge-check{ top:auto; bottom:-6px; right:-6px; }
+
+  .drag-source-hidden{ opacity:.22; pointer-events:none; }
+  .ghost-token{
+    opacity:.95; transform:scale(1.06);
+    transition:transform .12s ease;
+  }
+  .ghost-token .avatar{
+    box-shadow:0 16px 30px rgba(0,0,0,.4), 0 4px 10px rgba(0,0,0,.22);
+  }
+
+  /* Quick, quiet settle for every token whenever the field/bench list is
+     rebuilt (after a swap, undo, multi-send, etc.) - keeps re-sorted/moved
+     tokens from just snapping into their new spot. Deliberately short and
+     understated; the more theatrical reorgIn below is reserved for the
+     rare full-squad reorganize after "Kampslutt". */
+  @keyframes tokenSettle{
+    from{ opacity:0; transform:scale(.94) translateY(3px); }
+    to{ opacity:1; transform:scale(1) translateY(0); }
+  }
+  .token-enter{ animation:tokenSettle .2s cubic-bezier(.25,.8,.25,1) both; }
+  .token.drop-rejected{ animation:shake .3s; }
+
+  @keyframes reorgOut{
+    from{ opacity:1; transform:scale(1); }
+    to{ opacity:0; transform:scale(.55); }
+  }
+  @keyframes reorgIn{
+    from{ opacity:0; transform:scale(.55) translateY(10px); }
+    to{ opacity:1; transform:scale(1) translateY(0); }
+  }
+  .token.reorg-out{ animation:reorgOut .6s ease forwards; }
+  .token.reorg-in{ animation:reorgIn .65s cubic-bezier(.25,.8,.25,1) backwards; }
+
+  /* ---------- Settings modal ---------- */
+  .modal{
+    position:absolute; inset:0; z-index:100;
+    overflow:hidden; /* .modal-card below sits at translateY(100%) when closed - its own height off-screen, below this box. Without this, that off-screen box leaks into the page's scrollable area (see #app/#viewport-frame above, which deliberately no longer clip so a genuine iOS viewport-height shortfall scrolls into view instead of being hidden - this local clip keeps that from also exposing every closed modal's parked position as bogus page height). */
+    background:rgba(8,14,26,.42);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(140%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(140%);
+    display:flex; align-items:flex-end; justify-content:center;
+    padding:0 16px calc(env(safe-area-inset-bottom) + 16px);
+    opacity:0; pointer-events:none;
+    transition:opacity .35s cubic-bezier(.25,.8,.25,1);
+  }
+  .modal.open{ opacity:1; pointer-events:auto; }
+  .modal-card{
+    width:100%; max-width:520px;
+    background:var(--card);
+    border-radius:var(--radius-lg);
+    padding:20px;
+    max-height:88%; overflow-y:auto;
+    box-shadow:var(--shadow-md);
+    transform:translateY(100%);
+    transition:transform .35s cubic-bezier(.25,.8,.25,1);
+  }
+  .modal.open .modal-card{ transform:translateY(0); }
+  .modal-card.shake{ animation:shake .4s; }
+
+  /* Centered, frosted-glass variant of the shared bottom-sheet .modal -
+     used for short informational popups (the info-btn "?" tooltips) where
+     a full bottom sheet would feel heavy for a sentence or two of text. */
+  .modal.modal-centered{ align-items:center; padding:0 28px; }
+  .modal-centered .modal-card{
+    width:100%; max-width:380px;
+    max-height:none;
+    background:rgba(255,255,255,.78);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+    border:1px solid rgba(255,255,255,.5);
+    border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-md);
+    padding:20px 20px 22px;
+    transform:scale(.92);
+    transition:transform .3s cubic-bezier(.25,.8,.25,1);
+  }
+  .modal-centered.open .modal-card{ transform:scale(1); }
+  @media (prefers-reduced-motion: reduce){
+    .modal-centered .modal-card{ transition:none; }
+  }
+  @keyframes shake{
+    0%,100%{ transform:translateX(0); }
+    20%{ transform:translateX(-8px); }
+    40%{ transform:translateX(7px); }
+    60%{ transform:translateX(-5px); }
+    80%{ transform:translateX(3px); }
+  }
+  .modal-card h2{ margin:0 0 4px; font-size:19px; }
+  .modal-card .sub{ margin:0 0 16px; font-size:13px; color:var(--ink-soft); }
+  /* Shown only when this settings screen was reached by joining a code
+     that turned out to have no players - a wrong/stale code (there's no
+     server-side cleanup of old sessions, see leaveSession()) looks
+     identical to a genuine brand-new empty session otherwise, so this
+     gives the person something to double-check before they start typing
+     a whole new roster into what might be the wrong session. */
+  .joined-empty-note{
+    margin:0 0 16px; padding:10px 12px;
+    background:rgba(255,149,0,.12); border:1px solid rgba(255,149,0,.35);
+    border-radius:var(--radius-sm);
+    font-size:12.5px; line-height:1.42; color:#8a5300;
+  }
+  .modal-card label.section-label{
+    display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
+    margin:16px 0 8px;
+  }
+  #nameRows{ display:flex; flex-direction:column; gap:8px; }
+  .name-row{ display:flex; gap:8px; align-items:center; }
+  /* The name list manages its own row count (see syncNameRows) - a new
+     blank row fades in as soon as you fill the second-to-last one, and
+     fades out again if a name is deleted leaving too many spares. */
+  .name-row-enter{ animation:nameRowEnter .3s cubic-bezier(.25,.8,.25,1) both; }
+  @keyframes nameRowEnter{
+    from{ opacity:0; transform:translateY(-4px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  .name-row-exit{ opacity:0; transition:opacity .3s ease; pointer-events:none; }
+  .name-input-wrap{ position:relative; flex:1; }
+  /* Small red "!" attached to any field that's blocking progress (e.g. a
+     required name field left empty, an invalid join code) - pairs with the
+     .shake on the surrounding modal-card, see markFieldInvalid/shakeElement. */
+  .field-invalid-wrap{ position:relative; }
+  .field-invalid-badge{
+    position:absolute; top:-7px; right:-7px;
+    width:18px; height:18px; border-radius:50%;
+    background:var(--danger); color:#fff;
+    font-size:12px; font-weight:800; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+    pointer-events:none;
+  }
+  .name-row input[type=text]{
+    width:100%; border:1px solid #dde1e6; border-radius:var(--radius-sm);
+    padding:10px 12px; font-size:15px; background:#fafbfc;
+  }
+  .name-row input[type=text]:focus{ outline:2px solid var(--accent); border-color:transparent; }
+  .suggest-list{
+    position:absolute; left:0; right:0; top:calc(100% + 4px);
+    background:#fff; border:1px solid #e1e4e9; border-radius:var(--radius-sm);
+    box-shadow:var(--shadow-md);
+    max-height:190px; overflow-y:auto;
+    z-index:50;
+  }
+  .suggest-list.hidden{ display:none; }
+  .suggest-item{
+    padding:11px 12px; font-size:14px; color:var(--ink);
+    border-bottom:1px solid #f0f1f3;
+  }
+  .suggest-item:last-child{ border-bottom:none; }
+  .suggest-item:active{ background:#f5f6f8; }
+  .removeRow{
+    width:34px; height:34px; border-radius:50%; border:none;
+    background:#f0f1f3; color:var(--ink-soft); font-size:16px; cursor:pointer;
+  }
+  /* A player currently on the field can't be renamed/removed from settings
+     - the input is disabled (grayed) and there's a lock note instead of the
+     remove button. Only innbyttere stay editable. */
+  .name-row.locked .name-input-wrap input{
+    background:#eceef0; color:var(--ink-soft); cursor:not-allowed;
+  }
+  .locked-row-note{
+    width:34px; height:34px; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; opacity:.55;
+  }
+  .duration-input{ display:flex; align-items:center; gap:8px; }
+  .duration-input input{
+    width:64px; border:1px solid #dde1e6; border-radius:var(--radius-sm);
+    padding:10px; font-size:15px; text-align:center; background:#fafbfc;
+  }
+  .duration-input span{ font-size:13px; color:var(--ink-soft); }
+  .duration-input input:disabled{ opacity:.45; background:#eceef0; cursor:not-allowed; }
+  .locked-note{ font-size:11px; font-weight:600; color:var(--ink-soft); }
+  .app-version{ text-align:right; margin-top:14px; font-size:11px; color:#c3c8ce; font-weight:600; }
+
+  .settings-row{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:18px;
+  }
+  .settings-row-label{ font-size:14px; font-weight:600; color:var(--ink); }
+  .settings-row-label-wrap{ display:flex; align-items:center; gap:6px; }
+  .share-mode-row{ margin-top:12px; }
+  .share-mode-row[hidden]{ display:none; }
+  .segmented{
+    display:flex; background:#eef0f2; border-radius:100px; padding:3px; gap:2px;
+  }
+  .segmented-btn{
+    border:none; background:none; padding:6px 12px; border-radius:100px;
+    font-size:12px; font-weight:700; color:var(--ink-soft); cursor:pointer;
+    transition:background .15s ease, color .15s ease;
+  }
+  .segmented-btn.active{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .info-label-row{ display:flex; align-items:center; gap:6px; }
+  .info-btn{
+    width:16px; height:16px; border-radius:50%; flex:0 0 auto;
+    border:1px solid var(--ink-soft); background:none; color:var(--ink-soft);
+    font-size:10px; font-weight:700; font-style:italic; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:0; cursor:pointer;
+    transition:background .12s ease;
+  }
+  .info-btn:active{ background:rgba(15,31,54,.08); }
+  .info-popup-card{ position:relative; padding-top:46px; }
+  .info-popup-close{
+    position:absolute; top:14px; right:14px;
+    width:30px; height:30px; border-radius:50%; border:none;
+    background:#f0f1f3; color:var(--ink-soft);
+    font-size:17px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .12s ease;
+  }
+  .info-popup-close:active{ background:#e2e4e8; }
+  .settings-home-btn{ right:54px; font-size:15px; }
+  #infoPopupText{ margin:0; }
+  .duration-picker-card{ text-align:center; }
+  .duration-picker-wheel{
+    margin:22px 0 4px; padding:26px 0;
+    border-radius:20px;
+    background:linear-gradient(180deg, rgba(15,31,54,.045), rgba(15,31,54,.09));
+    touch-action:none; -webkit-user-select:none; user-select:none;
+    cursor:grab;
+  }
+  .duration-picker-wheel:active{ cursor:grabbing; }
+  .duration-picker-value{
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-size:60px; font-weight:700; color:var(--navy);
+    font-variant-numeric:tabular-nums;
+  }
+  .duration-picker-unit{
+    margin-top:2px; font-size:12px; font-weight:700; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.08em;
+  }
+  .toggle{ position:relative; display:inline-block; width:48px; height:28px; flex:0 0 auto; }
+  .toggle input{ opacity:0; width:0; height:0; position:absolute; }
+  .toggle-slider{
+    position:absolute; inset:0; cursor:pointer;
+    background:#d8dbe0; border-radius:100px;
+    transition:background .2s ease;
+  }
+  .toggle-slider::before{
+    content:''; position:absolute; left:3px; top:3px;
+    width:22px; height:22px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);
+    transition:transform .2s ease;
+  }
+  .toggle input:checked + .toggle-slider{ background:#32d74b; }
+  .toggle input:checked + .toggle-slider::before{ transform:translateX(20px); }
+
+  .export-link-btn{
+    margin-top:16px; width:100%; padding:11px;
+    background:none; border:1px dashed #c7cdd6;
+    color:var(--ink-soft); border-radius:var(--radius-sm);
+    font-size:13px; font-weight:600; cursor:pointer;
+    transition:transform .12s ease;
+  }
+  .export-link-btn:active{ transform:scale(.97); }
+
+  .export-textarea{
+    width:100%; min-height:200px; margin:10px 0;
+    border:1px solid #dde1e6; border-radius:var(--radius-sm);
+    padding:10px 12px; font-size:13px; font-family:inherit;
+    background:#fafbfc; color:var(--ink);
+    resize:vertical;
+  }
+
+  /* "Om appen" function guide, above the symbol legend in the same modal -
+     one titled block per function rather than the swatch+one-line-text
+     rows below (those pair a specific visual symbol with its meaning;
+     these explain an action you take, so they get a bit more room). */
+  .func-list{ display:flex; flex-direction:column; gap:13px; margin:14px 0 22px; }
+  .func-title{ margin:0 0 2px; font-size:14px; font-weight:700; color:var(--ink); }
+  .func-text{ margin:0; font-size:13px; line-height:1.42; color:var(--ink-soft); }
+  .legend-section-title{
+    margin:0 0 2px; font-size:12px; font-weight:700; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .legend-divider{ border:none; border-top:1px solid #e7e9ec; margin:18px 0; }
+
+  /* Shared by the "hvem scoret / fjern mål / målskårere" player list
+     (goalPlayerModal, three modes - see openGoalPlayerModal) - a plain
+     minimalist tap-list, one row per player. */
+  .goal-player-list{ display:flex; flex-direction:column; gap:6px; margin:14px 0; max-height:52vh; overflow-y:auto; }
+  .goal-player-row{
+    display:flex; align-items:center; gap:12px; width:100%;
+    padding:10px 12px; border:none; border-radius:var(--radius-sm);
+    background:#f5f6f7; color:var(--ink);
+    font-size:15px; font-weight:600; font-family:inherit; text-align:left;
+    cursor:pointer; transition:background .12s ease, transform .12s ease;
+  }
+  button.goal-player-row:active{ transform:scale(.98); background:#eceef0; }
+  button.goal-player-row:disabled{ opacity:.4; cursor:default; }
+  button.goal-player-row:disabled:active{ transform:none; background:#f5f6f7; }
+  .goal-player-row-avatar{
+    width:32px; height:32px; border-radius:50%; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700; color:#fff;
+    background:linear-gradient(160deg,var(--navy-2),var(--navy));
+  }
+  .goal-player-row-name{ flex:1 1 auto; }
+  .goal-player-row-count{ font-size:13px; font-weight:700; color:var(--ink-soft); }
+  .goal-player-empty{ margin:14px 0; font-size:13px; color:var(--ink-soft); text-align:center; }
+  .legend-list{ display:flex; flex-direction:column; gap:14px; margin:14px 0; }
+  .legend-row{ display:flex; align-items:center; gap:12px; }
+  .legend-swatch{
+    width:30px; height:30px; border-radius:50%; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:800;
+    background:#eef1f0;
+  }
+  .legend-swatch.warning{ background:var(--danger); color:#fff; }
+  .legend-swatch.warning.due{ background:var(--orange); }
+  .legend-swatch.warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
+  /* Rank swatches show the same SVG polygon+stroke markup rankBadgeHtml()
+     draws on a player's avatar - a navy backdrop (matching the avatar
+     itself) so the white outline reads the same way it does in the app,
+     rather than a plain colored circle with a unicode arrow. */
+  .legend-swatch.rank-most,
+  .legend-swatch.rank-most2,
+  .legend-swatch.rank-least2,
+  .legend-swatch.rank-least{ background:var(--navy); }
+  .legend-swatch.check{ background:#32b45a; color:#fff; }
+  .legend-swatch.ring-orange{ box-shadow:0 0 0 3px rgba(255,138,61,.65); }
+  .legend-swatch.suggest-ring{ box-shadow:0 0 0 3px rgba(50,180,90,.75); }
+  .legend-swatch.order{ background:var(--navy); color:#fff; font-size:16px; }
+  .legend-swatch.icon-btn-swatch{ background:var(--navy); color:#fff; font-size:16px; }
+  .legend-text{ font-size:13px; color:var(--ink); line-height:1.35; }
+
+  .modal-actions{ display:flex; gap:10px; margin-top:22px; }
+  .modal-actions button{
+    flex:1; padding:13px; border-radius:var(--radius-sm); border:none;
+    font-size:15px; font-weight:700; cursor:pointer;
+    transition:transform .12s ease;
+  }
+  .modal-actions button:active{ transform:scale(.97); }
+  .modal-actions .secondary{ background:#f0f1f3; color:var(--ink); }
+  .modal-actions .primary{ background:var(--accent); color:var(--accent-ink); }
+  .modal-actions .primary.danger{ background:var(--danger); color:#fff; }
+  .modal-actions-col{ flex-direction:column; }
+  .modal-actions-col button{ flex:none; }
+  .stack-btn{
+    width:100%; padding:14px; border-radius:var(--radius-sm); border:none;
+    background:#f0f1f3; color:var(--ink);
+    font-size:15px; font-weight:700; cursor:pointer;
+    transition:transform .12s ease;
+  }
+  .stack-btn:active{ transform:scale(.97); }
+  .stack-btn:disabled{ opacity:.4; cursor:default; }
+  .stack-btn:disabled:active{ transform:none; }
+  .stack-btn.period{ background:rgba(10,132,255,.14); color:var(--period-blue); }
+  .stack-btn.danger{ background:rgba(230,57,70,.12); color:var(--danger); transition:background .15s ease, color .15s ease; }
+  .stack-btn.danger.armed{ background:var(--danger); color:#fff; }
+  .shake-btn{ animation:shake .3s; }
+  .stack-btn.secondary{ background:#f0f1f3; color:var(--ink); }
+  .end-match-summary{
+    margin:14px 0; max-height:230px; overflow-y:auto;
+    border-top:1px solid #eef0f2; border-bottom:1px solid #eef0f2;
+  }
+  .ems-row{
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap:10px; padding:9px 2px;
+    border-bottom:1px solid #f5f6f7;
+    font-size:13px;
+  }
+  .ems-row:last-child{ border-bottom:none; }
+  .ems-name{ font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ems-time{ color:var(--ink-soft); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:12px; }
+  #endMatchModal{ z-index:110; }
+  #exportModal{ z-index:110; }
+  #legendModal{ z-index:110; }
+  #settingsCloseConfirmModal{ z-index:110; }
+  #joinCodeModal{ z-index:120; }
+  #infoPopupModal{ z-index:130; }
+  .settings-card{ position:relative; padding-top:50px; }
+
+  .session-code-bar{
+    flex:0 0 auto;
+    background:rgba(15,31,54,.9);
+    color:rgba(255,255,255,.85);
+    font-size:11px; font-weight:700; letter-spacing:.3px;
+    text-align:center; padding:5px 0;
+    cursor:pointer;
+  }
+  .session-code-bar span{ color:#fff; font-variant-numeric:tabular-nums; }
+  .sync-dot{
+    display:inline-block; width:7px; height:7px; border-radius:50%;
+    margin-left:7px; margin-bottom:1px;
+    background:#32d74b; vertical-align:middle;
+    transition:background .3s ease;
+  }
+  .sync-dot.offline{ background:#ff9500; }
+  .session-code-bar.offline{ color:rgba(255,197,138,.9); }
+
+  .auto-pause-notice{
+    position:absolute; left:50%; top:calc(env(safe-area-inset-top) + 10px);
+    transform:translate(-50%,-140%);
+    z-index:400;
+    max-width:86%;
+    background:rgba(15,31,54,.82);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    color:#fff; font-size:13px; font-weight:600; text-align:center;
+    padding:10px 16px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 8px 22px rgba(0,0,0,.3);
+    opacity:0; pointer-events:none;
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .auto-pause-notice.show{ opacity:1; transform:translate(-50%,0); }
+
+  /* Read-only participant in a shared session: the controls that would
+     mutate shared state are visibly inert, not just functionally blocked. */
+  .view-only #playPauseBtn,
+  .view-only #undoBtn,
+  .view-only #endBtn,
+  .view-only #settingsBtn,
+  .view-only #multiSelectBtn,
+  .view-only #multiSelectCancelBtn,
+  .view-only #swapSuggestionBtn,
+  .view-only #homeScoreBtn,
+  .view-only #awayScoreBtn{
+    opacity:.35; pointer-events:none;
+  }
+  .view-only .token{ pointer-events:none; }
+
+  .join-code-input{
+    width:100%; margin:12px 0; text-align:center;
+    font-size:28px; font-weight:700; letter-spacing:8px;
+    padding:12px; border:1px solid #dde1e6; border-radius:var(--radius-sm);
+    background:#fafbfc; color:var(--ink);
+  }
+  .join-code-error{ color:var(--danger); font-size:13px; text-align:center; margin:0 0 8px; }
+
+  @media (prefers-reduced-motion: reduce){
+    .token-enter{ animation:none; }
+    .token.drop-rejected{ animation:none; }
+    .shake-btn{ animation:none; }
+    .stack-btn.danger{ transition:none; }
+    .ghost-token{ transition:none; }
+    .avatar{ transition:none; }
+    .export-link-btn, .stack-btn, .modal-actions button, .bench-action-btn{ transition:none; }
+    .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
+    .token.swap-flash .avatar{ animation:none; }
+    .name-row-enter{ animation:none; }
+    .name-row-exit{ transition:none; }
+    .badge-warning.overtime{ animation:none; opacity:1; }
+    .multi-cancel-btn{ transition:none; }
+  }

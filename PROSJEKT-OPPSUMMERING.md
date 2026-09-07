@@ -7,12 +7,17 @@ styr på hvem som er ute på banen, hvem som sitter på benken, og hvor lenge �
 en fotballcup. Bygget iterativt gjennom en samtale med Claude (uten Claude Code /
 IDE), og skal nå videreføres i VS Code med Claude Code.
 
-**Fil:** `index.html` — **alt** (HTML, CSS, JavaScript) ligger i denne ene filen.
-Ingen build-steg, ingen node_modules, ingen bundler. Filen lastes opp direkte til
-Netlify (drag-and-drop, "Netlify Drop"), hostet på `trenerappen.netlify.app`, og
-brukes på iPhone via "Legg til på Hjemskjerm" (fungerer som en enkel PWA).
+**Filer:** `index.html` (markup), `style.css` (all CSS) og `app.js` (all JavaScript) -
+delt opp fra én fil til tre i v1.8.4, da index.html hadde vokst forbi 4000 linjer og
+ble tungvint å navigere. Fortsatt **ingen build-steg, ingen node_modules, ingen
+bundler** - `style.css`/`app.js` er vanlige statiske filer koblet inn med
+`<link rel="stylesheet">`/`<script src>`, akkurat som eksterne CDN-scripts allerede
+var. Netlify serverer dem uendret, ingen kompilering. Repoet pushes til
+`https://github.com/Anterialis/trenerappen.git` → Netlify (auto-deploy), hostet på
+`trenerappen.netlify.app`, og brukes på iPhone via "Legg til på Hjemskjerm" (fungerer
+som en enkel PWA).
 
-**Nåværende versjon:** v1.1 (vises nederst i innstillinger-vinduet i appen selv).
+**Nåværende versjon:** v1.8.4 (vises nederst i innstillinger-vinduet i appen selv).
 
 ---
 
@@ -146,7 +151,7 @@ Dette er det eneste elementet som *ikke* er 100% klient-side. Vi bruker
 **Supabase** (Postgres + sanntids-API) som en ren datalagring-i-bakgrunnen — ingen
 egen backend-kode, ingen server vi drifter selv.
 
-**Tilkobling** (i `index.html`, øverst i scriptet):
+**Tilkobling** (i `app.js`, øverst):
 ```js
 var SUPABASE_URL = 'https://nueguoxkynwgmynccaro.supabase.co';
 var SUPABASE_KEY = 'sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV'; // offentlig nøkkel, trygg i klientkode
