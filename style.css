@@ -618,9 +618,11 @@
   }
   /* Orange, still - byttetiden (standard spilletid) er nådd. */
   .badge-warning.due{ background:var(--orange); }
-  /* Red, gently pulsing - spilt 50% mer enn byttetiden; only this tier
-     pulses, so the pulse itself signals "this one's more overdue". */
-  .badge-warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
+  /* Same orange, gently pulsing - spilt 50% mer enn byttetiden; only this
+     tier pulses, so the pulse itself signals "this one's more overdue" -
+     deliberately not red, so the swap-arrows badge doesn't need a second
+     color to explain (see #1070/updateTimersOnly in app.js for the glyph). */
+  .badge-warning.overtime{ background:var(--orange); animation:badgePulse 1.4s ease-in-out infinite; }
   @keyframes badgePulse{
     0%,100%{ opacity:1; }
     50%{ opacity:.55; }
@@ -1076,9 +1078,8 @@
     font-size:14px; font-weight:800;
     background:#eef1f0;
   }
-  .legend-swatch.warning{ background:var(--danger); color:#fff; }
-  .legend-swatch.warning.due{ background:var(--orange); }
-  .legend-swatch.warning.overtime{ background:var(--danger); animation:badgePulse 1.4s ease-in-out infinite; }
+  .legend-swatch.warning{ background:var(--orange); color:#fff; }
+  .legend-swatch.warning.overtime{ animation:badgePulse 1.4s ease-in-out infinite; }
   /* Rank swatches show the same SVG polygon+stroke markup rankBadgeHtml()
      draws on a player's avatar - a navy backdrop (matching the avatar
      itself) so the white outline reads the same way it does in the app,

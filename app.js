@@ -160,7 +160,7 @@
   var INFO_TEXTS = {
     byttetid: {
       title: 'Standard byttetid',
-      text: 'Tiden en utespiller skal spille før et oransje utropstegn varsler at byttetiden er nådd. Spiller de 50% lenger enn byttetiden, blir utropstegnet rødt og pulserer forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
+      text: 'Tiden en utespiller skal spille før et oransje byttemerke (⇅) varsler at byttetiden er nådd. Spiller de 50% lenger enn byttetiden, begynner merket å pulsere forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
     },
     wakelock: {
       title: 'Hold skjermen våken',
@@ -1067,7 +1067,7 @@
         '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
           rankBadgeHtml(rankBadges[id]) +
           goalBadgeHtml(id, goalBadges) +
-          (farOver ? '<div class="badge-warning overtime">!</div>' : timeUp ? '<div class="badge-warning due">!</div>' : '') +
+          (farOver ? '<div class="badge-warning overtime">⇅</div>' : timeUp ? '<div class="badge-warning due">⇅</div>' : '') +
           (isChecked ? '<div class="badge-check">✓</div>' : '') +
         '</div>' +
         '<div class="label">' + escapeHtml(p.name) + '</div>' +
@@ -1128,7 +1128,7 @@
       if (timeUp && !badge){
         badge = document.createElement('div');
         badge.className = 'badge-warning';
-        badge.textContent = '!';
+        badge.textContent = '⇅';
         avatarEl.appendChild(badge);
       } else if (!timeUp && badge){
         badge.remove();
