@@ -416,13 +416,19 @@
     -webkit-touch-callout:none; touch-action:manipulation;
   }
   .score-btn:active{ transform:scale(.92); background:rgba(0,0,0,.6); }
-  /* Vertical team label identifying which side is "us" at a glance -
-     grows the home side taller than the away side, which is fine since
-     they're only align-items:center'd against the clock, not each other. */
-  .home-score-group{ display:flex; flex-direction:row; align-items:center; gap:5px; }
+  /* Team code identifying which side is "us" at a glance, upright to the
+     left of the score - like a real broadcast scoreboard's 3-letter
+     abbreviation. Positioned OUTSIDE .match-clock-wrap's own box (right:100%
+     of itself, i.e. flush against the wrap's left edge) rather than as a
+     normal-flow flex child, specifically so it does NOT count towards the
+     wrap's width - home score/clock/away score stay the thing that's
+     centered on the pitch (left:50%/translateX(-50%) on the wrap), with
+     NØT hanging off to the left of that centered group, uncounted. */
   .home-team-label{
-    writing-mode:vertical-rl; text-orientation:mixed;
-    font-size:9px; font-weight:800; letter-spacing:.05em;
+    position:absolute; right:100%; top:50%; transform:translateY(-50%);
+    margin-right:6px;
+    font-size:11px; font-weight:800; letter-spacing:.05em;
+    text-transform:uppercase;
     color:rgba(255,255,255,.8);
     text-shadow:0 1px 2px rgba(0,0,0,.5);
     white-space:nowrap;
@@ -1308,10 +1314,8 @@
     <div id="field-wrap">
       <svg id="pitchLines" class="pitch-lines" viewBox="0 0 100 150" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="matchClockWrap" class="match-clock-wrap">
-        <div class="home-score-group">
-          <span class="home-team-label" aria-hidden="true">Nøtterøy</span>
-          <button type="button" id="homeScoreBtn" class="score-btn" aria-label="Registrer mål for Nøtterøy">0</button>
-        </div>
+        <span class="home-team-label" aria-hidden="true">NØT</span>
+        <button type="button" id="homeScoreBtn" class="score-btn" aria-label="Registrer mål for Nøtterøy">0</button>
         <div class="match-clock-center">
           <div id="matchClock">0:00</div>
           <div id="matchCountdown">0:00</div>
@@ -1704,7 +1708,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.8.1';
+  var APP_VERSION = '1.8.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
