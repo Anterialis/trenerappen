@@ -970,7 +970,12 @@
     els.goalPlayerModalTitle.textContent =
       mode === 'add' ? 'Hvem scoret?' : mode === 'remove' ? 'Fjern mål fra hvem?' : 'Målskårere';
     els.goalRemoveLastBtn.hidden = mode !== 'remove';
-    if (mode === 'remove') els.goalRemoveLastBtn.disabled = teamGoalCount('home') === 0;
+    if (mode === 'remove'){
+      els.goalRemoveLastBtn.disabled = teamGoalCount('home') === 0;
+      var lastHome = lastGoalEntry('home');
+      var lastHomePlayer = lastHome && lastHome.playerId ? playerById(lastHome.playerId) : null;
+      els.goalRemoveLastTarget.textContent = lastHomePlayer ? '(' + lastHomePlayer.name + ')' : '';
+    }
     renderGoalPlayerList();
     els.goalPlayerModal.classList.add('open');
   }
@@ -2486,6 +2491,7 @@
     els.goalPlayerList = qs('goalPlayerList');
     els.goalPlayerCancelBtn = qs('goalPlayerCancelBtn');
     els.goalRemoveLastBtn = qs('goalRemoveLastBtn');
+    els.goalRemoveLastTarget = qs('goalRemoveLastTarget');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
     els.exportBtn = qs('exportBtn');

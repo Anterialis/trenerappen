@@ -1081,6 +1081,10 @@
   button.goal-quick-remove:active{ background:rgba(230,57,70,.18); }
   button.goal-quick-remove:disabled{ opacity:.4; cursor:default; }
   .goal-quick-remove-icon{ background:var(--danger); }
+  /* Names the player it'll actually affect, so the shortcut is unambiguous
+     before you tap it - lighter weight than the label itself so "Fjern
+     siste mål" still reads as the primary action, not the name. */
+  .goal-quick-remove-target{ font-weight:500; opacity:.8; }
   .legend-list{ display:flex; flex-direction:column; gap:14px; margin:14px 0; }
   .legend-row{ display:flex; align-items:center; gap:12px; }
   .legend-swatch{
