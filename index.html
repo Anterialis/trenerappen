@@ -865,6 +865,18 @@
   }
   .modal-card h2{ margin:0 0 4px; font-size:19px; }
   .modal-card .sub{ margin:0 0 16px; font-size:13px; color:var(--ink-soft); }
+  /* Shown only when this settings screen was reached by joining a code
+     that turned out to have no players - a wrong/stale code (there's no
+     server-side cleanup of old sessions, see leaveSession()) looks
+     identical to a genuine brand-new empty session otherwise, so this
+     gives the person something to double-check before they start typing
+     a whole new roster into what might be the wrong session. */
+  .joined-empty-note{
+    margin:0 0 16px; padding:10px 12px;
+    background:rgba(255,149,0,.12); border:1px solid rgba(255,149,0,.35);
+    border-radius:var(--radius-sm);
+    font-size:12.5px; line-height:1.42; color:#8a5300;
+  }
   .modal-card label.section-label{
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
@@ -1352,6 +1364,7 @@
     <button type="button" id="settingsCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2>Innstillinger</h2>
     <p class="sub">Skriv inn navn på spillerne og standard byttetid.</p>
+    <p id="joinedEmptyNote" class="joined-empty-note" hidden>Denne økten har ingen registrerte spillere ennå. Stemmer koden? Om du prøvde å bli med i en pågående kamp, sjekk koden og prøv igjen - ellers kan du fortsette å sette opp laget her.</p>
 
     <label class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
       <span>Antall utespillere</span>
@@ -1708,7 +1721,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.8.2';
+  var APP_VERSION = '1.8.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -3464,10 +3477,12 @@
     });
   }
 
-  function openSettings(isFirstRun){
+  /** @param {boolean} [isFirstRun] @param {boolean} [joinedEmpty] */
+  function openSettings(isFirstRun, joinedEmpty){
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.settingsCloseBtn.style.display = isFirstRun ? 'none' : '';
+    els.joinedEmptyNote.hidden = !joinedEmpty;
     settingsDirty = false;
     els.nameRows.innerHTML = '';
     els.fieldSizeInput.value = state.fieldSize || 3;
@@ -4033,6 +4048,7 @@
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
+    els.joinedEmptyNote = qs('joinedEmptyNote');
     els.nameRows = qs('nameRows');
     els.durMin = qs('durMin');
     els.durSec = qs('durSec');
@@ -4341,7 +4357,7 @@
       }
       joinSession(code, function(){
         els.joinCodeModal.classList.remove('open');
-        if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
+        if (state.players.length === 0){ openSettings(true, true); } else { renderAll(); }
       }, function(){
         els.joinCodeError.textContent = 'Fant ingen økt med den koden.';
         els.joinCodeError.style.display = '';
@@ -4421,7 +4437,7 @@
       }
       joinSession(code, function(){
         enterAppFromLauncher();
-        if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
+        if (state.players.length === 0){ openSettings(true, true); } else { renderAll(); }
       }, function(){
         els.launcherJoinError.textContent = 'Fant ingen økt med den koden.';
         els.launcherJoinError.hidden = false;
@@ -4509,7 +4525,17 @@
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
       stampLastAlive();
       setInterval(updateTimersOnly, 250);
-      setInterval(function(){ saveState(); stampLastAlive(); }, 8000);
+      // Local-only: this used to call saveState() (which also pushes to
+      // Supabase) unconditionally every 8s. In a shared session that's a
+      // last-write-wins race waiting to happen - if this fires on one
+      // device just after another device pushed a real edit (a goal, a
+      // substitution) but before the realtime update for it has arrived
+      // locally, this device's still-stale `state` overwrites that edit
+      // on the server, which then broadcasts the stale state back out and
+      // makes the edit vanish everywhere. Every real mutation already
+      // calls saveState() itself right after changing `state`, so this
+      // heartbeat only needs to keep localStorage/LAST_ALIVE_KEY fresh.
+      setInterval(function(){ saveStateLocally(); stampLastAlive(); }, 8000);
       document.addEventListener('visibilitychange', function(){
         if (document.hidden){
           saveState();
