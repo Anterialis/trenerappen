@@ -1058,6 +1058,10 @@
     font-size:15px; font-weight:600; font-family:inherit; text-align:left;
     cursor:pointer; transition:background .12s ease, transform .12s ease;
   }
+  /* Author display:flex above beats the browser's default [hidden]{display:
+     none} regardless of specificity - without this, toggling .hidden on
+     #goalRemoveLastBtn (add vs. remove mode) has no visible effect. */
+  .goal-player-row[hidden]{ display:none; }
   button.goal-player-row:active{ transform:scale(.98); background:#eceef0; }
   button.goal-player-row:disabled{ opacity:.4; cursor:default; }
   button.goal-player-row:disabled:active{ transform:none; background:#f5f6f7; }
