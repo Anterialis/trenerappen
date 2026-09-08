@@ -1199,6 +1199,13 @@
     transition:opacity .3s ease, transform .3s ease;
   }
   .auto-pause-notice.show{ opacity:1; transform:translate(-50%,0); }
+  /* Longer message than the pill shape above suits (that one's tuned for a
+     single short line) - a rounded card reads cleanly across 2-3 lines
+     instead of wrapping into an odd near-circular blob. */
+  #joinedEmptyReadOnlyNotice{
+    max-width:78%; border-radius:var(--radius-md);
+    line-height:1.4; text-align:left;
+  }
 
   /* Read-only participant in a shared session: the controls that would
      mutate shared state are visibly inert, not just functionally blocked.

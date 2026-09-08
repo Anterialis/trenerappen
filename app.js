@@ -1717,6 +1717,22 @@
     }, 4000);
   }
 
+  // Read-only counterpart to the "joined empty" note inside settings (see
+  // joinedEmptyNote) - a view-only participant can't do anything with that
+  // note's editable roster form (saveSettings() no-ops for them anyway), so
+  // they land on the ordinary (empty) match view instead, with this floating
+  // banner explaining why. Longer than the auto-pause notice's 4s since
+  // there's more to read and no obvious next action to take.
+  var joinedEmptyReadOnlyNoticeTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+  function showJoinedEmptyReadOnlyNotice(){
+    if (!els.joinedEmptyReadOnlyNotice) return;
+    els.joinedEmptyReadOnlyNotice.classList.add('show');
+    clearTimeout(joinedEmptyReadOnlyNoticeTimer);
+    joinedEmptyReadOnlyNoticeTimer = setTimeout(function(){
+      els.joinedEmptyReadOnlyNotice.classList.remove('show');
+    }, 7000);
+  }
+
   /* ---------------- Settings modal ---------------- */
 
   // A row counts as "blank" (safe to auto-add/auto-trim) only if it's an
@@ -2513,6 +2529,7 @@
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.autoPauseNotice = qs('autoPauseNotice');
+    els.joinedEmptyReadOnlyNotice = qs('joinedEmptyReadOnlyNotice');
     els.shareSessionToggle = qs('shareSessionToggle');
     els.shareModeRow = qs('shareModeRow');
     els.shareModeSegmented = qs('shareModeSegmented');
@@ -2771,7 +2788,10 @@
       }
       joinSession(code, function(){
         els.joinCodeModal.classList.remove('open');
-        if (state.players.length === 0){ openSettings(true, true); } else { renderAll(); }
+        if (state.players.length === 0){
+          if (canEdit()) openSettings(true, true);
+          else { renderAll(); showJoinedEmptyReadOnlyNotice(); }
+        } else { renderAll(); }
       }, function(){
         els.joinCodeError.textContent = 'Fant ingen økt med den koden.';
         els.joinCodeError.style.display = '';
@@ -2851,7 +2871,10 @@
       }
       joinSession(code, function(){
         enterAppFromLauncher();
-        if (state.players.length === 0){ openSettings(true, true); } else { renderAll(); }
+        if (state.players.length === 0){
+          if (canEdit()) openSettings(true, true);
+          else { renderAll(); showJoinedEmptyReadOnlyNotice(); }
+        } else { renderAll(); }
       }, function(){
         els.launcherJoinError.textContent = 'Fant ingen økt med den koden.';
         els.launcherJoinError.hidden = false;
@@ -2987,11 +3010,11 @@
         } else {
           subscribeToSession(sessionCode);
         }
-        if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
+        if (state.players.length === 0){ if (canEdit()) openSettings(true); else renderAll(); } else { renderAll(); }
         finishStartup();
       }).catch(function(){
         subscribeToSession(sessionCode);
-        if (state.players.length === 0){ openSettings(true); } else { renderAll(); }
+        if (state.players.length === 0){ if (canEdit()) openSettings(true); else renderAll(); } else { renderAll(); }
         finishStartup();
       });
     } else if (state.players.length === 0){
