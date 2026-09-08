@@ -32,6 +32,7 @@
    * @property {'home'|'away'} team
    * @property {string|null} playerId
    * @property {number} at
+   * @property {number} matchMs
    *
    * @typedef {Object} AppState
    * @property {Player[]} players
@@ -811,6 +812,18 @@
     return { counts: counts, max: max };
   }
 
+  // Match-clock time (not wall-clock) each of a player's goals was
+  // registered at, in the order they were scored - kampklokka resets each
+  // "Kampslutt", so a second-period goal can legitimately show an earlier
+  // time than a first-period one; that's accurate, not a bug. Entries
+  // logged before matchMs existed fall back to 0 rather than "NaN:NaN".
+  /** @param {string} playerId @returns {number[]} */
+  function goalTimesForPlayer(playerId){
+    return state.goalLog
+      .filter(function(g){ return g.team === 'home' && g.playerId === playerId; })
+      .map(function(g){ return typeof g.matchMs === 'number' ? g.matchMs : 0; });
+  }
+
   // A goal is undoable the same way a substitution is (see pushUndoSnapshot
   // above togglePlayPause) - both just mutate `state` before saving, so the
   // generic snapshot-based undo stack covers this for free.
@@ -823,7 +836,8 @@
   /** @param {'home'|'away'} team @param {string|null} playerId */
   function registerGoal(team, playerId){
     pushUndoSnapshot();
-    state.goalLog.push({ id: uid(), team: team, playerId: playerId || null, at: Date.now() });
+    var now = Date.now();
+    state.goalLog.push({ id: uid(), team: team, playerId: playerId || null, at: now, matchMs: matchClockElapsed(now) });
     saveState();
     renderAll();
   }
@@ -950,6 +964,9 @@
         '<span class="goal-player-row-avatar">' + initials(p.name, singleLetter) + '</span>' +
         '<span class="goal-player-row-name">' + escapeHtml(p.name) + '</span>' +
         (n > 0 ? '<span class="goal-player-row-count">' + n + '</span>' : '') +
+        (goalPlayerMode === 'view' && n > 0
+          ? '<button type="button" class="goal-time-btn" data-id="' + p.id + '" aria-label="Vis måltidspunkt for ' + escapeHtml(p.name) + '">🕐</button>'
+          : '') +
       '</' + tag + '>';
     }).join('');
     if (interactive){
@@ -959,6 +976,13 @@
           closeGoalPlayerModal();
           if (goalPlayerMode === 'add') onHomePlayerPicked(id);
           else removeLastGoal('home', id);
+        });
+      });
+    } else {
+      Array.prototype.forEach.call(els.goalPlayerList.querySelectorAll('.goal-time-btn'), function(btn){
+        btn.addEventListener('click', function(e){
+          e.stopPropagation();
+          openGoalTimesModal(btn.getAttribute('data-id'));
         });
       });
     }
@@ -982,6 +1006,21 @@
 
   function closeGoalPlayerModal(){
     els.goalPlayerModal.classList.remove('open');
+  }
+
+  // Behind the small clock icon on a scorer's row (target-list) and in the
+  // end-match summary - a popup instead of showing every timestamp inline
+  // keeps those lists readable even for a player with 7-8 goals.
+  /** @param {string} playerId */
+  function openGoalTimesModal(playerId){
+    var p = playerById(playerId);
+    if (!p) return;
+    var times = goalTimesForPlayer(playerId);
+    els.goalTimesTitle.textContent = p.name;
+    els.goalTimesText.textContent = times.length > 0
+      ? times.length + ' mål - ' + times.map(function(ms){ return formatMs(ms); }).join(', ')
+      : 'Ingen mål registrert.';
+    els.goalTimesModal.classList.add('open');
   }
 
   /* Draws pitch markings using the field-wrap's real pixel size, so 1 SVG
@@ -2302,6 +2341,7 @@
     var goalBadges = computeGoalBadges();
     var rows = state.players.map(function(p){
       return {
+        id: p.id,
         name: p.name,
         fieldMs: cumulativeFieldMs(p.id, now),
         benchMs: cumulativeBenchMs(p.id, now),
@@ -2315,10 +2355,18 @@
     }
     els.endMatchSummary.innerHTML = rows.map(function(r){
       return '<div class="ems-row">' +
-        '<span class="ems-name">' + escapeHtml(r.name) + (r.goals > 0 ? ' (' + r.goals + ' mål)' : '') + '</span>' +
+        '<span class="ems-name-wrap">' +
+          '<span class="ems-name">' + escapeHtml(r.name) + (r.goals > 0 ? ' (' + r.goals + ' mål)' : '') + '</span>' +
+          (r.goals > 0
+            ? '<button type="button" class="goal-time-btn" data-id="' + r.id + '" aria-label="Vis måltidspunkt for ' + escapeHtml(r.name) + '">🕐</button>'
+            : '') +
+        '</span>' +
         '<span class="ems-time">spilt: ' + formatCumulative(r.fieldMs) + ' - benk: ' + formatCumulative(r.benchMs) + '</span>' +
       '</div>';
     }).join('');
+    Array.prototype.forEach.call(els.endMatchSummary.querySelectorAll('.goal-time-btn'), function(btn){
+      btn.addEventListener('click', function(){ openGoalTimesModal(btn.getAttribute('data-id')); });
+    });
   }
 
   function endMatchPeriod(reorganize){
@@ -2508,6 +2556,10 @@
     els.goalPlayerCancelBtn = qs('goalPlayerCancelBtn');
     els.goalRemoveLastBtn = qs('goalRemoveLastBtn');
     els.goalRemoveLastTarget = qs('goalRemoveLastTarget');
+    els.goalTimesModal = qs('goalTimesModal');
+    els.goalTimesTitle = qs('goalTimesTitle');
+    els.goalTimesText = qs('goalTimesText');
+    els.goalTimesCloseBtn = qs('goalTimesCloseBtn');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
     els.exportBtn = qs('exportBtn');
@@ -2724,6 +2776,7 @@
       removeLastGoalOverall('home');
     });
     els.goalListBtn.addEventListener('click', function(){ openGoalPlayerModal('view'); });
+    els.goalTimesCloseBtn.addEventListener('click', function(){ els.goalTimesModal.classList.remove('open'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
     initDurationPickerDrag();
     els.exportCopyBtn.addEventListener('click', function(){
@@ -2791,7 +2844,17 @@
         if (state.players.length === 0){
           if (canEdit()) openSettings(true, true);
           else { renderAll(); showJoinedEmptyReadOnlyNotice(); }
-        } else { renderAll(); }
+        } else {
+          // A device that was empty before this join (e.g. its very first
+          // ever launch) auto-opens settings at boot, before the join even
+          // happens (see init()'s "else if players.length===0" branch) -
+          // that stays open (just invisibly, behind the launcher) unless
+          // explicitly closed here, so it was still sitting on top - with
+          // its now-stale empty fields - once the real joined match loaded
+          // underneath and the launcher faded away.
+          els.settingsModal.classList.remove('open');
+          renderAll();
+        }
       }, function(){
         els.joinCodeError.textContent = 'Fant ingen økt med den koden.';
         els.joinCodeError.style.display = '';
@@ -2874,7 +2937,15 @@
         if (state.players.length === 0){
           if (canEdit()) openSettings(true, true);
           else { renderAll(); showJoinedEmptyReadOnlyNotice(); }
-        } else { renderAll(); }
+        } else {
+          // See the identical comment in joinCodeConfirmBtn's handler - a
+          // device that was empty before this join auto-opened settings at
+          // boot (invisibly, behind the launcher); close it explicitly or
+          // it's still sitting on top, showing stale empty fields, once the
+          // real joined match loads underneath and the launcher fades away.
+          els.settingsModal.classList.remove('open');
+          renderAll();
+        }
       }, function(){
         els.launcherJoinError.textContent = 'Fant ingen økt med den koden.';
         els.launcherJoinError.hidden = false;

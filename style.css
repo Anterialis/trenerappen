@@ -1077,6 +1077,18 @@
   }
   .goal-player-row-name{ flex:1 1 auto; }
   .goal-player-row-count{ font-size:13px; font-weight:700; color:var(--ink-soft); }
+  /* Behind-a-tap timestamp reveal (see openGoalTimesModal) - keeps a
+     scorer's row/summary line to one line each even with 7-8 goals,
+     instead of spelling every match-time out inline. */
+  .goal-time-btn{
+    -webkit-appearance:none; appearance:none; flex:0 0 auto;
+    width:24px; height:24px; border-radius:50%; border:none;
+    background:#eef0f2; color:var(--ink-soft);
+    font-size:12px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .12s ease, transform .12s ease;
+  }
+  .goal-time-btn:active{ transform:scale(.9); background:#e2e4e8; }
   .goal-player-empty{ margin:14px 0; font-size:13px; color:var(--ink-soft); text-align:center; }
   /* Quick-remove shortcut above the per-player list in 'remove' mode -
      removes whichever goal was actually registered most recently,
@@ -1155,6 +1167,10 @@
     font-size:13px;
   }
   .ems-row:last-child{ border-bottom:none; }
+  /* min-width:0 is what lets .ems-name ellipsize inside a flex row instead
+     of forcing the row wider - the clock button sits outside that
+     ellipsis-clipped span so it's never the thing that gets truncated. */
+  .ems-name-wrap{ display:flex; align-items:center; gap:4px; min-width:0; }
   .ems-name{ font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ems-time{ color:var(--ink-soft); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:12px; }
   #endMatchModal{ z-index:110; }
@@ -1163,6 +1179,7 @@
   #settingsCloseConfirmModal{ z-index:110; }
   #joinCodeModal{ z-index:120; }
   #infoPopupModal{ z-index:130; }
+  #goalTimesModal{ z-index:140; }
   .settings-card{ position:relative; padding-top:50px; }
 
   .session-code-bar{
