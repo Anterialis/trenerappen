@@ -34,6 +34,10 @@
    * @property {number} at
    * @property {number} matchMs
    *
+   * @typedef {Object} Participant
+   * @property {string} deviceId
+   * @property {number} joinedAt
+   *
    * @typedef {Object} AppState
    * @property {Player[]} players
    * @property {string[]} onField
@@ -51,6 +55,7 @@
    * @property {boolean} rankByCumulative
    * @property {boolean} shareEditable
    * @property {string|null} sessionOwnerDeviceId
+   * @property {Participant[]} participants
    * @property {GoalEntry[]} goalLog
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
@@ -90,7 +95,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9';
+  var APP_VERSION = '1.9.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -181,6 +186,11 @@
   var resetConfirmTimer; // clearTimeout(undefined) is a safe no-op, same as our old null check
   var RESET_LABEL = 'Avslutt og nullstill';
   var RESET_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
+  var transferOwnerConfirmArmed = false; // "Overfør økt-eier" needs a second press to confirm
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  var transferOwnerConfirmTimer;
+  var TRANSFER_OWNER_LABEL = '🔁 Overfør økt-eier';
+  var TRANSFER_OWNER_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
   /** @type {AudioContext|null} */
   var audioCtx = null;
   var els = {};
@@ -211,6 +221,7 @@
       rankByCumulative: false,
       shareEditable: true,
       sessionOwnerDeviceId: null,
+      participants: [],
       goalLog: []
     };
   }
@@ -240,6 +251,7 @@
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     if (raw.shareEditable === undefined) raw.shareEditable = true;
     if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
+    if (!Array.isArray(raw.participants)) raw.participants = [];
     if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
     return raw;
   }
@@ -309,6 +321,61 @@
     return state.sessionOwnerDeviceId === deviceId;
   }
 
+  // Distinct from canEdit(): this gates SESSION ADMINISTRATION (player
+  // names, kampvarighet, byttetid, sharing controls, full reset) to
+  // whichever device created the session, regardless of shareEditable -
+  // an "editor" in a shared session can still swap players/register
+  // goals/run the clock (canEdit() covers that), just not reconfigure the
+  // match or its sharing settings out from under the owner. Outside a
+  // shared session (or before one exists), this device is trivially its
+  // own master.
+  function isMaster(){
+    if (!sessionCode) return true;
+    return state.sessionOwnerDeviceId === deviceId;
+  }
+
+  // Registers this device as a participant (first-seen timestamp only - a
+  // later rejoin doesn't bump it) so "overfør økt-eier" can later offer the
+  // person who's actually been around the longest, not whoever happens to
+  // be looking at settings when the owner decides to hand it off. Returns
+  // whether it actually added anything, so callers know to push the change.
+  function ensureParticipant(){
+    if (!Array.isArray(state.participants)) state.participants = [];
+    var already = state.participants.some(function(p){ return p.deviceId === deviceId; });
+    if (already) return false;
+    state.participants.push({ deviceId: deviceId, joinedAt: Date.now() });
+    return true;
+  }
+
+  // The hand-off target for "overfør økt-eier": among every OTHER device
+  // that's ever joined this session, whoever's been in it the longest
+  // (earliest joinedAt) - deliberately not "most recently active", since
+  // there's no presence/heartbeat system telling us who's actually still
+  // there right now (see isMaster()'s comment - this feature is a manual,
+  // owner-initiated action, not automatic failover). Null when nobody else
+  // has ever joined.
+  function longestTenuredOtherParticipant(){
+    if (!Array.isArray(state.participants)) return null;
+    var others = state.participants.filter(function(p){ return p.deviceId !== deviceId; });
+    if (others.length === 0) return null;
+    others.sort(function(a,b){ return a.joinedAt - b.joinedAt; });
+    return others[0];
+  }
+
+  // "ble med for 12 min siden" style caption for the transfer-owner button -
+  // there's no display name to show (devices aren't accounts), so how long
+  // ago they joined is the only thing that helps the current owner judge
+  // whether this candidate still makes sense to hand off to.
+  /** @param {number} joinedAt @returns {string} */
+  function formatJoinedAgo(joinedAt){
+    var mins = Math.max(0, Math.round((Date.now() - joinedAt) / 60000));
+    if (mins < 1) return 'ble med for under 1 min siden';
+    if (mins < 60) return 'ble med for ' + mins + ' min siden';
+    var hours = Math.round(mins / 60);
+    if (hours < 24) return 'ble med for ' + hours + ' t siden';
+    return 'ble med for ' + Math.round(hours / 24) + ' d siden';
+  }
+
   // Greys out / disables the controls that mutate state when this device
   // is a read-only participant in a shared session - called from renderAll
   // so it stays in sync with every state change (including a remote one
@@ -345,12 +412,14 @@
         { event: 'UPDATE', schema: 'public', table: 'sessions', filter: 'code=eq.' + code },
         function(payload){
           if (!payload.new || payload.new.origin === deviceOrigin) return;
+          var wasMaster = isMaster();
           var normalized = normalizeState(payload.new.data);
           if (!normalized){ console.warn('Mottok ugyldig delt tilstand fra økt, ignorerer'); return; }
           state = normalized;
           saveStateLocally();
           resyncTimeUpNotified();
           renderAll();
+          if (!wasMaster && isMaster()) showOwnerTransferredNotice();
         }
       )
       .subscribe(function(status){
@@ -380,7 +449,7 @@
   // meaningful while actually sharing) and reflects the current mode.
   function updateShareModeUI(){
     if (!els.shareModeRow) return;
-    els.shareModeRow.hidden = !sessionCode;
+    els.shareModeRow.hidden = !sessionCode || !isMaster();
     var editable = !state || state.shareEditable !== false;
     Array.prototype.forEach.call(els.shareModeSegmented.querySelectorAll('.segmented-btn'), function(btn){
       var isEdit = btn.dataset.mode !== 'read';
@@ -391,6 +460,7 @@
   function createNewSession(callback){
     if (!sb){ callback(null); return; }
     state.sessionOwnerDeviceId = deviceId;
+    ensureParticipant();
     var attempts = 0;
     function tryInsert(){
       attempts++;
@@ -420,10 +490,15 @@
       state = normalized;
       sessionCode = code;
       try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
+      // Register as a participant before the very first save so the owner
+      // (and anyone else) sees this device as a hand-off candidate - pushed
+      // remotely right away rather than waiting for the next real edit.
+      var joinedAsNewParticipant = ensureParticipant();
       saveStateLocally();
       resyncTimeUpNotified();
       subscribeToSession(code);
       updateSessionCodeUI();
+      if (joinedAsNewParticipant) pushRemoteState();
       onSuccess();
     });
   }
@@ -637,6 +712,7 @@
       rankByCumulative: !!state.rankByCumulative,
       shareEditable: !!state.shareEditable,
       sessionOwnerDeviceId: state.sessionOwnerDeviceId,
+      participants: cloneStateValue(state.participants || []),
       goalLog: cloneStateValue(state.goalLog || [])
     };
   }
@@ -660,6 +736,7 @@
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
     state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
     state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
+    state.participants = cloneStateValue(snap.participants || state.participants || []);
     state.goalLog = cloneStateValue(snap.goalLog || []);
   }
 
@@ -1772,6 +1849,21 @@
     }, 7000);
   }
 
+  // Shown to whoever just received the økt-eier role via the previous
+  // owner's "Overfør økt-eier"-button (see els.transferOwnerBtn) - fires
+  // from both the live realtime update and the boot-time rejoin fetch (see
+  // isMaster()/wasMaster checks at each call site), so it reaches the new
+  // owner whether the app was already open or they're just opening it.
+  var ownerTransferredNoticeTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
+  function showOwnerTransferredNotice(){
+    if (!els.ownerTransferredNotice) return;
+    els.ownerTransferredNotice.classList.add('show');
+    clearTimeout(ownerTransferredNoticeTimer);
+    ownerTransferredNoticeTimer = setTimeout(function(){
+      els.ownerTransferredNotice.classList.remove('show');
+    }, 6000);
+  }
+
   /* ---------------- Settings modal ---------------- */
 
   // A row counts as "blank" (safe to auto-add/auto-trim) only if it's an
@@ -1925,10 +2017,13 @@
 
   /** @param {boolean} [isFirstRun] @param {boolean} [joinedEmpty] */
   function openSettings(isFirstRun, joinedEmpty){
+    var master = isMaster();
+    var slaveInSession = !master && !!sessionCode;
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.settingsCloseBtn.style.display = isFirstRun ? 'none' : '';
     els.joinedEmptyNote.hidden = !joinedEmpty;
+    els.masterOnlyNote.hidden = master;
     settingsDirty = false;
     els.nameRows.innerHTML = '';
     els.fieldSizeInput.value = state.fieldSize || 3;
@@ -1942,29 +2037,52 @@
     var totalMs = state.defaultDurationMs;
     els.durMin.value = Math.floor(totalMs/60000);
     els.durSec.value = Math.floor((totalMs%60000)/1000);
+    els.matchDurationInput.disabled = !master;
+    els.durMin.disabled = !master;
+    els.durSec.disabled = !master;
     els.wakeLockToggle.checked = !!state.wakeLockEnabled;
+    // Not master-restricted (this really only affects the tapping device's
+    // own screen, even though it happens to live in shared state) - but
+    // still gated by canEdit(), same as any other shared-state mutation,
+    // now that settings is reachable by a genuinely read-only viewer too.
+    els.wakeLockToggle.disabled = !canEdit();
     els.shareSessionToggle.checked = !!sessionCode;
+    els.shareSessionRow.hidden = !master;
+    els.rankCumulativeRow.hidden = !master;
     updateShareModeUI();
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
-    els.fieldSizeInput.disabled = !isFirstRun;
-    els.fieldSizeLockedNote.style.display = isFirstRun ? 'none' : '';
+    els.fieldSizeInput.disabled = !isFirstRun || !master;
+    els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
+    els.joinExistingBtn.textContent = slaveInSession ? '↩ Gå ut av delt økt' : '🔗 Bli med i delt økt';
+
+    disarmTransferOwnerConfirm();
+    var transferTarget = master ? longestTenuredOtherParticipant() : null;
+    els.transferOwnerRow.hidden = !transferTarget;
+    if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
   }
 
   /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
   function addNameRow(id, name, indexHint, locked, fadeIn){
+    // Two independent reasons a row can be locked: on the field right now
+    // (locked - everyone, including the master, can't touch it here), or
+    // this device just isn't the session master (masterLocked - everyone
+    // BUT the master, regardless of field/bench). Same grey styling either
+    // way, different tooltip so it's clear which applies.
+    var masterLocked = !locked && !isMaster();
+    var anyLocked = locked || masterLocked;
     var row = document.createElement('div');
-    row.className = 'name-row' + (locked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
+    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
     row.innerHTML =
       '<div class="name-input-wrap">' +
-        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (locked ? ' disabled' : '') + '>' +
+        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (anyLocked ? ' disabled' : '') + '>' +
       '</div>' +
-      (locked
-        ? '<span class="locked-row-note" title="Utespillere kan ikke endres eller fjernes her mens de er på banen">🔒</span>'
+      (anyLocked
+        ? '<span class="locked-row-note" title="' + (locked ? 'Utespillere kan ikke endres eller fjernes her mens de er på banen' : 'Kun økt-eieren kan endre spillernavn') + '">🔒</span>'
         : '<button type="button" class="removeRow" aria-label="Fjern"' + (name && name.trim() ? '' : ' style="display:none;"') + '>×</button>');
     els.nameRows.appendChild(row);
     var wrap = row.querySelector('.name-input-wrap');
-    if (locked) return row;
+    if (anyLocked) return row;
     var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.removeRow'));
     var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
     removeBtn.addEventListener('click', function(){
@@ -2249,7 +2367,13 @@
   }
 
   function saveSettings(){
-    if (!canEdit()) return;
+    if (!isMaster()){
+      // Every field a non-master could change here is already disabled, so
+      // there's nothing to persist - just let OK close the modal like the
+      // × button would, instead of leaving it stuck open.
+      els.settingsModal.classList.remove('open');
+      return;
+    }
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     var newPlayers = [];
     var keptIds = {};
@@ -2334,6 +2458,18 @@
     resetConfirmArmed = false;
     els.endResetBtn.textContent = RESET_LABEL;
     els.endResetBtn.classList.remove('armed', 'shake-btn');
+  }
+
+  // Same double-press pattern as disarmResetConfirm(), for "Overfør
+  // økt-eier" - called whenever settings is (re)opened so a stale "trykk
+  // igjen" from a previous visit never lingers into this one.
+  function disarmTransferOwnerConfirm(){
+    clearTimeout(transferOwnerConfirmTimer);
+    transferOwnerConfirmArmed = false;
+    if (els.transferOwnerBtn){
+      els.transferOwnerBtn.textContent = TRANSFER_OWNER_LABEL;
+      els.transferOwnerBtn.classList.remove('armed', 'shake-btn');
+    }
   }
 
   function renderEndMatchSummary(){
@@ -2431,6 +2567,11 @@
   }
 
   function resetMatch(){
+    // Wipes state for every device still connected to sessionCode - only
+    // safe once this device either owns the session or isn't in one at
+    // all (see isMaster()). Callers that might run this on a slave still
+    // in someone else's session (the launcher's "Ny økt") leave it first.
+    if (!isMaster()) return;
     selected = null;
     suggestedPartnerId = null;
     undoStack = [];
@@ -2443,12 +2584,20 @@
     var keepWakeLock = state.wakeLockEnabled;
     var keepFieldSize = state.fieldSize;
     var keepRankByCumulative = state.rankByCumulative;
+    // defaultState() sets these back to null/[] - losing sessionOwnerDeviceId
+    // here would silently un-master the very device that's allowed to call
+    // this function, locking everyone (including the real owner) out of
+    // isMaster()-gated controls for the rest of the shared session.
+    var keepOwnerDeviceId = state.sessionOwnerDeviceId;
+    var keepParticipants = state.participants;
     state = defaultState();
     state.defaultDurationMs = keepDuration;
     state.matchDurationMs = keepMatchDuration;
     state.wakeLockEnabled = keepWakeLock;
     state.fieldSize = keepFieldSize;
     state.rankByCumulative = keepRankByCumulative;
+    state.sessionOwnerDeviceId = keepOwnerDeviceId;
+    state.participants = keepParticipants;
     saveState();
     updateUndoUI();
     updateMultiSelectUI();
@@ -2517,6 +2666,12 @@
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
     els.joinedEmptyNote = qs('joinedEmptyNote');
+    els.masterOnlyNote = qs('masterOnlyNote');
+    els.shareSessionRow = qs('shareSessionRow');
+    els.rankCumulativeRow = qs('rankCumulativeRow');
+    els.transferOwnerRow = qs('transferOwnerRow');
+    els.transferOwnerBtn = qs('transferOwnerBtn');
+    els.transferOwnerNote = qs('transferOwnerNote');
     els.nameRows = qs('nameRows');
     els.durMin = qs('durMin');
     els.durSec = qs('durSec');
@@ -2582,6 +2737,7 @@
     els.sessionCodeText = qs('sessionCodeText');
     els.autoPauseNotice = qs('autoPauseNotice');
     els.joinedEmptyReadOnlyNotice = qs('joinedEmptyReadOnlyNotice');
+    els.ownerTransferredNotice = qs('ownerTransferredNotice');
     els.shareSessionToggle = qs('shareSessionToggle');
     els.shareModeRow = qs('shareModeRow');
     els.shareModeSegmented = qs('shareModeSegmented');
@@ -2641,7 +2797,10 @@
     els.backActionCancelBtn.addEventListener('click', function(){
       els.backActionModal.classList.remove('open');
     });
-    els.settingsBtn.addEventListener('click', function(){ if (canEdit()) openSettings(false); });
+    // Opening settings is always allowed now (even for a read-only shared-
+    // session viewer) - it's pure navigation, and the mutating fields
+    // inside gate themselves individually (see openSettings/isMaster).
+    els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
     els.fieldSizeInput.addEventListener('input', syncNameRows);
     els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
@@ -2691,6 +2850,11 @@
       if (!canEdit()) return;
       disarmResetConfirm();
       renderEndMatchSummary();
+      // "Avslutt og nullstill" wipes the whole match for every connected
+      // device at once - master-only, same as the other session-wide
+      // administration in settings. "Kampslutt" (next period) stays
+      // available to anyone with edit rights.
+      els.endResetBtn.hidden = !isMaster();
       els.endMatchModal.classList.add('open');
     });
     els.endMatchCancelBtn.addEventListener('click', function(){
@@ -2712,6 +2876,7 @@
       animateReorganization(function(){ endMatchPeriod(true); });
     });
     els.endResetBtn.addEventListener('click', function(){
+      if (!isMaster()) return;
       if (!resetConfirmArmed){
         resetConfirmArmed = true;
         els.endResetBtn.textContent = RESET_CONFIRM_LABEL;
@@ -2730,6 +2895,7 @@
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
     els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
     els.wakeLockToggle.addEventListener('change', function(){
+      if (!canEdit()){ els.wakeLockToggle.checked = !!state.wakeLockEnabled; return; }
       state.wakeLockEnabled = els.wakeLockToggle.checked;
       saveState();
       if (state.wakeLockEnabled){
@@ -2790,6 +2956,7 @@
       }
     });
     els.shareSessionToggle.addEventListener('change', function(){
+      if (!isMaster()){ els.shareSessionToggle.checked = !!sessionCode; return; }
       if (els.shareSessionToggle.checked){
         if (sessionCode){ updateSessionCodeUI(); updateShareModeUI(); return; } // already sharing (e.g. via join)
         createNewSession(function(code){
@@ -2803,6 +2970,7 @@
       updateShareModeUI();
     });
     els.shareModeSegmented.addEventListener('click', function(e){
+      if (!isMaster()) return;
       var btn = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('.segmented-btn'));
       if (!btn) return;
       state.shareEditable = btn.dataset.mode !== 'read';
@@ -2811,11 +2979,44 @@
       updateSessionCodeUI();
     });
     els.rankByCumulativeToggle.addEventListener('change', function(){
+      if (!isMaster()){ els.rankByCumulativeToggle.checked = !!state.rankByCumulative; return; }
       state.rankByCumulative = els.rankByCumulativeToggle.checked;
       saveState();
       renderAll();
     });
+    els.transferOwnerBtn.addEventListener('click', function(){
+      if (!isMaster()) return;
+      var target = longestTenuredOtherParticipant();
+      if (!target){ shakeElement(els.transferOwnerBtn); return; }
+      if (!transferOwnerConfirmArmed){
+        transferOwnerConfirmArmed = true;
+        els.transferOwnerBtn.textContent = TRANSFER_OWNER_CONFIRM_LABEL;
+        els.transferOwnerBtn.classList.add('armed');
+        els.transferOwnerBtn.classList.remove('shake-btn');
+        void els.transferOwnerBtn.offsetWidth; // restart the shake if pressed again quickly
+        els.transferOwnerBtn.classList.add('shake-btn');
+        clearTimeout(transferOwnerConfirmTimer);
+        transferOwnerConfirmTimer = setTimeout(disarmTransferOwnerConfirm, 2500);
+        return;
+      }
+      disarmTransferOwnerConfirm();
+      state.sessionOwnerDeviceId = target.deviceId;
+      saveState();
+      // Rebuild the modal in place - this device is now a slave, so every
+      // isMaster()-gated field/row needs to flip to its locked/hidden state
+      // immediately, same as if a slave had just opened settings fresh.
+      openSettings(false);
+    });
     els.joinExistingBtn.addEventListener('click', function(){
+      if (!isMaster() && sessionCode){
+        // This is the "Gå ut av delt økt" state (see openSettings) - leave
+        // and go straight back to the launcher, rather than opening the
+        // join-code flow this button normally leads to.
+        leaveSession();
+        els.settingsModal.classList.remove('open');
+        showLauncherMenu();
+        return;
+      }
       els.settingsModal.classList.remove('open');
       els.joinCodeInput.value = '';
       els.joinCodeError.style.display = 'none';
@@ -2972,6 +3173,11 @@
     // roster that was set up but never actually played), it just proceeds
     // straight in, same as "Fortsett" would.
     els.newSessionChoiceBtn.addEventListener('click', function(){
+      // A slave detaches from someone else's shared session before starting
+      // their own fresh one - resetMatch() below still pushes to whatever
+      // sessionCode is current, and a slave should never be able to wipe
+      // the master's session data just by tapping "Ny økt" (see isMaster()).
+      if (!isMaster() && sessionCode) leaveSession();
       if (state.players.length === 0){
         enterAppFromLauncher();
         openSettings(true);
@@ -3071,9 +3277,12 @@
       updateSessionCodeUI();
       sb.from('sessions').select('*').eq('code', sessionCode).maybeSingle().then(function(res){
         if (res && !res.error && res.data){
+          var wasMaster = isMaster();
           var normalized = normalizeState(res.data.data);
           if (normalized){
             state = normalized;
+            if (ensureParticipant()) pushRemoteState();
+            if (!wasMaster && isMaster()) showOwnerTransferredNotice();
             saveStateLocally();
             resyncTimeUpNotified();
           } else {

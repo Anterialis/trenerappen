@@ -875,6 +875,14 @@
     border-radius:var(--radius-sm);
     font-size:12.5px; line-height:1.42; color:#8a5300;
   }
+  /* Neutral (not amber-warning) - explains why several fields below are
+     greyed out/hidden, not that something's wrong. */
+  .master-only-note{
+    margin:0 0 16px; padding:10px 12px;
+    background:#eef1f0; border:1px solid #dde1e6;
+    border-radius:var(--radius-sm);
+    font-size:12.5px; line-height:1.42; color:var(--ink-soft);
+  }
   .modal-card label.section-label{
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
@@ -943,8 +951,8 @@
     width:64px; border:1px solid #dde1e6; border-radius:var(--radius-sm);
     padding:10px; font-size:15px; text-align:center; background:#fafbfc;
   }
+  .duration-input input:disabled{ background:#eceef0; color:var(--ink-soft); cursor:not-allowed; opacity:.45; }
   .duration-input span{ font-size:13px; color:var(--ink-soft); }
-  .duration-input input:disabled{ opacity:.45; background:#eceef0; cursor:not-allowed; }
   .locked-note{ font-size:11px; font-weight:600; color:var(--ink-soft); }
   .app-version{ text-align:right; margin-top:14px; font-size:11px; color:#c3c8ce; font-weight:600; }
 
@@ -952,6 +960,10 @@
     display:flex; align-items:center; justify-content:space-between;
     margin-top:18px;
   }
+  /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
+     needed now that #shareSessionRow/#rankCumulativeRow toggle .hidden
+     for non-master users (see openSettings/isMaster in app.js). */
+  .settings-row[hidden]{ display:none; }
   .settings-row-label{ font-size:14px; font-weight:600; color:var(--ink); }
   .settings-row-label-wrap{ display:flex; align-items:center; gap:6px; }
   .share-mode-row{ margin-top:12px; }
@@ -1020,6 +1032,7 @@
   }
   .toggle input:checked + .toggle-slider{ background:#32d74b; }
   .toggle input:checked + .toggle-slider::before{ transform:translateX(20px); }
+  .toggle input:disabled + .toggle-slider{ opacity:.4; cursor:not-allowed; }
 
   .export-link-btn{
     margin-top:16px; width:100%; padding:11px;
@@ -1029,6 +1042,11 @@
     transition:transform .12s ease;
   }
   .export-link-btn:active{ transform:scale(.97); }
+  /* Confirm-state for the double-press "Overfør økt-eier" button - accent
+     (not --danger) since handing off ownership deliberately isn't framed as
+     destructive the way "Avslutt og nullstill" is. */
+  .export-link-btn.armed{ background:var(--accent); color:var(--accent-ink); border-style:solid; border-color:transparent; }
+  #transferOwnerNote{ margin:6px 0 0; text-align:center; }
 
   .export-textarea{
     width:100%; min-height:200px; margin:10px 0;
@@ -1226,15 +1244,17 @@
 
   /* Read-only participant in a shared session: the controls that would
      mutate shared state are visibly inert, not just functionally blocked.
-     #undoBtn is deliberately NOT in this list - its action sheet's own
-     "Angre siste"/"Endre tilbake" buttons are individually disabled for
-     canEdit()===false instead (see the undoBtn click handler), because
-     that same sheet's "Gå tilbake til hovedmeny" is pure navigation, not a
-     mutation, and disabling the whole button here left a read-only viewer
-     with no way back to the launcher at all. */
+     #undoBtn and #settingsBtn are deliberately NOT in this list - opening
+     either is pure navigation, not a mutation (undoBtn's "Gå tilbake til
+     hovedmeny"; settingsBtn just to look at the current setup). Each
+     mutating control inside is individually locked instead: undoBtn's
+     "Angre siste"/"Endre tilbake" via canEdit() (see the undoBtn click
+     handler), settings' player names/kampvarighet/byttetid/sharing rows
+     via isMaster() (see openSettings) - disabling the buttons that OPEN
+     these here would leave a read-only viewer with no way to reach either
+     screen at all. */
   .view-only #playPauseBtn,
   .view-only #endBtn,
-  .view-only #settingsBtn,
   .view-only #multiSelectBtn,
   .view-only #multiSelectCancelBtn,
   .view-only #swapSuggestionBtn,
