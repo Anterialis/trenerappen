@@ -829,7 +829,7 @@
   }
 
   // Away goals stay anonymous (see onHomePlayerPicked for the home flow,
-  // gated by the same shared-state 10s duplicate window - keyed on the
+  // gated by the same shared-state 30s duplicate window - keyed on the
   // synced goalLog, not a local timer, so it also catches a second device
   // registering the same goal).
   function onAwayScoreTap(){
@@ -2549,8 +2549,12 @@
 
     els.playPauseBtn.addEventListener('click', togglePlayPause);
     els.undoBtn.addEventListener('click', function(){
-      els.undoActionBtn.disabled = undoStack.length === 0;
-      els.redoActionBtn.disabled = redoStack.length === 0;
+      // Angre/Gjør om are real mutations (blocked for a read-only shared-
+      // session viewer, same as everywhere else - see canEdit()), but this
+      // button stays fully tappable regardless so "Gå tilbake til
+      // hovedmeny" below (pure navigation) is always reachable.
+      els.undoActionBtn.disabled = undoStack.length === 0 || !canEdit();
+      els.redoActionBtn.disabled = redoStack.length === 0 || !canEdit();
       els.backActionModal.classList.add('open');
     });
     els.undoActionBtn.addEventListener('click', function(){

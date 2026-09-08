@@ -175,6 +175,10 @@
     font-size:15px; font-weight:700; cursor:pointer;
     transition:transform .12s ease, background .15s ease;
   }
+  /* Author display:block above beats the browser's default [hidden]{display:
+     none} regardless of specificity - without this, #continueSessionChoiceBtn
+     stayed visible on a brand-new app with no session to continue from. */
+  .glass-choice-btn[hidden]{ display:none; }
   .glass-choice-btn:active{ transform:scale(.97); background:rgba(255,255,255,.16); }
   .glass-choice-btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
   .glass-choice-btn.primary:active{ opacity:.85; }
@@ -1197,9 +1201,14 @@
   .auto-pause-notice.show{ opacity:1; transform:translate(-50%,0); }
 
   /* Read-only participant in a shared session: the controls that would
-     mutate shared state are visibly inert, not just functionally blocked. */
+     mutate shared state are visibly inert, not just functionally blocked.
+     #undoBtn is deliberately NOT in this list - its action sheet's own
+     "Angre siste"/"Endre tilbake" buttons are individually disabled for
+     canEdit()===false instead (see the undoBtn click handler), because
+     that same sheet's "Gå tilbake til hovedmeny" is pure navigation, not a
+     mutation, and disabling the whole button here left a read-only viewer
+     with no way back to the launcher at all. */
   .view-only #playPauseBtn,
-  .view-only #undoBtn,
   .view-only #endBtn,
   .view-only #settingsBtn,
   .view-only #multiSelectBtn,
