@@ -2897,12 +2897,22 @@
     els.continueSessionChoiceBtn.addEventListener('click', enterAppFromLauncher);
     // "Ny økt" discards the current team/match when there is one, so it
     // needs the same press-again-to-confirm pattern as "Avslutt og
-    // nullstill" - with nothing to lose (a genuinely fresh app), it just
-    // proceeds straight in, same as "Fortsett" would.
+    // nullstill" - with nothing to lose (a genuinely fresh app, or a
+    // roster that was set up but never actually played), it just proceeds
+    // straight in, same as "Fortsett" would.
     els.newSessionChoiceBtn.addEventListener('click', function(){
       if (state.players.length === 0){
         enterAppFromLauncher();
         openSettings(true);
+        return;
+      }
+      if (!state.globalRunning && matchClockElapsed(Date.now()) === 0){
+        // A team exists but the match clock has never run - nothing about
+        // an actual match to lose, so skip the confirm-shake below (same
+        // reasoning as the empty-roster case above).
+        disarmNewSessionConfirm();
+        resetMatch();
+        enterAppFromLauncher();
         return;
       }
       if (!newSessionConfirmArmed){
