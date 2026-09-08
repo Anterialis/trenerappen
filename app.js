@@ -2875,6 +2875,7 @@
     els.newSessionChoiceBtn.addEventListener('click', function(){
       if (state.players.length === 0){
         enterAppFromLauncher();
+        openSettings(true);
         return;
       }
       if (!newSessionConfirmArmed){
