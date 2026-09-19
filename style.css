@@ -253,6 +253,7 @@
 
   /* ---------- Historikk launcher tile ---------- */
   .history-tile{
+    position:relative;
     width:100%; max-width:380px; margin-top:12px;
     display:flex; align-items:center; gap:12px;
     border-radius:18px; padding:12px 16px;
@@ -264,6 +265,23 @@
     transition:transform .15s ease;
   }
   .history-tile:active{ transform:scale(.97); }
+  /* Always-on lock/unlock status badge, hung slightly off the tile's own
+     top-right corner - locked (see #historyBadgeLocked/Open, swapped by
+     renderHistoryBadge()) whenever there's no admin session, open once
+     there is. No plate/bubble behind it (picked over three bubble variants
+     in review - see the "01-03 boble" specimens this replaced) - just the
+     padlock itself, fully opaque, lifted off the tile with a drop-shadow. */
+  .history-tile-badge{
+    position:absolute; top:-9px; right:11px; z-index:1;
+    width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .lock-icon{
+    width:20px; height:20px; display:block;
+    filter:drop-shadow(0 2px 3px rgba(0,0,0,.55)) drop-shadow(0 1px 2px rgba(0,0,0,.4));
+  }
+  .lock-icon[hidden]{ display:none; }
+  .history-tile-badge .lock-icon{ width:24px; height:24px; }
   .history-tile-icon{ width:30px; height:30px; flex-shrink:0; }
   .history-tile-body{ flex:1 1 auto; min-width:0; }
   .history-tile-title{ margin:0 0 2px; font-size:14px; font-weight:700; color:#fff; }
@@ -375,45 +393,6 @@
   }
   .history-select-mode-btn.active{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
   .history-info-note{ margin:8px 0 14px; color:rgba(255,255,255,.55); font-size:12px; line-height:1.5; }
-  /* Wraps the list + select bar so it, not .history-screen itself, is what
-     switches with the login panel (see historyLoginPanel/historyAuthedPanel
-     in renderHistoryAuthUI) - needs the same flex sizing .history-list had
-     directly from .history-screen before, or the scrolling list collapses. */
-  .history-authed-panel{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
-  .history-authed-panel[hidden]{ display:none; }
-  .history-login-panel{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:40px; text-align:center; }
-  .history-login-panel[hidden]{ display:none; }
-  .history-login-text{ color:rgba(255,255,255,.75); font-size:13.5px; line-height:1.5; margin:0 0 4px; max-width:280px; }
-  /* Glass-tile padlock, same recipe as .launcher-tile/.coin-tile's frosted
-     background (rgba white + blur) - tap reveals #historyLoginFields below
-     (see historyLockBtn's click handler) rather than showing the form
-     right away, so a stray tap into "Historikk" doesn't put an empty
-     email/password prompt in front of a parent who has no admin account. */
-  .history-lock-btn{
-    width:104px; height:104px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    border:1px solid rgba(255,255,255,.20);
-    background:rgba(255,255,255,.09);
-    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
-    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
-    cursor:pointer;
-    transition:transform .15s ease, background .15s ease;
-  }
-  .history-lock-btn:active{ transform:scale(.94); background:rgba(255,255,255,.15); }
-  .history-lock-btn[hidden]{ display:none; }
-  .history-lock-icon{ width:56px; height:56px; filter:drop-shadow(0 3px 8px rgba(0,0,0,.3)); }
-  .history-login-fields{
-    display:flex; flex-direction:column; gap:12px; width:100%;
-    animation:history-fields-in .3s ease both;
-  }
-  .history-login-fields[hidden]{ display:none; }
-  @keyframes history-fields-in{
-    from{ opacity:0; transform:translateY(6px); }
-    to{ opacity:1; transform:translateY(0); }
-  }
-  @media (prefers-reduced-motion: reduce){
-    .history-login-fields{ animation:none; }
-  }
   .history-list{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-bottom:4px; }
   .history-empty{ color:rgba(255,255,255,.55); font-size:13.5px; text-align:center; margin-top:40px; line-height:1.6; }
 
@@ -1094,6 +1073,32 @@
   }
   .modal-card h2{ margin:0 0 4px; font-size:19px; }
   .modal-card .sub{ margin:0 0 16px; font-size:13px; color:var(--ink-soft); }
+  /* Dark/glass variant of the frosted .modal-centered card, used only for
+     #historyLoginModal - a plain white card would clash with the gold/
+     silver padlock artwork, and this is explicitly a "security" moment
+     the rest of the app's white modals don't need to signal. */
+  /* Specificity has to beat .modal-centered .modal-card (0,2,0)'s own
+     background, or that pale frosted-white wins the cascade regardless of
+     source order - #historyLoginModal .modal-card (0,2,0) alone would tie
+     and lose to source order, so this pins it down explicitly. */
+  #historyLoginModal .modal-card{
+    background:rgba(12,26,46,.92);
+    border:1px solid rgba(255,255,255,.16);
+    text-align:center;
+  }
+  #historyLoginModal .modal-card h2{ color:#fff; }
+  #historyLoginModal .modal-card .sub{ color:rgba(255,255,255,.6); }
+  #historyLoginModal .info-popup-close{ background:rgba(255,255,255,.12); color:#fff; }
+  #historyLoginModal .info-popup-close:active{ background:rgba(255,255,255,.2); }
+  .history-login-card-icon{ width:56px; height:56px; margin:4px auto 10px; display:block; filter:drop-shadow(0 3px 8px rgba(0,0,0,.35)); }
+  #historyLoginFormFields{ display:flex; flex-direction:column; gap:12px; }
+  #historyLoginFormFields[hidden]{ display:none; }
+  .history-login-locked-note{
+    background:rgba(230,57,70,.14); border:1px solid rgba(230,57,70,.32);
+    border-radius:12px; padding:14px 16px;
+  }
+  .history-login-locked-note[hidden]{ display:none; }
+  .history-login-locked-note p{ margin:0; color:#ffc3c9; font-size:13.5px; line-height:1.5; }
   /* Shown only when this settings screen was reached by joining a code
      that turned out to have no players - a wrong/stale code (there's no
      server-side cleanup of old sessions, see leaveSession()) looks
@@ -1133,9 +1138,9 @@
     outline:none; border-color:var(--accent); background:#fff;
     box-shadow:0 0 0 3px rgba(255,138,61,.15);
   }
-  /* Same glass recipe as .history-lock-btn/.launcher-tile, not the pale
-     #fafbfc opponent-name-input above - these sit directly on the dark
-     .history-screen background, not inside a white modal card. */
+  /* Same glass recipe as .history-tile-badge/.launcher-tile, not the pale
+     #fafbfc opponent-name-input above - used on dark backgrounds (the
+     Historikk login popup, the dark .history-screen), not a white card. */
   .text-input{
     width:100%; border:1.5px solid rgba(255,255,255,.22); border-radius:12px;
     padding:14px 15px; font-size:16px; color:#fff;
@@ -1688,6 +1693,9 @@
      while .launcher-screen is still up (the match being discarded hasn't
      been replaced by a fresh one yet), so this needs to clear it too. */
   #saveHistoryModal{ z-index:310; }
+  /* Same reasoning again - opened directly from historyTile on the
+     launcher, before .history-screen (also 310) is ever reached. */
+  #historyLoginModal{ z-index:310; }
   /* Opened from inside .history-screen itself (z-index:310, same as
      .launcher-screen) - same reasoning as the two rules above, one level
      higher again since .history-screen is already at 310. Pre-existing bug

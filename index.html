@@ -16,6 +16,43 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<!-- Shared padlock artwork (defs + two <symbol>s) referenced everywhere a
+     lock icon is needed (see .lock-icon <use> below) - one copy, so the
+     glass/gold/silver gradients aren't duplicated (and their ids don't
+     collide) across the launcher badge, the login popup, and anywhere else. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lockShackleGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6f8fa"/>
+      <stop offset=".5" stop-color="#aab2bd"/>
+      <stop offset="1" stop-color="#eef1f4"/>
+    </linearGradient>
+    <linearGradient id="lockBodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff3b0"/>
+      <stop offset=".5" stop-color="#ffd93d"/>
+      <stop offset="1" stop-color="#f2b705"/>
+    </linearGradient>
+  </defs>
+  <symbol id="lockClosedSymbol" viewBox="0 0 64 64">
+    <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
+    <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
+    <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
+    <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
+    <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
+  </symbol>
+  <!-- Same closed shackle path, pivoted 55° around the point where its
+       RIGHT leg meets the body (44,29) - that leg stays exactly where the
+       closed version has it (still "plugged in"), and the rest of the loop
+       swings up and clear to the left, like a hook - the classic unlock
+       glyph, not a symmetric flip. -->
+  <symbol id="lockOpenSymbol" viewBox="0 0 64 64">
+    <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" transform="rotate(55 44 29)" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
+    <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
+    <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
+    <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
+    <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
+  </symbol>
+</svg>
 <div id="viewport-frame">
 <div id="app">
   <div id="launcherScreen" class="launcher-screen">
@@ -67,6 +104,10 @@
       </div>
     </div>
     <div class="history-tile" id="historyTile">
+      <div class="history-tile-badge" aria-hidden="true">
+        <svg class="lock-icon" id="historyBadgeLocked"><use href="#lockClosedSymbol"></use></svg>
+        <svg class="lock-icon" id="historyBadgeOpen" hidden><use href="#lockOpenSymbol"></use></svg>
+      </div>
       <div class="history-tile-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="12" cy="12" r="8.5" stroke="rgba(255,255,255,.75)" stroke-width="1.4"/>
@@ -120,54 +161,16 @@
     <div class="history-header">
       <p class="history-title">Historikk</p>
       <div class="history-header-actions">
-        <button type="button" id="historyLogoutBtn" class="history-select-mode-btn" hidden>Logg ut</button>
-        <button type="button" id="historySelectModeBtn" class="history-select-mode-btn" hidden>Velg flere</button>
+        <button type="button" id="historyLogoutBtn" class="history-select-mode-btn">Logg ut</button>
+        <button type="button" id="historySelectModeBtn" class="history-select-mode-btn">Velg flere</button>
       </div>
     </div>
-
-    <div id="historyLoginPanel" class="history-login-panel">
-      <button type="button" id="historyLockBtn" class="history-lock-btn" aria-label="Logg inn som admin">
-        <svg class="history-lock-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <defs>
-            <linearGradient id="lockShackleGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#f6f8fa"/>
-              <stop offset=".5" stop-color="#aab2bd"/>
-              <stop offset="1" stop-color="#eef1f4"/>
-            </linearGradient>
-            <linearGradient id="lockBodyGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#fff3b0" stop-opacity=".95"/>
-              <stop offset=".5" stop-color="#ffd93d" stop-opacity=".82"/>
-              <stop offset="1" stop-color="#f2b705" stop-opacity=".88"/>
-            </linearGradient>
-          </defs>
-          <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
-          <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
-          <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
-          <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
-          <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
-        </svg>
-      </button>
-      <p class="history-login-text" id="historyLoginHint">Kamphistorikken er kun synlig for admin. Trykk hengelåsen for å logge inn.</p>
-      <div id="historyLoginFields" class="history-login-fields" hidden>
-        <div class="field-invalid-wrap" id="historyLoginEmailWrap">
-          <input type="email" id="historyLoginEmail" class="text-input" placeholder="E-post" autocomplete="username">
-        </div>
-        <div class="field-invalid-wrap" id="historyLoginPasswordWrap">
-          <input type="password" id="historyLoginPassword" class="text-input" placeholder="Passord" autocomplete="current-password">
-        </div>
-        <p id="historyLoginError" class="join-code-error" style="display:none;">Feil e-post eller passord.</p>
-        <button type="button" id="historyLoginBtn" class="glass-choice-btn primary">Logg inn</button>
-      </div>
-    </div>
-
-    <div id="historyAuthedPanel" class="history-authed-panel" hidden>
-      <div id="historyList" class="history-list"></div>
-      <p id="historyEmpty" class="history-empty" hidden>Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".</p>
-      <div id="historySelectBar" class="history-select-bar" hidden>
-        <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
-        <span id="historySelectCount" class="history-select-count">0 valgt</span>
-        <button type="button" id="historyDeleteSelectedBtn" class="history-select-bar-btn danger" disabled>Slett valgte</button>
-      </div>
+    <div id="historyList" class="history-list"></div>
+    <p id="historyEmpty" class="history-empty" hidden>Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".</p>
+    <div id="historySelectBar" class="history-select-bar" hidden>
+      <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
+      <span id="historySelectCount" class="history-select-count">0 valgt</span>
+      <button type="button" id="historyDeleteSelectedBtn" class="history-select-bar-btn danger" disabled>Slett valgte</button>
     </div>
   </div>
 
@@ -178,6 +181,32 @@
       <div class="modal-actions">
         <button type="button" id="historyDeleteCancelBtn" class="secondary">Avbryt</button>
         <button type="button" id="historyDeleteConfirmBtn" class="primary">Slett</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shown by tapping "Historikk" on the launcher while logged out (see
+       historyTile's click handler) - gates entry into #historyScreen
+       itself, rather than living inside it, so the screen behind this
+       popup is always the authenticated view once reached. -->
+  <div id="historyLoginModal" class="modal modal-centered">
+    <div class="modal-card history-login-card">
+      <button type="button" id="historyLoginCloseBtn" class="info-popup-close" aria-label="Avbryt innlogging">×</button>
+      <svg class="lock-icon history-login-card-icon" id="historyLoginCardIcon"><use href="#lockClosedSymbol"></use></svg>
+      <h2>Logg inn</h2>
+      <p class="sub">Kamphistorikken er kun synlig for admin.</p>
+      <div id="historyLoginFormFields">
+        <div class="field-invalid-wrap" id="historyLoginEmailWrap">
+          <input type="email" id="historyLoginEmail" class="text-input" placeholder="E-post" autocomplete="username">
+        </div>
+        <div class="field-invalid-wrap" id="historyLoginPasswordWrap">
+          <input type="password" id="historyLoginPassword" class="text-input" placeholder="Passord" autocomplete="current-password">
+        </div>
+        <p id="historyLoginError" class="join-code-error" style="display:none;"></p>
+        <button type="button" id="historyLoginBtn" class="glass-choice-btn primary">Logg inn</button>
+      </div>
+      <div id="historyLoginLockedNote" class="history-login-locked-note" hidden>
+        <p id="historyLoginLockedText"></p>
       </div>
     </div>
   </div>

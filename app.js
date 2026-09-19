@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.10';
+  var APP_VERSION = '1.9.11';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.11', text: 'Innlogging til Historikk er nå en egen popup med lås-ikon og begrenset antall forsøk. Ny lås/åpen-badge på Historikk-fliken.' },
     { version: '1.9.10', text: 'Historikk er nå delt i skyen (ikke bare denne enheten) - alle kan lagre en kamp, men kun admin kan logge inn for å se eller slette.' },
     { version: '1.9.9', text: 'Spør nå om lagring til historikk ved Kampslutt/Avslutt/Ny økt, i stedet for en fast innstilling. Kun én "Er du sikker?"-knapp av gangen. Kampslutt/Avslutt omdøpt.' },
     { version: '1.9.8', text: 'Fikset at OK-knappen kunne flytte seg ved utfylling av spillernavn. Fjernet sirkelen rundt info-/×-symbolene. Oppdatert symbolforklaring og eksport.' },
@@ -789,13 +790,185 @@
   var adminUser = null;
   function isHistoryAdmin(){ return !!adminUser; }
 
+  // Always-visible lock/unlock badge on the launcher's Historikk tile (see
+  // .history-tile-badge) - not gated on the Historikk screen being open,
+  // unlike the list refresh below, so it reflects login state the moment
+  // the app loads (a returning admin's session restores on its own).
+  function renderHistoryBadge(){
+    // onAuthStateChange (registered below, at module load) fires with the
+    // restored session almost immediately - often before init() has run
+    // and populated els.* at all. Safe to no-op then: initCoinFlip() calls
+    // this again once els exists, by which point adminUser already holds
+    // whatever this early firing set it to.
+    if (!els.historyBadgeLocked) return;
+    var admin = isHistoryAdmin();
+    // Plain .hidden = ... silently no-ops here: these are <svg> elements
+    // (SVGSVGElement), which - unlike HTMLElement - has no "hidden" IDL
+    // property to reflect onto the attribute, so the assignment just sets
+    // an inert JS expando instead of ever touching the DOM. set/removeAttribute
+    // bypasses that and actually toggles the content attribute [hidden]
+    // selects on.
+    if (admin) els.historyBadgeLocked.setAttribute('hidden', ''); else els.historyBadgeLocked.removeAttribute('hidden');
+    if (admin) els.historyBadgeOpen.removeAttribute('hidden'); else els.historyBadgeOpen.setAttribute('hidden', '');
+  }
+
   if (sb){
     sb.auth.onAuthStateChange(function(_event, session){
+      var wasAdmin = isHistoryAdmin();
       adminUser = (session && session.user) || null;
-      // Only touch the Historikk screen's own UI, and only if it's actually
-      // open - this fires on every token refresh too, not just real
-      // sign-in/out, so it must stay a no-op the rest of the time.
-      if (els.historyScreen && els.historyScreen.classList.contains('open')) renderHistoryAuthUI();
+      renderHistoryBadge();
+      // A logout while the (admin-only) Historikk screen is open would
+      // otherwise leave it sitting open with no way to show its now-
+      // unauthorized list - there's no non-admin view left inside it to
+      // fall back to (see openHistoryLoginModal() - login now gates entry
+      // from the launcher instead of living inside this screen).
+      if (wasAdmin && !isHistoryAdmin() && els.historyScreen && els.historyScreen.classList.contains('open')){
+        els.historyScreen.classList.remove('open');
+      }
+    });
+  }
+
+  // ---------------- Historikk login lockout ----------------
+  // Client-side throttle only, not real brute-force protection - Supabase
+  // Auth already rate-limits sign-in attempts server-side regardless. This
+  // exists purely for the UX the coach asked for (a visible "wait 5
+  // minutes" instead of unlimited silent retries), stored locally so it
+  // survives closing/reopening the popup.
+  var HISTORY_LOGIN_LOCK_KEY = 'spillerbytte_history_login_lock_v1';
+  var HISTORY_LOGIN_MAX_ATTEMPTS = 3;
+  // First lockout is 5 minutes; every one after that is 1 hour (stage
+  // clamps at the last entry, so it never escalates past that).
+  var HISTORY_LOGIN_LOCK_DURATIONS_MS = [5 * 60 * 1000, 60 * 60 * 1000];
+
+  function loadHistoryLoginLock(){
+    try {
+      var raw = localStorage.getItem(HISTORY_LOGIN_LOCK_KEY);
+      var s = raw ? JSON.parse(raw) : null;
+      if (!s || typeof s !== 'object') return { fails: 0, stage: 0, lockUntil: 0 };
+      return { fails: s.fails || 0, stage: s.stage || 0, lockUntil: s.lockUntil || 0 };
+    } catch(e){ return { fails: 0, stage: 0, lockUntil: 0 }; }
+  }
+  /** @param {{fails: number, stage: number, lockUntil: number}} s */
+  function saveHistoryLoginLock(s){
+    try { localStorage.setItem(HISTORY_LOGIN_LOCK_KEY, JSON.stringify(s)); } catch(e){}
+  }
+  function historyLoginLockRemainingMs(){
+    var remaining = loadHistoryLoginLock().lockUntil - Date.now();
+    return remaining > 0 ? remaining : 0;
+  }
+  // @returns the lock state AFTER recording this failure, so the caller can
+  // read .fails (attempts used so far this cycle) without a second load.
+  function recordFailedHistoryLogin(){
+    var s = loadHistoryLoginLock();
+    s.fails += 1;
+    if (s.fails >= HISTORY_LOGIN_MAX_ATTEMPTS){
+      var idx = Math.min(s.stage, HISTORY_LOGIN_LOCK_DURATIONS_MS.length - 1);
+      s.lockUntil = Date.now() + HISTORY_LOGIN_LOCK_DURATIONS_MS[idx];
+      s.stage += 1;
+      s.fails = 0;
+    }
+    saveHistoryLoginLock(s);
+    return s;
+  }
+  function recordSuccessfulHistoryLogin(){
+    saveHistoryLoginLock({ fails: 0, stage: 0, lockUntil: 0 });
+  }
+  /** @param {number} ms @returns {string} */
+  function formatLockRemaining(ms){
+    var totalSec = Math.ceil(ms / 1000);
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    if (h > 0) return h + ' t ' + m + ' min';
+    if (m > 0) return m + ' min ' + s + ' sek';
+    return s + ' sek';
+  }
+
+  /** @type {ReturnType<typeof setInterval>|undefined} */
+  var historyLoginCountdownTimer;
+
+  function openHistoryLoginModal(){
+    els.historyLoginEmail.value = '';
+    els.historyLoginPassword.value = '';
+    els.historyLoginError.style.display = 'none';
+    clearFieldInvalid(els.historyLoginEmailWrap);
+    clearFieldInvalid(els.historyLoginPasswordWrap);
+    els.historyLoginModal.classList.add('open');
+    updateHistoryLoginLockUI();
+    if (!historyLoginLockRemainingMs()){
+      setTimeout(function(){ els.historyLoginEmail.focus(); }, 350);
+    }
+  }
+
+  function closeHistoryLoginModal(){
+    els.historyLoginModal.classList.remove('open');
+    clearInterval(historyLoginCountdownTimer);
+  }
+
+  // Toggles the form vs. the "prøv igjen om ..." note, and keeps that
+  // note's countdown ticking live for as long as the modal stays open.
+  function updateHistoryLoginLockUI(){
+    var remaining = historyLoginLockRemainingMs();
+    clearInterval(historyLoginCountdownTimer);
+    if (remaining <= 0){
+      els.historyLoginFormFields.hidden = false;
+      els.historyLoginLockedNote.hidden = true;
+      return;
+    }
+    els.historyLoginFormFields.hidden = true;
+    els.historyLoginLockedNote.hidden = false;
+    var tick = function(){
+      var left = historyLoginLockRemainingMs();
+      if (left <= 0){
+        clearInterval(historyLoginCountdownTimer);
+        updateHistoryLoginLockUI();
+        return;
+      }
+      els.historyLoginLockedText.textContent = 'For mange feilede forsøk. Prøv igjen om ' + formatLockRemaining(left) + '.';
+    };
+    tick();
+    historyLoginCountdownTimer = setInterval(tick, 1000);
+  }
+
+  function attemptHistoryLogin(){
+    if (historyLoginLockRemainingMs() > 0){ updateHistoryLoginLockUI(); return; }
+    var email = els.historyLoginEmail.value.trim();
+    var password = els.historyLoginPassword.value;
+    els.historyLoginError.style.display = 'none';
+    clearFieldInvalid(els.historyLoginEmailWrap);
+    clearFieldInvalid(els.historyLoginPasswordWrap);
+    if (!sb){
+      els.historyLoginError.textContent = 'Ingen tilkobling til databasen akkurat nå.';
+      els.historyLoginError.style.display = '';
+      return;
+    }
+    if (!email || !password){
+      if (!email) markFieldInvalid(els.historyLoginEmailWrap);
+      if (!password) markFieldInvalid(els.historyLoginPasswordWrap);
+      return;
+    }
+    els.historyLoginBtn.disabled = true;
+    sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
+      els.historyLoginBtn.disabled = false;
+      if (res.error){
+        var lock = recordFailedHistoryLogin();
+        shakeElement(els.historyLoginModal.querySelector('.modal-card'));
+        if (historyLoginLockRemainingMs() > 0){
+          updateHistoryLoginLockUI();
+        } else {
+          var left = HISTORY_LOGIN_MAX_ATTEMPTS - lock.fails;
+          els.historyLoginError.textContent = 'Feil e-post eller passord. ' + left + ' forsøk igjen.';
+          els.historyLoginError.style.display = '';
+          els.historyLoginPassword.value = '';
+          els.historyLoginPassword.focus();
+        }
+        return;
+      }
+      recordSuccessfulHistoryLogin();
+      closeHistoryLoginModal();
+      openHistoryScreen();
+      // adminUser/badge are already updated via onAuthStateChange, which
+      // fires synchronously off this same signInWithPassword call.
     });
   }
 
@@ -819,31 +992,6 @@
   var historyListCache = [];
   var historyListLoading = false;
 
-  // Toggles between the login form and the actual list, and kicks off a
-  // fetch whenever an admin session becomes available - the single place
-  // both openHistoryScreen() and the onAuthStateChange listener above route
-  // through, so login/logout/token-refresh and first open all stay in sync.
-  function renderHistoryAuthUI(){
-    var admin = isHistoryAdmin();
-    els.historyLoginPanel.hidden = admin;
-    els.historyAuthedPanel.hidden = !admin;
-    els.historyLogoutBtn.hidden = !admin;
-    els.historySelectModeBtn.hidden = !admin;
-    if (admin){
-      fetchAndRenderHistoryList();
-    } else {
-      // Back to "locked" - a logout, or simply opening Historikk fresh,
-      // should never land straight on an empty email/password prompt (see
-      // historyLockBtn's click handler for why that tap-to-reveal exists).
-      showHistoryLock();
-    }
-  }
-
-  function showHistoryLock(){
-    els.historyLockBtn.hidden = false;
-    els.historyLoginHint.hidden = false;
-    els.historyLoginFields.hidden = true;
-  }
 
   function fetchAndRenderHistoryList(){
     historyListLoading = true;
@@ -940,6 +1088,12 @@
     }
   }
 
+  // Only ever reached already authenticated - either historyTile's click
+  // handler found an existing admin session, or openHistoryLoginModal()
+  // just established one (see attemptHistoryLogin()). Login itself gates
+  // entry from the launcher now, so this screen has nothing to fall back
+  // to if it weren't - see the onAuthStateChange listener above, which
+  // closes it again on logout rather than leaving it stranded.
   function openHistoryScreen(){
     historySelectMode = false;
     historySelected = {};
@@ -947,8 +1101,7 @@
     historyDeleteArmedId = null;
     els.historySelectModeBtn.textContent = 'Velg flere';
     els.historySelectModeBtn.classList.remove('active');
-    els.historyLoginError.style.display = 'none';
-    renderHistoryAuthUI();
+    fetchAndRenderHistoryList();
     els.historyScreen.classList.add('open');
   }
 
@@ -2899,17 +3052,15 @@
     buildCoinColorGrid(els.coinAwayColorGrid, 'away');
     loadCoinFlipColors();
     refreshCoinColorGrids();
+    renderHistoryBadge(); // reflects whatever onAuthStateChange has restored by now, or the locked default before it fires
 
     els.coinTile.addEventListener('click', openCoinFlip);
     els.coinFlipCloseBtn.addEventListener('click', closeCoinFlip);
-    els.historyTile.addEventListener('click', openHistoryScreen);
-    els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
-    els.historyLockBtn.addEventListener('click', function(){
-      els.historyLockBtn.hidden = true;
-      els.historyLoginHint.hidden = true;
-      els.historyLoginFields.hidden = false;
-      setTimeout(function(){ els.historyLoginEmail.focus(); }, 50);
+    els.historyTile.addEventListener('click', function(){
+      if (isHistoryAdmin()) openHistoryScreen();
+      else openHistoryLoginModal();
     });
+    els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
     els.historySelectModeBtn.addEventListener('click', function(){
       historySelectMode = !historySelectMode;
       historySelected = {};
@@ -2956,41 +3107,18 @@
         renderHistoryList();
       });
     });
-    // Admin login - only an account listed in Supabase's admins table can
-    // actually read/delete match_history (enforced by row-level security,
-    // not this form) - a wrong password just comes back as a normal
-    // Supabase auth error, same as any other login form.
-    els.historyLoginBtn.addEventListener('click', function(){
-      var email = els.historyLoginEmail.value.trim();
-      var password = els.historyLoginPassword.value;
-      els.historyLoginError.style.display = 'none';
-      clearFieldInvalid(els.historyLoginEmailWrap);
-      clearFieldInvalid(els.historyLoginPasswordWrap);
-      if (!sb){
-        els.historyLoginError.textContent = 'Ingen tilkobling til databasen akkurat nå.';
-        els.historyLoginError.style.display = '';
-        return;
-      }
-      if (!email || !password){
-        if (!email) markFieldInvalid(els.historyLoginEmailWrap);
-        if (!password) markFieldInvalid(els.historyLoginPasswordWrap);
-        return;
-      }
-      els.historyLoginBtn.disabled = true;
-      sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
-        els.historyLoginBtn.disabled = false;
-        if (res.error){
-          els.historyLoginError.textContent = 'Feil e-post eller passord.';
-          els.historyLoginError.style.display = '';
-          return;
-        }
-        els.historyLoginPassword.value = '';
-        // adminUser is set via onAuthStateChange (fires synchronously off
-        // this same signInWithPassword call), which also re-renders.
-      });
-    });
+    // Admin login popup - only an account listed in Supabase's admins
+    // table can actually read/delete match_history (enforced by row-level
+    // security, not this form) - a wrong password just comes back as a
+    // normal Supabase auth error, same as any other login form.
+    els.historyLoginCloseBtn.addEventListener('click', closeHistoryLoginModal);
+    els.historyLoginBtn.addEventListener('click', attemptHistoryLogin);
+    var historyLoginEnterHandler = function(e){ if (e.key === 'Enter') attemptHistoryLogin(); };
+    els.historyLoginEmail.addEventListener('keydown', historyLoginEnterHandler);
+    els.historyLoginPassword.addEventListener('keydown', historyLoginEnterHandler);
     els.historyLogoutBtn.addEventListener('click', function(){
       if (sb) sb.auth.signOut();
+      // onAuthStateChange above closes historyScreen and flips the badge.
     });
     els.coinFlipStartBtn.addEventListener('click', startCoinFlip);
     els.coinFlipAgainBtn.addEventListener('click', function(){
@@ -3479,6 +3607,8 @@
     els.coinFlipAgainBtn = qs('coinFlipAgainBtn');
     els.coinFlipDoneBtn = qs('coinFlipDoneBtn');
     els.historyTile = qs('historyTile');
+    els.historyBadgeLocked = qs('historyBadgeLocked');
+    els.historyBadgeOpen = qs('historyBadgeOpen');
     els.historyScreen = qs('historyScreen');
     els.historyCloseBtn = qs('historyCloseBtn');
     els.historySelectModeBtn = qs('historySelectModeBtn');
@@ -3493,17 +3623,17 @@
     els.historyDeleteCancelBtn = qs('historyDeleteCancelBtn');
     els.historyDeleteConfirmBtn = qs('historyDeleteConfirmBtn');
     els.historyLogoutBtn = qs('historyLogoutBtn');
-    els.historyLoginPanel = qs('historyLoginPanel');
-    els.historyAuthedPanel = qs('historyAuthedPanel');
-    els.historyLockBtn = qs('historyLockBtn');
-    els.historyLoginHint = qs('historyLoginHint');
-    els.historyLoginFields = qs('historyLoginFields');
+    els.historyLoginModal = qs('historyLoginModal');
+    els.historyLoginCloseBtn = qs('historyLoginCloseBtn');
+    els.historyLoginFormFields = qs('historyLoginFormFields');
     els.historyLoginEmailWrap = qs('historyLoginEmailWrap');
     els.historyLoginEmail = qs('historyLoginEmail');
     els.historyLoginPasswordWrap = qs('historyLoginPasswordWrap');
     els.historyLoginPassword = qs('historyLoginPassword');
     els.historyLoginError = qs('historyLoginError');
     els.historyLoginBtn = qs('historyLoginBtn');
+    els.historyLoginLockedNote = qs('historyLoginLockedNote');
+    els.historyLoginLockedText = qs('historyLoginLockedText');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
