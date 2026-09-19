@@ -124,7 +124,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.3';
+  var APP_VERSION = '1.9.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -924,7 +924,10 @@
   function renderScore(){
     els.homeScoreBtn.textContent = String(teamGoalCount('home'));
     els.awayScoreBtn.textContent = String(teamGoalCount('away'));
-    if (els.awayTeamLabel) els.awayTeamLabel.textContent = state.opponentAbbr || '?';
+    if (els.awayTeamLabel){
+      els.awayTeamLabel.textContent = state.opponentAbbr || '?';
+      els.awayTeamLabel.classList.toggle('unset', !state.opponentAbbr);
+    }
   }
 
   // Best-effort 3-letter code from a full opponent name, for someone who
@@ -3290,6 +3293,14 @@
     els.awayTeamLabel.addEventListener('click', openOpponentModal);
     els.opponentSkipBtn.addEventListener('click', function(){ els.opponentModal.classList.remove('open'); });
     els.opponentSaveBtn.addEventListener('click', saveOpponent);
+    // Uppercase-as-you-type, same spirit as the scoreboard-code styling on
+    // this field - saveOpponent() would uppercase it anyway, this just
+    // shows the real result while typing instead of only after saving.
+    els.opponentAbbrInput.addEventListener('input', function(){
+      var pos = els.opponentAbbrInput.selectionStart;
+      els.opponentAbbrInput.value = els.opponentAbbrInput.value.toUpperCase();
+      try { els.opponentAbbrInput.setSelectionRange(pos, pos); } catch(e){}
+    });
     els.goalTimesCloseBtn.addEventListener('click', function(){ els.goalTimesModal.classList.remove('open'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
     initDurationPickerDrag();

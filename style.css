@@ -444,6 +444,19 @@
     white-space:nowrap;
   }
   .away-team-label:active{ opacity:.7; }
+  /* Extra visual invitation while no opponent has been set - a bare "?" in
+     11px translucent text (matching NØT's understated broadcast-graphic
+     look) turned out too easy to miss as something tappable. Once a real
+     code is set it drops back to that same quiet look (.away-team-label
+     alone, above) since at that point it's just information, not a
+     prompt. Toggled in renderScore(). */
+  .away-team-label.unset{
+    background:rgba(255,255,255,.14);
+    border:1px dashed rgba(255,255,255,.55);
+    border-radius:999px;
+    padding:2px 7px;
+    font-size:12px;
+  }
   #matchClock{
     background:linear-gradient(180deg,#222,#000);
     border:2px solid rgba(255,255,255,.22);
@@ -530,7 +543,29 @@
     cursor:pointer;
     transition:transform .12s ease, background .15s ease, color .15s ease;
   }
-  .bench-action-btn .btn-icon{ font-size:14px; line-height:1; }
+  /* Fixed-size box (not just font-size on the raw glyph) so .btn-badge
+     below has a predictable corner to anchor against - the arrow unicode
+     characters carry a lot of invisible side-bearing inside their own
+     character cell, which throws off any offset measured from the glyph's
+     text metrics instead of a real box. */
+  .bench-action-btn .btn-icon{
+    position:relative; display:inline-flex; align-items:center; justify-content:center;
+    width:17px; height:15px; font-size:14px; line-height:1;
+  }
+  /* "?" (Forslag) / "×2" (multiBytte) riding the icon's corner like a
+     notification badge - explains what the arrows mean without needing
+     the word label, which is exactly what's missing once landscape mode
+     hides it below. Sits mostly ABOVE the button's own pill/circle
+     background (not just above the glyph inside it) so it still reads
+     clearly at a glance rather than blending into the button. */
+  .btn-badge{
+    position:absolute; top:-15px; right:-8px;
+    display:flex; align-items:center; justify-content:center;
+    min-width:14px; height:14px; padding:0 3.5px;
+    font-size:9px; font-weight:800; line-height:1; color:#fff;
+    background:var(--navy); border:1.5px solid var(--bench-bg); border-radius:999px;
+    box-shadow:0 1px 2px rgba(15,31,54,.35);
+  }
   .bench-action-btn:active{ transform:scale(.94); }
   .bench-action-btn.shake{ animation:shake .4s; }
   /* Sits beside multiBytte, hidden (zero-width, not just transparent -
@@ -577,7 +612,11 @@
       justify-content:center;
     }
     .bench-action-btn .btn-label{ display:none; }
-    .bench-action-btn .btn-icon{ font-size:16px; }
+    .bench-action-btn .btn-icon{ width:19px; height:17px; font-size:16px; }
+    /* Kept nearly as large as the portrait badge (14px), not shrunk down -
+       this is the one place the badge has to carry the icon's meaning
+       entirely on its own, since .btn-label is hidden right above. */
+    .btn-badge{ top:-13px; right:-7px; min-width:13px; height:13px; font-size:8.5px; }
   }
   .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
   .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }
@@ -913,6 +952,30 @@
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
   }
+  /* #opponentModal's two fields - bigger and more considered than a bare
+     .name-row input (that class needed its .name-row parent for styling,
+     which these never had - the plain, unstyled browser input that left
+     them looking small/dated). */
+  .opponent-field-wrap{ margin-bottom:4px; }
+  .opponent-name-input, .opponent-abbr-input{
+    width:100%; border:1.5px solid #dde1e6; border-radius:12px;
+    padding:14px 15px; font-size:16px; color:var(--ink);
+    background:#fafbfc;
+    transition:border-color .15s ease, background .15s ease, box-shadow .15s ease;
+  }
+  .opponent-name-input:focus, .opponent-abbr-input:focus{
+    outline:none; border-color:var(--accent); background:#fff;
+    box-shadow:0 0 0 3px rgba(255,138,61,.15);
+  }
+  /* Styled like a little scoreboard code (echoes #matchClock's digital
+     look) rather than a plain text field, since that's exactly what it
+     becomes on the pitch - see .away-team-label. */
+  .opponent-abbr-input{
+    max-width:130px;
+    font-family:'SF Mono','Courier New',ui-monospace,monospace;
+    font-weight:800; font-size:20px; letter-spacing:.14em;
+    text-align:center; text-transform:uppercase;
+  }
   #nameRows{ display:flex; flex-direction:column; gap:8px; }
   .name-row{ display:flex; gap:8px; align-items:center; }
   /* The name list manages its own row count (see syncNameRows) - a new
@@ -1028,7 +1091,7 @@
     transition:background .12s ease;
   }
   .info-popup-close:active{ background:#e2e4e8; }
-  .settings-home-btn{ right:54px; font-size:15px; }
+  .settings-home-btn{ right:54px; font-size:19px; }
   #infoPopupText{ margin:0; }
   .duration-picker-card{ text-align:center; }
   .duration-picker-wheel{

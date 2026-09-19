@@ -138,11 +138,11 @@
         <div class="bench-label">Innbytterbenken</div>
         <div class="bench-actions">
           <button type="button" id="swapSuggestionBtn" class="bench-action-btn" aria-label="Bytteforslag">
-            <span class="btn-icon" aria-hidden="true">⇄</span><span class="btn-label">Forslag</span>
+            <span class="btn-icon" aria-hidden="true">⇄<span class="btn-badge">?</span></span><span class="btn-label">Forslag</span>
           </button>
           <div class="multi-select-group">
             <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="multiBytte">
-              <span class="btn-icon" aria-hidden="true">⇅</span><span class="btn-label" id="multiSelectBtnLabel">multiBytte</span>
+              <span class="btn-icon" aria-hidden="true">⇅<span class="btn-badge">×2</span></span><span class="btn-label" id="multiSelectBtnLabel">multiBytte</span>
             </button>
             <button type="button" id="multiSelectCancelBtn" class="multi-cancel-btn" aria-label="Avbryt multiBytte">×</button>
           </div>
@@ -400,12 +400,14 @@
 <div id="opponentModal" class="modal modal-centered">
   <div class="modal-card">
     <h2>Hvem spiller dere mot?</h2>
-    <p class="sub">Valgfritt - vises som "?" til du fyller det inn, og du kan alltid endre det senere ved å trykke på forkortelsen ved siden av bortelagets mål.</p>
-    <div class="name-input-wrap">
-      <input type="text" id="opponentNameInput" placeholder="Motstanderlag, f.eks. Sandefjord BK" autocomplete="off" maxlength="40">
+    <p class="sub">Valgfritt - vises som "?" til du fyller det inn. Trykk på forkortelsen ved siden av bortelagets mål for å endre senere.</p>
+    <label class="section-label" for="opponentNameInput">Motstanderlag</label>
+    <div class="opponent-field-wrap">
+      <input type="text" id="opponentNameInput" class="opponent-name-input" placeholder="F.eks. Sandefjord BK" autocomplete="off" maxlength="40">
     </div>
-    <div class="name-input-wrap">
-      <input type="text" id="opponentAbbrInput" placeholder="Forkortelse, f.eks. SBK" autocomplete="off" maxlength="3">
+    <label class="section-label" for="opponentAbbrInput">Forkortelse</label>
+    <div class="opponent-field-wrap">
+      <input type="text" id="opponentAbbrInput" class="opponent-abbr-input" placeholder="SBK" autocomplete="off" maxlength="3">
     </div>
     <div class="modal-actions">
       <button type="button" id="opponentSkipBtn" class="secondary">Hopp over</button>
