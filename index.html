@@ -126,6 +126,7 @@
           <div id="matchCountdown">0:00</div>
         </div>
         <button type="button" id="awayScoreBtn" class="score-btn" aria-label="Legg til mål for bortelaget">0</button>
+        <button type="button" id="awayTeamLabel" class="away-team-label" aria-label="Angi motstanderlag">?</button>
       </div>
       <div id="field"></div>
       <div id="selectionInfo"></div>
@@ -231,7 +232,10 @@
       <p id="transferOwnerNote" class="locked-note"></p>
     </div>
 
-    <button type="button" id="closeSessionBtn" class="export-link-btn" hidden>🚪 Lukk Trenerappen (denne enheten)</button>
+    <div class="close-session-row" id="closeSessionRow" hidden>
+      <button type="button" id="closeSessionBtn" class="export-link-btn">🚪 Lukk Trenerappen</button>
+      <button type="button" class="info-btn" data-info="closeSession" aria-label="Om Lukk Trenerappen">i</button>
+    </div>
 
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
     <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
@@ -283,6 +287,7 @@
   <div class="modal-card">
     <h2>Avslutte?</h2>
     <p class="sub">Kampslutt avslutter perioden men beholder laget og de kumulerte tallene. Avslutt og nullstill starter helt på nytt.</p>
+    <div id="matchHistorySummary" class="match-history-summary"></div>
     <div id="endMatchSummary" class="end-match-summary"></div>
     <div class="modal-actions modal-actions-col">
       <button type="button" id="endPeriodBtn" class="stack-btn period">Kampslutt</button>
@@ -389,6 +394,35 @@
     <button type="button" id="infoPopupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2 id="infoPopupTitle"></h2>
     <p id="infoPopupText" class="sub"></p>
+  </div>
+</div>
+
+<div id="opponentModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Hvem spiller dere mot?</h2>
+    <p class="sub">Valgfritt - vises som "?" til du fyller det inn, og du kan alltid endre det senere ved å trykke på forkortelsen ved siden av bortelagets mål.</p>
+    <div class="name-input-wrap">
+      <input type="text" id="opponentNameInput" placeholder="Motstanderlag, f.eks. Sandefjord BK" autocomplete="off" maxlength="40">
+    </div>
+    <div class="name-input-wrap">
+      <input type="text" id="opponentAbbrInput" placeholder="Forkortelse, f.eks. SBK" autocomplete="off" maxlength="3">
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="opponentSkipBtn" class="secondary">Hopp over</button>
+      <button type="button" id="opponentSaveBtn" class="primary">Lagre</button>
+    </div>
+  </div>
+</div>
+
+<div id="idleSuggestModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Har du glemt kampen?</h2>
+    <p class="sub" id="idleSuggestText"></p>
+    <div class="modal-actions modal-actions-col">
+      <button type="button" id="idleSuggestConfirmBtn" class="stack-btn period"></button>
+      <button type="button" id="idleSuggestCancelBtn" class="stack-btn secondary">Nei, fortsett</button>
+      <button type="button" id="idleSuggestSnoozeBtn" class="stack-btn secondary">Ikke spør igjen på en stund</button>
+    </div>
   </div>
 </div>
 

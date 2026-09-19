@@ -38,6 +38,15 @@
    * @property {string} deviceId
    * @property {number} joinedAt
    *
+   * @typedef {Object} MatchHistoryEntry
+   * @property {string} id
+   * @property {string} opponentName
+   * @property {string} opponentAbbr
+   * @property {number} homeScore
+   * @property {number} awayScore
+   * @property {number} endedAt
+   * @property {Object<string, number>} playerMs
+   *
    * @typedef {Object} AppState
    * @property {Player[]} players
    * @property {string[]} onField
@@ -57,6 +66,10 @@
    * @property {string|null} sessionOwnerDeviceId
    * @property {Participant[]} participants
    * @property {GoalEntry[]} goalLog
+   * @property {number} lastActivityAt
+   * @property {string} opponentName
+   * @property {string} opponentAbbr
+   * @property {MatchHistoryEntry[]} matchHistory
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -91,6 +104,22 @@
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
   var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
+  // Thresholds for checkLongIdleSuggestion() below - based on state.lastActivityAt
+  // (synced, stamped on every real mutation - see saveState()), not the local
+  // heartbeat above, so a device that was simply closed for a while doesn't
+  // suggest ending/resetting a match someone else kept playing in the meantime.
+  var IDLE_END_PERIOD_SUGGEST_MS = 60 * 60 * 1000; // 1t uten hendelser -> foreslå Kampslutt
+  // 30t (ikke 24t) - en cupdag kan ha flere kamper med mange timer, eller
+  // til og med til neste dag, mellom hver: "Kampslutt" i seg selv teller
+  // som aktivitet (stempler lastActivityAt), så denne terskelen bare
+  // beskytter mot at en økt glemt i ukesvis ligger og venter forgjeves.
+  var IDLE_RESET_SUGGEST_MS = 30 * 60 * 60 * 1000; // 30t uten hendelser -> foreslå nullstilling
+  // "Ikke spør igjen på en stund" (see idleSuggestSnoozeBtn) - deliberately
+  // local-only (localStorage, not synced state): a per-device "I heard you,
+  // stop asking" preference, same as LAST_ALIVE_KEY above, not something
+  // that should propagate to other devices in a shared session.
+  var IDLE_SUGGEST_SNOOZE_MS = 24 * 60 * 60 * 1000;
+  var IDLE_SUGGEST_SNOOZE_KEY_PREFIX = 'spillerbytte_idle_snooze_';
 
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
@@ -179,6 +208,10 @@
     rankCumulative: {
       title: 'Kumulert tidsberegning',
       text: 'AV: Trekantene som viser mest/minst spilletid tar kun hensyn til inneværende kamp. PÅ: trekantene tar hensyn til kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
+    },
+    closeSession: {
+      title: 'Lukk Trenerappen',
+      text: 'Forlater den delte økten på denne enheten - kampen selv rører ingenting. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
     }
   };
   var resetConfirmArmed = false; // "Avslutt og nullstill" needs a second press to confirm
@@ -222,7 +255,11 @@
       shareEditable: true,
       sessionOwnerDeviceId: null,
       participants: [],
-      goalLog: []
+      goalLog: [],
+      lastActivityAt: Date.now(),
+      opponentName: '',
+      opponentAbbr: '',
+      matchHistory: []
     };
   }
 
@@ -253,6 +290,10 @@
     if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
     if (!Array.isArray(raw.participants)) raw.participants = [];
     if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
+    if (typeof raw.lastActivityAt !== 'number') raw.lastActivityAt = Date.now();
+    if (typeof raw.opponentName !== 'string') raw.opponentName = '';
+    if (typeof raw.opponentAbbr !== 'string') raw.opponentAbbr = '';
+    if (!Array.isArray(raw.matchHistory)) raw.matchHistory = [];
     return raw;
   }
 
@@ -288,6 +329,24 @@
   }
 
   function saveState(){
+    // Stamped here (not in saveStateLocally, which the 8s heartbeat also
+    // calls on its own) so this only reflects real mutations - swaps,
+    // goals, settings changes, period ends - not just "the app happened to
+    // be open". Synced like the rest of state, so checkLongIdleSuggestion
+    // below can tell whether ANY device did something recently, not just
+    // this one - important in a shared session, where this device being
+    // closed for weeks says nothing about whether someone else kept using it.
+    state.lastActivityAt = Date.now();
+    saveStateLocally();
+    pushRemoteState();
+  }
+
+  // Same as saveState() but without touching lastActivityAt - for flushing
+  // already-current state (e.g. right before the tab backgrounds) without
+  // that flush itself counting as "activity". Backgrounding happens every
+  // time the screen locks, so if this stamped lastActivityAt too, the idle
+  // clock checkLongIdleSuggestion() relies on would never actually advance.
+  function flushState(){
     saveStateLocally();
     pushRemoteState();
   }
@@ -713,7 +772,11 @@
       shareEditable: !!state.shareEditable,
       sessionOwnerDeviceId: state.sessionOwnerDeviceId,
       participants: cloneStateValue(state.participants || []),
-      goalLog: cloneStateValue(state.goalLog || [])
+      goalLog: cloneStateValue(state.goalLog || []),
+      lastActivityAt: state.lastActivityAt,
+      opponentName: state.opponentName || '',
+      opponentAbbr: state.opponentAbbr || '',
+      matchHistory: cloneStateValue(state.matchHistory || [])
     };
   }
 
@@ -738,6 +801,10 @@
     state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
     state.participants = cloneStateValue(snap.participants || state.participants || []);
     state.goalLog = cloneStateValue(snap.goalLog || []);
+    state.lastActivityAt = typeof snap.lastActivityAt === 'number' ? snap.lastActivityAt : state.lastActivityAt;
+    state.opponentName = snap.opponentName !== undefined ? snap.opponentName : state.opponentName;
+    state.opponentAbbr = snap.opponentAbbr !== undefined ? snap.opponentAbbr : state.opponentAbbr;
+    state.matchHistory = cloneStateValue(snap.matchHistory || state.matchHistory || []);
   }
 
   // Call BEFORE mutating state for any undoable action - pushes the
@@ -857,6 +924,46 @@
   function renderScore(){
     els.homeScoreBtn.textContent = String(teamGoalCount('home'));
     els.awayScoreBtn.textContent = String(teamGoalCount('away'));
+    if (els.awayTeamLabel) els.awayTeamLabel.textContent = state.opponentAbbr || '?';
+  }
+
+  // Best-effort 3-letter code from a full opponent name, for someone who
+  // typed the name but skipped the abbreviation field - first letter of up
+  // to the first 3 words (e.g. "Sandefjord BK" -> "SB", "Nøtterøy 2" ->
+  // "N2"), falling back to the first 3 letters of one long word.
+  /** @param {string} name @returns {string} */
+  function deriveAbbrFromName(name){
+    var words = name.trim().split(/\s+/).filter(Boolean);
+    if (words.length > 1){
+      return words.slice(0, 3).map(function(w){ return w[0]; }).join('').toUpperCase();
+    }
+    return (words[0] || '').slice(0, 3).toUpperCase();
+  }
+
+  // "Lurt sted" for the opponent prompt: called right as a genuinely new,
+  // not-yet-started match begins - after the very first roster save (see
+  // saveSettings) and after every "Kampslutt" (see endMatchPeriod's call
+  // sites below), since a cup day is several matches, likely against
+  // different opponents, back to back. Also reachable any time by tapping
+  // the "?"/abbreviation on the scoreboard itself, so a wrong automatic
+  // guess about *when* to ask is never more than one tap to fix.
+  function openOpponentModal(){
+    if (!canEdit()) return;
+    els.opponentNameInput.value = state.opponentName || '';
+    els.opponentAbbrInput.value = state.opponentAbbr || '';
+    els.opponentModal.classList.add('open');
+    setTimeout(function(){ els.opponentNameInput.focus(); }, 50);
+  }
+
+  function saveOpponent(){
+    var name = els.opponentNameInput.value.trim();
+    var abbr = els.opponentAbbrInput.value.trim().toUpperCase();
+    if (!abbr && name) abbr = deriveAbbrFromName(name);
+    state.opponentName = name;
+    state.opponentAbbr = abbr;
+    saveState();
+    els.opponentModal.classList.remove('open');
+    renderScore();
   }
 
   /** @param {'home'|'away'} team */
@@ -905,6 +1012,12 @@
   // above togglePlayPause) - both just mutate `state` before saving, so the
   // generic snapshot-based undo stack covers this for free.
   var GOAL_CONFIRM_WINDOW_MS = 30000;
+  // A goal on a player who JUST got subbed off (≤15s ago) is almost always
+  // the normal "scored, then subbed, then registered the goal" order done
+  // in the other sequence - not worth a warning. Past that, it's more
+  // likely to be a mis-tap (wrong player) or a goal attributed after the
+  // fact to someone no longer even in play, so it's worth a confirm.
+  var BENCH_GOAL_WARNING_MS = 15000;
   /** @type {'home'|'away'|null} */
   var pendingGoalTeam = null;
   /** @type {string|null} */
@@ -919,17 +1032,36 @@
     renderAll();
   }
 
-  // Away goals stay anonymous (see onHomePlayerPicked for the home flow,
-  // gated by the same shared-state 30s duplicate window - keyed on the
-  // synced goalLog, not a local timer, so it also catches a second device
-  // registering the same goal).
+  // Returns the confirm-dialog text to show before actually registering a
+  // goal, or null if it can go straight through. Two independent reasons to
+  // ask first - registered right after another goal for the same team
+  // (probably a duplicate tap), or attributed to a player currently on the
+  // bench (probably the wrong player, or a goal logged well after the sub)
+  // - combined into one message when both apply, rather than stacking two
+  // separate confirms back to back.
+  /** @param {'home'|'away'} team @param {string|null} playerId @param {number} now @returns {string|null} */
+  function goalConfirmMessage(team, playerId, now){
+    var last = lastGoalEntry(team);
+    var duplicate = !!(last && (now - last.at) < GOAL_CONFIRM_WINDOW_MS);
+    var onBench = !!(playerId && state.onBench.indexOf(playerId) !== -1 && benchElapsed(playerId, now) > BENCH_GOAL_WARNING_MS);
+    if (duplicate && onBench) return 'Mål registrert på en innbytter, kort tid etter forrige mål. Korrekt?';
+    if (onBench) return 'Mål registrert på innbytter. Korrekt?';
+    if (duplicate) return 'Et mål ble nettopp registrert. Er du sikker?';
+    return null;
+  }
+
+  // Away goals stay anonymous (see onHomePlayerPicked for the home flow),
+  // so only the duplicate-goal check applies here - gated by the same
+  // shared-state 30s window, keyed on the synced goalLog rather than a
+  // local timer, so it also catches a second device registering the same
+  // goal.
   function onAwayScoreTap(){
     if (!canEdit()) return;
-    var last = lastGoalEntry('away');
-    var recent = last && (Date.now() - last.at) < GOAL_CONFIRM_WINDOW_MS;
-    if (recent){
+    var msg = goalConfirmMessage('away', null, Date.now());
+    if (msg){
       pendingGoalTeam = 'away';
       pendingGoalPlayerId = null;
+      els.goalConfirmText.textContent = msg;
       els.goalConfirmModal.classList.add('open');
       return;
     }
@@ -938,11 +1070,11 @@
 
   /** @param {string} playerId */
   function onHomePlayerPicked(playerId){
-    var last = lastGoalEntry('home');
-    var recent = last && (Date.now() - last.at) < GOAL_CONFIRM_WINDOW_MS;
-    if (recent){
+    var msg = goalConfirmMessage('home', playerId, Date.now());
+    if (msg){
       pendingGoalTeam = 'home';
       pendingGoalPlayerId = playerId;
+      els.goalConfirmText.textContent = msg;
       els.goalConfirmModal.classList.add('open');
       return;
     }
@@ -1814,9 +1946,28 @@
     var last = Number(localStorage.getItem(LAST_ALIVE_KEY)) || Date.now();
     var gap = Date.now() - last;
     if (gap > IDLE_AUTO_PAUSE_MS){
+      // This device's own heartbeat looks stale - but in a shared session
+      // that only proves THIS device was closed, not that the match sat
+      // idle: state.lastActivityAt is synced from whichever device last
+      // made a real edit (see saveState()), so if it's still fresh, someone
+      // else has clearly kept the match going while this device was away.
+      // Freezing/pushing a "paused 3 hours ago" correction on top of a
+      // match that's actually still live on another screen would wipe out
+      // real, current playtime for everyone - so trust the synced state
+      // as-is instead of touching it.
+      var activityGap = Date.now() - (state.lastActivityAt || 0);
+      if (activityGap <= IDLE_AUTO_PAUSE_MS) return;
       freezeTimersAt(last);
       state.globalRunning = false;
-      saveState();
+      // flushState(), not saveState() - this is a system correction, not a
+      // real action by anyone, and checkLongIdleSuggestion() runs right
+      // after this at both call sites (see finishStartup()) and needs the
+      // TRUE old lastActivityAt gap to still be there. If this stamped it
+      // to now, a match left running and forgotten for weeks would auto-
+      // pause here and then never trigger the Kampslutt/nullstill prompts,
+      // since the very act of auto-pausing would have just "reset the
+      // clock" on its own idle check.
+      flushState();
       updatePlayPauseUI();
       updateTimersOnly();
       showAutoPauseNotice();
@@ -1831,6 +1982,68 @@
     autoPauseNoticeTimer = setTimeout(function(){
       els.autoPauseNotice.classList.remove('show');
     }, 4000);
+  }
+
+  // A quieter cousin of checkIdleAutoPause() above: that one silently
+  // freezes a still-"running" clock so idle time isn't credited as
+  // playtime. This one asks a real person before doing anything more -
+  // ending the current period, or wiping the match entirely - since
+  // either is disruptive enough (and hard to fully undo once real play
+  // has piled on top) that it shouldn't happen without a tap, even when
+  // the signal is strong. Keyed on state.lastActivityAt (synced, stamped
+  // on every real mutation - see saveState()) rather than the local-only
+  // heartbeat above, so a device that was simply closed for a while never
+  // suggests ending/resetting a match someone else kept playing on
+  // another device in the meantime - by the time this runs (called from
+  // finishStartup(), after any remote fetch has resolved), `state`
+  // already reflects the latest activity from every device, not just
+  // this one.
+  /** @param {'endPeriod'|'reset'} kind @returns {boolean} */
+  function isIdleSuggestSnoozed(kind){
+    try {
+      var t = Number(localStorage.getItem(IDLE_SUGGEST_SNOOZE_KEY_PREFIX + kind));
+      return !!t && (Date.now() - t) < IDLE_SUGGEST_SNOOZE_MS;
+    } catch(e){ return false; }
+  }
+  /** @param {'endPeriod'|'reset'} kind */
+  function snoozeIdleSuggest(kind){
+    try { localStorage.setItem(IDLE_SUGGEST_SNOOZE_KEY_PREFIX + kind, String(Date.now())); } catch(e){}
+  }
+
+  var idleSuggestShown = false; // once per page load - reopening the app re-stamps lastActivityAt anyway
+  function checkLongIdleSuggestion(){
+    if (idleSuggestShown) return;
+    if (!canEdit()) return; // nothing a read-only viewer could act on anyway
+    if (state.players.length === 0) return; // nothing to end/reset yet
+    var gap = Date.now() - (state.lastActivityAt || 0);
+    if (gap > IDLE_RESET_SUGGEST_MS){
+      if (!isMaster()) return; // only the owner can actually reset a shared session
+      if (isIdleSuggestSnoozed('reset')) return;
+      idleSuggestShown = true;
+      openIdleSuggestModal('reset');
+      return;
+    }
+    var hasElapsedTime = state.globalRunning || matchClockElapsed(Date.now()) > 0;
+    if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime){
+      if (isIdleSuggestSnoozed('endPeriod')) return;
+      idleSuggestShown = true;
+      openIdleSuggestModal('endPeriod');
+    }
+  }
+
+  /** @type {'endPeriod'|'reset'|null} */
+  var idleSuggestKind = null;
+  /** @param {'endPeriod'|'reset'} kind */
+  function openIdleSuggestModal(kind){
+    idleSuggestKind = kind;
+    if (kind === 'reset'){
+      els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over 30 timer. Vil du nullstille kampen?';
+      els.idleSuggestConfirmBtn.textContent = 'Nullstill';
+    } else {
+      els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over en time. Vil du avslutte perioden (Kampslutt)?';
+      els.idleSuggestConfirmBtn.textContent = 'Kampslutt';
+    }
+    els.idleSuggestModal.classList.add('open');
   }
 
   // Read-only counterpart to the "joined empty" note inside settings (see
@@ -2018,7 +2231,6 @@
   /** @param {boolean} [isFirstRun] @param {boolean} [joinedEmpty] */
   function openSettings(isFirstRun, joinedEmpty){
     var master = isMaster();
-    var slaveInSession = !master && !!sessionCode;
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.settingsCloseBtn.style.display = isFirstRun ? 'none' : '';
@@ -2053,17 +2265,23 @@
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
     els.fieldSizeInput.disabled = !isFirstRun || !master;
     els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
-    els.joinExistingBtn.textContent = slaveInSession ? '↩ Gå ut av delt økt' : '🔗 Bli med i delt økt';
+    // "Bli med i delt økt" only makes sense when this device isn't already
+    // in a session - once it is, leaving/closing is "Lukk Trenerappen"
+    // below, not a re-labelled join button (that used to say "Gå ut av
+    // delt økt", which read like it led to starting/continuing something,
+    // not just closing the app).
+    els.joinExistingBtn.hidden = !!sessionCode;
 
     disarmTransferOwnerConfirm();
     var transferTarget = master ? longestTenuredOtherParticipant() : null;
     els.transferOwnerRow.hidden = !transferTarget;
     if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
-    // "Lukk Trenerappen" only makes sense for the owner of an actually
-    // shared session - a non-shared session already closes via the normal
-    // "Avslutt og nullstill" path, and a non-owner already has "Gå ut av
-    // delt økt" for the same "I'm done on this device" need.
-    els.closeSessionBtn.hidden = !(master && sessionCode);
+    // Available to EVERYONE in a shared session, not just the owner - a
+    // participant who just wants to stop using the app on this device
+    // shouldn't have to reason about "Gå ut av delt økt" possibly implying
+    // they want to join/start something else. The consequence text (set on
+    // click, below) is what actually differs by role.
+    els.closeSessionRow.hidden = !sessionCode;
   }
 
   /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
@@ -2388,6 +2606,7 @@
       els.settingsModal.classList.remove('open');
       return;
     }
+    var wasEmpty = state.players.length === 0; // see the openOpponentModal() call below
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     var newPlayers = [];
     var keptIds = {};
@@ -2444,6 +2663,11 @@
     saveState();
     els.settingsModal.classList.remove('open');
     renderAll();
+    // Roster just went from nothing to a real team - "rett før man kommer
+    // inn i kampen, før jeg flytter spillere inn på banen" is exactly this
+    // moment, so this is where the (skippable) opponent prompt belongs, not
+    // tucked away in settings itself.
+    if (wasEmpty) openOpponentModal();
   }
 
   function buildExportText(){
@@ -2519,10 +2743,77 @@
     });
   }
 
+  // "Hvilke motstandere har vi spilt mot, og hva ble stillingen" (see
+  // state.matchHistory, archived in endMatchPeriod) - most recent match
+  // first, each with its own players-by-playtime breakdown so a cup day's
+  // several matches stay readable separately, distinct from the running
+  // cross-match totals in .end-match-summary below this in the same modal.
+  // A player who has since been removed from the roster still shows (by
+  // whatever name they had then) rather than silently vanishing from a
+  // match they actually played in.
+  function renderMatchHistorySummary(){
+    if (!els.matchHistorySummary) return;
+    var history = state.matchHistory || [];
+    if (history.length === 0){
+      els.matchHistorySummary.innerHTML = '';
+      return;
+    }
+    var nameById = {};
+    state.players.forEach(function(p){ nameById[p.id] = p.name; });
+    var entries = history.slice().reverse();
+    els.matchHistorySummary.innerHTML = entries.map(function(m){
+      var opponent = m.opponentName || (m.opponentAbbr ? m.opponentAbbr : 'Ukjent motstander');
+      var playerRows = Object.keys(m.playerMs || {})
+        .map(function(id){ return { id: id, name: nameById[id] || '(fjernet spiller)', ms: m.playerMs[id] }; })
+        .sort(function(a,b){ return b.ms - a.ms; })
+        .map(function(r){
+          return '<div class="mh-player-row">' +
+            '<span class="mh-player-name">' + escapeHtml(r.name) + '</span>' +
+            '<span class="mh-player-time">' + formatCumulative(r.ms) + '</span>' +
+          '</div>';
+        }).join('');
+      return '<div class="mh-match">' +
+        '<div class="mh-header">' +
+          '<span>vs ' + escapeHtml(opponent) + '</span>' +
+          '<span class="mh-score">' + m.homeScore + ' - ' + m.awayScore + '</span>' +
+        '</div>' +
+        '<div class="mh-players">' + playerRows + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
   function endMatchPeriod(reorganize){
     var now = Date.now();
     state.onField.forEach(function(id){ commitFieldStint(id, now); });
     state.onBench.forEach(function(id){ commitBenchStint(id, now); });
+
+    // Archive this match before wiping its scoreboard - "Kampslutt" means
+    // exactly that (a cup day is several separate matches back to back, not
+    // halves of one match), so the goal tally must NOT carry over into the
+    // next match either (see goalLog reset below - this used to be a bug:
+    // goals kept accumulating across what the coach clearly meant as
+    // separate matches). playerMs is read now, before periodStartCumulative
+    // moves its baseline forward below, so it's each player's time in THIS
+    // match specifically, not the running lifetime total.
+    var playerMs = {};
+    state.players.forEach(function(p){ playerMs[p.id] = currentPeriodFieldMs(p.id, now); });
+    if (!Array.isArray(state.matchHistory)) state.matchHistory = [];
+    state.matchHistory.push({
+      id: uid(),
+      opponentName: state.opponentName || '',
+      opponentAbbr: state.opponentAbbr || '',
+      homeScore: state.goalLog.filter(function(g){ return g.team === 'home'; }).length,
+      awayScore: state.goalLog.filter(function(g){ return g.team === 'away'; }).length,
+      endedAt: now,
+      playerMs: playerMs
+    });
+    state.goalLog = [];
+    // Next match likely means a next opponent (cup format) - clearing this
+    // brings the "?" back on the scoreboard and re-arms the opponent prompt
+    // (see openOpponentModal's call sites) rather than silently keeping the
+    // just-finished opponent's name on the new match.
+    state.opponentName = '';
+    state.opponentAbbr = '';
 
     if (reorganize){
       var all = state.players.map(function(p){
@@ -2686,6 +2977,7 @@
     els.transferOwnerRow = qs('transferOwnerRow');
     els.transferOwnerBtn = qs('transferOwnerBtn');
     els.transferOwnerNote = qs('transferOwnerNote');
+    els.closeSessionRow = qs('closeSessionRow');
     els.closeSessionBtn = qs('closeSessionBtn');
     els.closeSessionConfirmModal = qs('closeSessionConfirmModal');
     els.closeSessionConfirmText = qs('closeSessionConfirmText');
@@ -2706,6 +2998,7 @@
     els.settingsCloseCancelBtn = qs('settingsCloseCancelBtn');
     els.endMatchModal = qs('endMatchModal');
     els.endMatchSummary = qs('endMatchSummary');
+    els.matchHistorySummary = qs('matchHistorySummary');
     els.endMatchCancelBtn = qs('endMatchCancelBtn');
     els.endPeriodBtn = qs('endPeriodBtn');
     els.endResetBtn = qs('endResetBtn');
@@ -2720,7 +3013,14 @@
     els.matchCountdown = qs('matchCountdown');
     els.homeScoreBtn = qs('homeScoreBtn');
     els.awayScoreBtn = qs('awayScoreBtn');
+    els.awayTeamLabel = qs('awayTeamLabel');
+    els.opponentModal = qs('opponentModal');
+    els.opponentNameInput = qs('opponentNameInput');
+    els.opponentAbbrInput = qs('opponentAbbrInput');
+    els.opponentSkipBtn = qs('opponentSkipBtn');
+    els.opponentSaveBtn = qs('opponentSaveBtn');
     els.goalConfirmModal = qs('goalConfirmModal');
+    els.goalConfirmText = qs('goalConfirmText');
     els.goalConfirmNoBtn = qs('goalConfirmNoBtn');
     els.goalConfirmYesBtn = qs('goalConfirmYesBtn');
     els.goalListBtn = qs('goalListBtn');
@@ -2755,6 +3055,11 @@
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.autoPauseNotice = qs('autoPauseNotice');
+    els.idleSuggestModal = qs('idleSuggestModal');
+    els.idleSuggestText = qs('idleSuggestText');
+    els.idleSuggestCancelBtn = qs('idleSuggestCancelBtn');
+    els.idleSuggestConfirmBtn = qs('idleSuggestConfirmBtn');
+    els.idleSuggestSnoozeBtn = qs('idleSuggestSnoozeBtn');
     els.joinedEmptyReadOnlyNotice = qs('joinedEmptyReadOnlyNotice');
     els.ownerTransferredNotice = qs('ownerTransferredNotice');
     els.shareSessionToggle = qs('shareSessionToggle');
@@ -2869,6 +3174,7 @@
       if (!canEdit()) return;
       disarmResetConfirm();
       renderEndMatchSummary();
+      renderMatchHistorySummary();
       // "Avslutt og nullstill" wipes the whole match for every connected
       // device at once - master-only, same as the other session-wide
       // administration in settings. "Kampslutt" (next period) stays
@@ -2889,10 +3195,30 @@
       els.reorgPromptModal.classList.remove('open');
       endMatchPeriod(false);
       renderAll();
+      openOpponentModal(); // next match, likely a different opponent (cup format) - see endMatchPeriod
     });
     els.reorgYesBtn.addEventListener('click', function(){
       els.reorgPromptModal.classList.remove('open');
-      animateReorganization(function(){ endMatchPeriod(true); });
+      animateReorganization(function(){
+        endMatchPeriod(true);
+        openOpponentModal();
+      });
+    });
+    els.idleSuggestCancelBtn.addEventListener('click', function(){
+      els.idleSuggestModal.classList.remove('open');
+      idleSuggestKind = null;
+    });
+    els.idleSuggestSnoozeBtn.addEventListener('click', function(){
+      els.idleSuggestModal.classList.remove('open');
+      if (idleSuggestKind) snoozeIdleSuggest(idleSuggestKind);
+      idleSuggestKind = null;
+    });
+    els.idleSuggestConfirmBtn.addEventListener('click', function(){
+      els.idleSuggestModal.classList.remove('open');
+      var kind = idleSuggestKind;
+      idleSuggestKind = null;
+      if (kind === 'reset') resetMatch();
+      else if (kind === 'endPeriod'){ endMatchPeriod(false); renderAll(); }
     });
     els.endResetBtn.addEventListener('click', function(){
       if (!isMaster()) return;
@@ -2961,6 +3287,9 @@
       removeLastGoalOverall('home');
     });
     els.goalListBtn.addEventListener('click', function(){ openGoalPlayerModal('view'); });
+    els.awayTeamLabel.addEventListener('click', openOpponentModal);
+    els.opponentSkipBtn.addEventListener('click', function(){ els.opponentModal.classList.remove('open'); });
+    els.opponentSaveBtn.addEventListener('click', saveOpponent);
     els.goalTimesCloseBtn.addEventListener('click', function(){ els.goalTimesModal.classList.remove('open'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
     initDurationPickerDrag();
@@ -3026,18 +3355,26 @@
       // immediately, same as if a slave had just opened settings fresh.
       openSettings(false);
     });
-    // "Lukk Trenerappen" - the owner's own way to step away from the match
-    // (dead battery, hand phone to someone else, etc.) without ending it
-    // for everyone else. Unlike "Overfør økt-eier" this also detaches THIS
-    // device from the session afterwards, and unlike "Avslutt og
-    // nullstill" it only wipes the match when there's genuinely nobody
-    // left to hand it to.
+    // "Lukk Trenerappen" - available to everyone in a shared session, not
+    // just the owner, so "I'm done on this device" always reads as exactly
+    // that (see the info-btn beside it) rather than "Gå ut av delt økt",
+    // which sounded like it led to starting/continuing something else.
+    // Crucially, "Lukk" is NEVER "Avslutt og nullstill" in disguise - even
+    // when the owner is the only one left in the session, closing just
+    // detaches this device and leaves the match exactly as it is, so
+    // "Fortsett" from the launcher later picks it back up untouched. Only
+    // an actual OTHER participant changes the consequence (ownership has
+    // to go somewhere so the session stays administrable).
     els.closeSessionBtn.addEventListener('click', function(){
-      if (!isMaster() || !sessionCode) return;
-      var target = longestTenuredOtherParticipant();
-      els.closeSessionConfirmText.textContent = target
-        ? 'Økten overføres til enheten som ' + formatJoinedAgo(target.joinedAt) + ', og denne enheten forlater økten.'
-        : 'Ingen andre er med i økten, så kampen avsluttes og nullstilles idet du lukker.';
+      if (!sessionCode) return;
+      if (isMaster()){
+        var target = longestTenuredOtherParticipant();
+        els.closeSessionConfirmText.textContent = target
+          ? 'Økten overføres til enheten som ' + formatJoinedAgo(target.joinedAt) + ', og denne enheten forlater økten.'
+          : 'Kampen forblir som den er - du kan fortsette senere fra "Trenerappen" på hjemskjermen.';
+      } else {
+        els.closeSessionConfirmText.textContent = 'Du forlater økten. Kampen fortsetter som normal for de andre - bli med igjen senere med koden ' + sessionCode + '.';
+      }
       els.closeSessionConfirmModal.classList.add('open');
     });
     els.closeSessionCancelBtn.addEventListener('click', function(){
@@ -3045,28 +3382,26 @@
     });
     els.closeSessionConfirmBtn.addEventListener('click', function(){
       els.closeSessionConfirmModal.classList.remove('open');
-      if (!isMaster() || !sessionCode) return;
-      var target = longestTenuredOtherParticipant();
-      if (target){
-        state.sessionOwnerDeviceId = target.deviceId;
-        saveState();
-      } else {
-        resetMatch(); // reopens settings for a fresh setup - overridden below
+      if (!sessionCode) return;
+      // Only an actual hand-off needs a state change here - with nobody
+      // else around, the match itself is left completely untouched (see
+      // the confirm text above); leaveSession() below just detaches this
+      // device, the same as it does for a non-owner.
+      if (isMaster()){
+        var target = longestTenuredOtherParticipant();
+        if (target){
+          state.sessionOwnerDeviceId = target.deviceId;
+          saveState();
+        }
       }
       leaveSession();
       els.settingsModal.classList.remove('open');
       showLauncherMenu();
     });
     els.joinExistingBtn.addEventListener('click', function(){
-      if (!isMaster() && sessionCode){
-        // This is the "Gå ut av delt økt" state (see openSettings) - leave
-        // and go straight back to the launcher, rather than opening the
-        // join-code flow this button normally leads to.
-        leaveSession();
-        els.settingsModal.classList.remove('open');
-        showLauncherMenu();
-        return;
-      }
+      // Only reachable when this device isn't already in a session (see
+      // openSettings - "Lukk Trenerappen" is what leaves one), so this is
+      // always the join flow.
       els.settingsModal.classList.remove('open');
       els.joinCodeInput.value = '';
       els.joinCodeError.style.display = 'none';
@@ -3298,6 +3633,7 @@
 
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
+      checkLongIdleSuggestion();
       stampLastAlive();
       setInterval(updateTimersOnly, 250);
       // Local-only: this used to call saveState() (which also pushes to
@@ -3313,9 +3649,10 @@
       setInterval(function(){ saveStateLocally(); stampLastAlive(); }, 8000);
       document.addEventListener('visibilitychange', function(){
         if (document.hidden){
-          saveState();
+          flushState();
         } else {
           checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
+          checkLongIdleSuggestion();
           stampLastAlive();
           updateTimersOnly();
           requestWakeLock();
