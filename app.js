@@ -47,6 +47,21 @@
    * @property {number} endedAt
    * @property {Object<string, number>} playerMs
    *
+   * @typedef {Object} HistoryPlayerEntry
+   * @property {string} id
+   * @property {string} name
+   * @property {number} ms
+   * @property {number} goals
+   *
+   * @typedef {Object} HistoryMatchEntry
+   * @property {string} id
+   * @property {number} endedAt
+   * @property {string} opponentName
+   * @property {string} opponentAbbr
+   * @property {number} homeScore
+   * @property {number} awayScore
+   * @property {HistoryPlayerEntry[]} players
+   *
    * @typedef {Object} AppState
    * @property {Player[]} players
    * @property {string[]} onField
@@ -101,6 +116,8 @@
 
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
+  var HISTORY_KEY = 'spillerbytte_history_v1';
+  var HISTORY_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000; // matches ordered older than this are dropped on load
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
   var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
@@ -124,7 +141,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.4';
+  var APP_VERSION = '1.9.5';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -589,6 +606,167 @@
     });
     roster.sort(function(a,b){ return a.localeCompare(b,'nb'); });
     saveRoster();
+  }
+
+  // Persistent, local, cross-session record of finished matches (see
+  // "Historikk" on the launcher) - deliberately separate from
+  // state.matchHistory (which is synced shared-session state, wiped by
+  // resetMatch()). Like ROSTER_KEY above, this is per-device and never
+  // synced: a season's worth of match history isn't something the current
+  // Supabase sync model (one row per active session) has any natural home
+  // for, and making it shared would mean deciding whose copy wins across
+  // devices for something that's really just personal record-keeping.
+  /** @returns {HistoryMatchEntry[]} */
+  function loadHistoryArchive(){
+    try {
+      var raw = localStorage.getItem(HISTORY_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch(e){ console.warn('Kunne ikke lese historikk', e); return []; }
+  }
+
+  /** @param {HistoryMatchEntry[]} list */
+  function saveHistoryArchive(list){
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
+    catch(e){ console.warn('Kunne ikke lagre historikk', e); }
+  }
+
+  /** @param {HistoryMatchEntry} entry */
+  function archiveMatchToHistory(entry){
+    var list = loadHistoryArchive();
+    list.push(entry);
+    saveHistoryArchive(list);
+  }
+
+  // Called once per app load (see finishStartup()) - drops anything past
+  // the announced 365-day retention (see the note in the Historikk screen)
+  // so the local archive doesn't grow forever. Returns the pruned list so
+  // callers that need it right away don't have to re-read localStorage.
+  /** @returns {HistoryMatchEntry[]} */
+  function pruneHistoryArchive(){
+    var list = loadHistoryArchive();
+    var cutoff = Date.now() - HISTORY_MAX_AGE_MS;
+    var kept = list.filter(function(m){ return m.endedAt >= cutoff; });
+    if (kept.length !== list.length) saveHistoryArchive(kept);
+    return kept;
+  }
+
+  /** @param {string[]} ids */
+  function deleteHistoryEntries(ids){
+    var idSet = {};
+    ids.forEach(function(id){ idSet[id] = true; });
+    saveHistoryArchive(loadHistoryArchive().filter(function(m){ return !idSet[m.id]; }));
+    historySelected = {};
+    historyDeleteArmedId = null;
+  }
+
+  /** @param {number} ts @returns {string} */
+  function formatHistoryDate(ts){
+    return new Date(ts).toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  // ---------------- Historikk screen ----------------
+  var historySelectMode = false;
+  /** @type {Object<string, boolean>} */
+  var historySelected = {};
+  /** @type {string|null} */
+  var historyExpandedId = null;
+  // Delete is a double-tap-to-confirm per row (same pattern as "Avslutt og
+  // nullstill"/"Overfør økt-eier" elsewhere) rather than a confirm modal -
+  // a modal per single delete in a scrolling list would be a lot of
+  // friction for what's meant to be a quick, low-stakes cleanup action.
+  /** @type {string|null} */
+  var historyDeleteArmedId = null;
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  var historyDeleteArmTimer;
+  /** @type {string[]|null} */
+  var pendingHistoryDeleteIds = null;
+
+  function renderHistoryList(){
+    var list = loadHistoryArchive().slice().sort(function(a,b){ return b.endedAt - a.endedAt; });
+    els.historyEmpty.hidden = list.length > 0;
+    els.historySelectModeBtn.hidden = list.length === 0;
+    if (list.length === 0){
+      els.historyList.innerHTML = '';
+      els.historySelectBar.hidden = true;
+      return;
+    }
+    els.historyList.innerHTML = list.map(function(m){
+      var selected = !!historySelected[m.id];
+      var expanded = historyExpandedId === m.id;
+      var armed = historyDeleteArmedId === m.id;
+      var opponent = m.opponentName || (m.opponentAbbr ? m.opponentAbbr : 'Ukjent motstander');
+      var players = (m.players || []).slice().sort(function(a,b){ return b.ms - a.ms; });
+      var playerRows = players.map(function(p){
+        return '<div class="history-row-player">' +
+          '<span class="history-row-player-name">' + escapeHtml(p.name) + (p.goals > 0 ? ' (' + p.goals + ' mål)' : '') + '</span>' +
+          '<span class="history-row-player-stats">' + formatCumulative(p.ms) + '</span>' +
+        '</div>';
+      }).join('') || '<div class="history-row-player"><span class="history-row-player-name">Ingen spillerdata registrert.</span></div>';
+      return '<div class="history-row' + (expanded ? ' expanded' : '') + '" data-id="' + m.id + '">' +
+        '<div class="history-row-main">' +
+          (historySelectMode ? '<input type="checkbox" class="history-row-check"' + (selected ? ' checked' : '') + '>' : '') +
+          '<div class="history-row-text">' +
+            '<div class="history-row-top">' +
+              '<span class="history-row-opponent">vs ' + escapeHtml(opponent) + '</span>' +
+              '<span class="history-row-score">' + m.homeScore + ' - ' + m.awayScore + '</span>' +
+            '</div>' +
+            '<div class="history-row-date">' + formatHistoryDate(m.endedAt) + '</div>' +
+          '</div>' +
+          (historySelectMode ? '' :
+            '<button type="button" class="history-row-delete' + (armed ? ' armed' : '') + '" aria-label="Slett kamp">🗑</button>' +
+            '<span class="history-row-chevron" aria-hidden="true">⌄</span>') +
+        '</div>' +
+        (historySelectMode ? '' : '<div class="history-row-detail"' + (expanded ? '' : ' hidden') + '>' + playerRows + '</div>') +
+      '</div>';
+    }).join('');
+
+    Array.prototype.forEach.call(els.historyList.querySelectorAll('.history-row'), function(row){
+      var id = row.getAttribute('data-id');
+      row.querySelector('.history-row-main').addEventListener('click', function(){
+        if (historySelectMode){
+          historySelected[id] = !historySelected[id];
+          renderHistoryList();
+          return;
+        }
+        historyExpandedId = (historyExpandedId === id) ? null : id;
+        renderHistoryList();
+      });
+      var delBtn = row.querySelector('.history-row-delete');
+      if (delBtn){
+        delBtn.addEventListener('click', function(e){
+          e.stopPropagation(); // don't also toggle the row's own expand/collapse
+          if (historyDeleteArmedId === id){
+            deleteHistoryEntries([id]);
+            renderHistoryList();
+            return;
+          }
+          historyDeleteArmedId = id;
+          clearTimeout(historyDeleteArmTimer);
+          historyDeleteArmTimer = setTimeout(function(){ historyDeleteArmedId = null; renderHistoryList(); }, 2500);
+          renderHistoryList();
+        });
+      }
+    });
+
+    els.historySelectBar.hidden = !historySelectMode;
+    if (historySelectMode){
+      var selectedCount = Object.keys(historySelected).filter(function(id){ return historySelected[id]; }).length;
+      els.historySelectCount.textContent = selectedCount + ' valgt';
+      els.historyDeleteSelectedBtn.disabled = selectedCount === 0;
+      els.historySelectAllBtn.textContent = (selectedCount === list.length) ? 'Fjern alle' : 'Velg alle';
+    }
+  }
+
+  function openHistoryScreen(){
+    historySelectMode = false;
+    historySelected = {};
+    historyExpandedId = null;
+    historyDeleteArmedId = null;
+    els.historySelectModeBtn.textContent = 'Velg flere';
+    els.historySelectModeBtn.classList.remove('active');
+    renderHistoryList();
+    els.historyScreen.classList.add('open');
   }
 
   /** @param {string} name @param {boolean} [singleLetter] @returns {string} */
@@ -2575,6 +2753,47 @@
 
     els.coinTile.addEventListener('click', openCoinFlip);
     els.coinFlipCloseBtn.addEventListener('click', closeCoinFlip);
+    els.historyTile.addEventListener('click', openHistoryScreen);
+    els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
+    els.historySelectModeBtn.addEventListener('click', function(){
+      historySelectMode = !historySelectMode;
+      historySelected = {};
+      historyExpandedId = null;
+      els.historySelectModeBtn.textContent = historySelectMode ? 'Ferdig' : 'Velg flere';
+      els.historySelectModeBtn.classList.toggle('active', historySelectMode);
+      renderHistoryList();
+    });
+    els.historySelectAllBtn.addEventListener('click', function(){
+      var list = loadHistoryArchive();
+      var allSelected = list.length > 0 && list.every(function(m){ return historySelected[m.id]; });
+      historySelected = {};
+      if (!allSelected) list.forEach(function(m){ historySelected[m.id] = true; });
+      renderHistoryList();
+    });
+    els.historyDeleteSelectedBtn.addEventListener('click', function(){
+      var ids = Object.keys(historySelected).filter(function(id){ return historySelected[id]; });
+      if (ids.length === 0) return;
+      pendingHistoryDeleteIds = ids;
+      els.historyDeleteConfirmText.textContent = ids.length === 1
+        ? 'Slette denne kampen? Dette kan ikke angres.'
+        : 'Slette ' + ids.length + ' kamper? Dette kan ikke angres.';
+      els.historyDeleteConfirmModal.classList.add('open');
+    });
+    els.historyDeleteCancelBtn.addEventListener('click', function(){
+      els.historyDeleteConfirmModal.classList.remove('open');
+      pendingHistoryDeleteIds = null;
+    });
+    els.historyDeleteConfirmBtn.addEventListener('click', function(){
+      els.historyDeleteConfirmModal.classList.remove('open');
+      if (pendingHistoryDeleteIds){
+        deleteHistoryEntries(pendingHistoryDeleteIds);
+        pendingHistoryDeleteIds = null;
+      }
+      historySelectMode = false;
+      els.historySelectModeBtn.textContent = 'Velg flere';
+      els.historySelectModeBtn.classList.remove('active');
+      renderHistoryList();
+    });
     els.coinFlipStartBtn.addEventListener('click', startCoinFlip);
     els.coinFlipAgainBtn.addEventListener('click', function(){
       els.coinPanelResult.hidden = true;
@@ -2795,9 +3014,11 @@
     // halves of one match), so the goal tally must NOT carry over into the
     // next match either (see goalLog reset below - this used to be a bug:
     // goals kept accumulating across what the coach clearly meant as
-    // separate matches). playerMs is read now, before periodStartCumulative
-    // moves its baseline forward below, so it's each player's time in THIS
-    // match specifically, not the running lifetime total.
+    // separate matches). Read now, before periodStartCumulative moves its
+    // baseline forward below, so it's each player's time in THIS match
+    // specifically, not the running lifetime total.
+    var homeScore = state.goalLog.filter(function(g){ return g.team === 'home'; }).length;
+    var awayScore = state.goalLog.filter(function(g){ return g.team === 'away'; }).length;
     var playerMs = {};
     state.players.forEach(function(p){ playerMs[p.id] = currentPeriodFieldMs(p.id, now); });
     if (!Array.isArray(state.matchHistory)) state.matchHistory = [];
@@ -2805,10 +3026,33 @@
       id: uid(),
       opponentName: state.opponentName || '',
       opponentAbbr: state.opponentAbbr || '',
-      homeScore: state.goalLog.filter(function(g){ return g.team === 'home'; }).length,
-      awayScore: state.goalLog.filter(function(g){ return g.team === 'away'; }).length,
+      homeScore: homeScore,
+      awayScore: awayScore,
       endedAt: now,
       playerMs: playerMs
+    });
+    // Separate from the above: a persistent, local, cross-session archive
+    // (see loadHistoryArchive()) for the "Historikk" tile - state.matchHistory
+    // is synced shared-session state and gets wiped by resetMatch() same as
+    // everything else, which is right for "this session's matches so far"
+    // but wrong for a durable record the coach can look back on later.
+    // Snapshots player NAMES (not just ids) so old entries stay meaningful
+    // even after a player is later removed from the roster.
+    archiveMatchToHistory({
+      id: uid(),
+      endedAt: now,
+      opponentName: state.opponentName || '',
+      opponentAbbr: state.opponentAbbr || '',
+      homeScore: homeScore,
+      awayScore: awayScore,
+      players: state.players.map(function(p){
+        return {
+          id: p.id,
+          name: p.name,
+          ms: playerMs[p.id] || 0,
+          goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
+        };
+      })
     });
     state.goalLog = [];
     // Next match likely means a next opponent (cup format) - clearing this
@@ -2970,6 +3214,20 @@
     els.coinResultText = qs('coinResultText');
     els.coinFlipAgainBtn = qs('coinFlipAgainBtn');
     els.coinFlipDoneBtn = qs('coinFlipDoneBtn');
+    els.historyTile = qs('historyTile');
+    els.historyScreen = qs('historyScreen');
+    els.historyCloseBtn = qs('historyCloseBtn');
+    els.historySelectModeBtn = qs('historySelectModeBtn');
+    els.historyList = qs('historyList');
+    els.historyEmpty = qs('historyEmpty');
+    els.historySelectBar = qs('historySelectBar');
+    els.historySelectAllBtn = qs('historySelectAllBtn');
+    els.historySelectCount = qs('historySelectCount');
+    els.historyDeleteSelectedBtn = qs('historyDeleteSelectedBtn');
+    els.historyDeleteConfirmModal = qs('historyDeleteConfirmModal');
+    els.historyDeleteConfirmText = qs('historyDeleteConfirmText');
+    els.historyDeleteCancelBtn = qs('historyDeleteCancelBtn');
+    els.historyDeleteConfirmBtn = qs('historyDeleteConfirmBtn');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
@@ -3418,16 +3676,18 @@
       els.joinCodeError.style.display = 'none';
       clearFieldInvalid(els.joinCodeInputWrap);
       els.joinCodeModal.classList.add('open');
+      // Synchronous, same tick as the click - see the identical comment on
+      // showLauncherJoinPanel(). The modal itself is never display:none
+      // (just opacity/pointer-events toggled - see .modal in style.css),
+      // so the input is already focusable right now, before its fade-in
+      // transition even starts.
+      els.joinCodeInput.focus();
     });
     els.joinCodeCancelBtn.addEventListener('click', function(){
       els.joinCodeModal.classList.remove('open');
       els.settingsModal.classList.add('open');
     });
-    els.joinCodeInput.addEventListener('input', function(){
-      els.joinCodeError.style.display = 'none';
-      clearFieldInvalid(els.joinCodeInputWrap);
-    });
-    els.joinCodeConfirmBtn.addEventListener('click', function(){
+    function attemptJoinCode(){
       var code = els.joinCodeInput.value.trim();
       if (!/^[0-9]{3}$/.test(code)){
         els.joinCodeError.textContent = 'Skriv inn en gyldig tresifret kode.';
@@ -3457,8 +3717,22 @@
         els.joinCodeError.style.display = '';
         markFieldInvalid(els.joinCodeInputWrap);
         shakeElement(els.joinCodeModal.querySelector('.modal-card'));
+        // Wrong/non-existent code - clear the digits so the next attempt
+        // starts fresh instead of the person having to select-all/backspace
+        // three wrong digits before retyping.
+        els.joinCodeInput.value = '';
       });
+    }
+    els.joinCodeInput.addEventListener('input', function(){
+      els.joinCodeError.style.display = 'none';
+      clearFieldInvalid(els.joinCodeInputWrap);
+      // Auto-advance the moment the 3rd digit lands - a 3-digit code has
+      // nothing left to type, so waiting for an explicit OK tap is just an
+      // extra step. Only real 3-digit input triggers this (not e.g. a
+      // paste that already failed the regex elsewhere).
+      if (/^[0-9]{3}$/.test(els.joinCodeInput.value.trim())) attemptJoinCode();
     });
+    els.joinCodeConfirmBtn.addEventListener('click', attemptJoinCode);
     els.sessionCodeBar.addEventListener('click', function(){
       if (!sessionCode) return;
       if (navigator.clipboard && navigator.clipboard.writeText){
@@ -3507,7 +3781,13 @@
       els.launcherJoinInput.value = '';
       els.launcherJoinError.hidden = true;
       clearFieldInvalid(els.launcherJoinInputWrap);
-      setTimeout(function(){ els.launcherJoinInput.focus(); }, 50);
+      // Focused synchronously, in the same tick as the click that got us
+      // here - not via setTimeout. iOS Safari only pops the keyboard up
+      // automatically for a focus() call it can trace directly back to a
+      // user gesture; deferring it even by a few ms (a timeout, a promise
+      // tick) breaks that chain and the field just sits focused with no
+      // keyboard, forcing a second, redundant tap.
+      els.launcherJoinInput.focus();
     }
 
     function openLauncherChoice(){
@@ -3548,6 +3828,9 @@
         els.launcherJoinError.hidden = false;
         markFieldInvalid(els.launcherJoinInputWrap);
         shakeElement(els.launcherChoiceOverlay);
+        // Wrong/non-existent code - clear the digits so the next attempt
+        // starts fresh instead of having to clear three wrong digits first.
+        els.launcherJoinInput.value = '';
       });
     }
 
@@ -3609,6 +3892,9 @@
     els.launcherJoinInput.addEventListener('input', function(){
       els.launcherJoinError.hidden = true;
       clearFieldInvalid(els.launcherJoinInputWrap);
+      // Auto-advance the moment the 3rd digit lands - see the identical
+      // comment on joinCodeInput's handler.
+      if (/^[0-9]{3}$/.test(els.launcherJoinInput.value.trim())) submitLauncherJoin();
     });
     els.launcherJoinInput.addEventListener('keydown', function(e){
       if (e.key === 'Enter') submitLauncherJoin();
@@ -3645,6 +3931,7 @@
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
       checkLongIdleSuggestion();
+      pruneHistoryArchive(); // drop Historikk entries past the 365-day retention
       stampLastAlive();
       setInterval(updateTimersOnly, 250);
       // Local-only: this used to call saveState() (which also pushes to

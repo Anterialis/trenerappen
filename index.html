@@ -62,6 +62,19 @@
         <p class="coin-tile-label">Myntkast</p>
       </div>
     </div>
+    <div class="history-tile" id="historyTile">
+      <div class="history-tile-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="8.5" stroke="rgba(255,255,255,.75)" stroke-width="1.4"/>
+          <path d="M12 7.5V12l3.2 2" stroke="rgba(255,255,255,.75)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="history-tile-body">
+        <p class="history-tile-title">Historikk</p>
+        <p class="history-tile-sub">Gamle kamper, resultater og spilletid</p>
+      </div>
+      <div class="history-tile-chevron" aria-hidden="true">›</div>
+    </div>
     <p class="launcher-credit">utviklet av André Nanbjør</p>
   </div>
   <div id="coinFlipScreen" class="coin-flip-screen">
@@ -95,6 +108,32 @@
       <p class="coin-result-text" id="coinResultText"></p>
       <button type="button" id="coinFlipAgainBtn" class="glass-choice-btn primary">Kast på nytt</button>
       <button type="button" id="coinFlipDoneBtn" class="launcher-choice-cancel">Ferdig</button>
+    </div>
+  </div>
+  <div id="historyScreen" class="history-screen">
+    <button type="button" id="historyCloseBtn" class="coin-flip-close" aria-label="Lukk historikk">×</button>
+    <div class="history-header">
+      <p class="history-title">Historikk</p>
+      <button type="button" id="historySelectModeBtn" class="history-select-mode-btn">Velg flere</button>
+    </div>
+    <p class="history-info-note">Kamper eldre enn 365 dager slettes automatisk.</p>
+    <div id="historyList" class="history-list"></div>
+    <p id="historyEmpty" class="history-empty" hidden>Ingen kamper registrert ennå. De dukker opp her etter "Kampslutt".</p>
+    <div id="historySelectBar" class="history-select-bar" hidden>
+      <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
+      <span id="historySelectCount" class="history-select-count">0 valgt</span>
+      <button type="button" id="historyDeleteSelectedBtn" class="history-select-bar-btn danger" disabled>Slett valgte</button>
+    </div>
+  </div>
+
+  <div id="historyDeleteConfirmModal" class="modal modal-centered">
+    <div class="modal-card">
+      <h2>Slette kamper?</h2>
+      <p class="sub" id="historyDeleteConfirmText"></p>
+      <div class="modal-actions">
+        <button type="button" id="historyDeleteCancelBtn" class="secondary">Avbryt</button>
+        <button type="button" id="historyDeleteConfirmBtn" class="primary">Slett</button>
+      </div>
     </div>
   </div>
   <header>
