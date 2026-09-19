@@ -1193,31 +1193,44 @@
   .segmented-btn.active{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
   .info-label-row{ display:flex; align-items:center; gap:6px; }
   /* Every #endMatchModal action (Kampslutt/Avslutt og nullstill/Forlat
-     kampen/Forlat delt økt) is one .stack-btn-sized pill split into two
-     independent tap zones by a thin divider: the action itself, and its
-     own "i" info popup merged into the same pill rather than sitting
-     beside it as a separate circle. */
+     kampen/Forlat delt økt) is one .stack-btn-sized pill with its own "i"
+     info popup living inside it as a small circle, pinned a FIXED distance
+     from the right edge (not flex-split, which let the info zone's
+     position drift with each button's own text width/length - see the
+     mockup this reproduces: right:38px for the divider, right:14px for the
+     circle, regardless of how wide the pill or its label is). */
   .stack-btn-split{
-    width:100%; display:flex; align-items:center;
-    border-radius:var(--radius-sm); background:#f0f1f3; overflow:hidden;
+    position:relative; width:100%;
+    border-radius:var(--radius-sm); background:#f0f1f3;
     transition:background .15s ease;
   }
   /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
-     the unconditional display:flex above needs an explicit override. */
+     [hidden] alone can't beat position:relative's own display:block, but
+     an explicit override keeps this consistent with the rest of the file. */
   .stack-btn-split[hidden]{ display:none; }
-  .stack-btn-split-main{
-    flex:1 1 auto; min-width:0; border:none; background:none; color:var(--ink);
+  /* Selector scoped under .stack-btn-split (not a bare .stack-btn-split-main
+     rule) so its specificity (0,2,0) beats .modal-actions button's
+     (0,1,1) - that rule's padding/border/font-size/font-weight would
+     otherwise silently win over this being a <button> in the same
+     .modal-actions row (see .modal-actions .info-btn below for the same
+     collision on the info circle). */
+  .stack-btn-split .stack-btn-split-main{
+    display:block; width:100%; border:none; background:none; color:var(--ink);
     font-family:inherit; font-size:15px; font-weight:700; cursor:pointer;
-    padding:14px 4px 14px 14px; text-align:center;
+    padding:14px 44px 14px 14px; text-align:center;
     transition:transform .12s ease, color .15s ease;
   }
   .stack-btn-split-main:active{ transform:scale(.97); }
   .stack-btn-split-divider{
-    flex:0 0 auto; width:1px; height:22px; margin:0 10px;
+    position:absolute; top:10px; bottom:10px; right:38px; width:1px;
     background:rgba(22,32,43,.12);
     transition:background .15s ease;
+    pointer-events:none;
   }
-  .stack-btn-split .info-btn{ margin-right:14px; transition:border-color .15s ease, color .15s ease; }
+  .stack-btn-split .info-btn{
+    position:absolute; top:50%; right:14px; transform:translateY(-50%);
+    transition:border-color .15s ease, color .15s ease;
+  }
   .stack-btn-split.period{ background:rgba(10,132,255,.14); }
   .stack-btn-split.period .stack-btn-split-main{ color:var(--period-blue); }
   .stack-btn-split.period .stack-btn-split-divider{ background:rgba(10,132,255,.3); }
