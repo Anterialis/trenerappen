@@ -1,0 +1,35 @@
+name: Keep Supabase awake
+
+# Supabase pauses free-tier projects after ~7 days with no database
+# activity. This just does a trivial read against the `sessions` table
+# (see PROSJEKT-OPPSUMMERING.md) a couple of times a week so the project
+# never goes idle long enough to be paused.
+#
+# Caveat: GitHub auto-disables scheduled workflows after 60 days with no
+# repository activity (commits/pushes) - harmless in-season, but if the
+# app goes untouched for two months in the off-season this stops running
+# silently. A free external cron (e.g. cron-job.org or UptimeRobot) hitting
+# the same URL has no such dependency and is worth adding as a backup:
+#   https://nueguoxkynwgmynccaro.supabase.co/rest/v1/sessions?select=code&limit=1&apikey=sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
+#
+# The key below is Supabase's public "publishable" anon key (see app.js) -
+# safe to commit, it's already shipped in the client-side app.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1,4' # Monday and Thursday, 06:00 UTC
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab to test it
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: https://nueguoxkynwgmynccaro.supabase.co
+          SUPABASE_KEY: sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
+        run: |
+          curl --fail --silent --show-error \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/sessions?select=code&limit=1"

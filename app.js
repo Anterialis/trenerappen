@@ -95,7 +95,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.1';
+  var APP_VERSION = '1.9.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -1872,7 +1872,7 @@
   // can't be edited here.
   /** @param {HTMLElement} row @returns {boolean} */
   function isBlankRow(row){
-    if (row.classList.contains('locked')) return false;
+    if (row.classList.contains('field-locked')) return false;
     var input = /** @type {HTMLInputElement|null} */ (row.querySelector('input'));
     return !!input && !input.value.trim();
   }
@@ -2071,7 +2071,16 @@
     var masterLocked = !locked && !isMaster();
     var anyLocked = locked || masterLocked;
     var row = document.createElement('div');
-    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
+    // 'locked' drives the grey styling for both reasons, but isBlankRow()
+    // needs to tell them apart: a masterLocked row can still be an empty
+    // trailing slot (syncNameRows must be able to count it as blank), while
+    // a field-locked row never is. Without 'field-locked' as a separate
+    // marker, a non-master device would see every trailing blank row report
+    // as "not blank" and syncNameRows()'s trailingBlankCount() loop would
+    // never reach its target - an infinite loop that freezes the tab (the
+    // "settings crashes to a black screen" bug reported after joining a
+    // session someone else owns).
+    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (locked ? ' field-locked' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
     row.innerHTML =
       '<div class="name-input-wrap">' +

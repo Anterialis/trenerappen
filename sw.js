@@ -17,7 +17,7 @@
 // Bump CACHE_NAME (to match APP_VERSION in app.js) on every deploy that
 // changes index.html, style.css or app.js, so the old cached shell gets
 // purged on activate instead of lingering.
-var CACHE_NAME = 'trenerapp-shell-v1.9.1';
+var CACHE_NAME = 'trenerapp-shell-v1.9.2';
 var APP_SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon-180.png', '/icon-512.png'];
 
 self.addEventListener('install', function(event){

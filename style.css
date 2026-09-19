@@ -544,8 +544,11 @@
   /* Landscape: #bench-wrap is only ~36% of the width (see the layout
      media query above), too narrow for icon+text pills without wrapping
      - icon-only circular buttons instead, same icons the legend already
-     explains, so nothing is lost. */
-  @media (orientation: landscape){
+     explains, so nothing is lost. max-width caps this to phone-sized
+     screens - the largest iPhone landscape width is ~956px (17 Pro Max),
+     the smallest iPad landscape width is 1024px (mini), so 980px sits in
+     the gap between them and keeps the text label on iPads. */
+  @media (orientation: landscape) and (max-width: 980px){
     .bench-action-btn{
       width:38px; height:38px; padding:0; border-radius:50%;
       justify-content:center;
