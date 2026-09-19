@@ -139,6 +139,16 @@
     margin-top:26px; font-size:12px; font-weight:500; font-style:italic;
     letter-spacing:.03em; color:rgba(255,255,255,.36);
   }
+  /* Short "vX.Y" tap target under the credit line - opens
+     #versionHistoryModal with the full version + a changelog (see
+     VERSION_HISTORY in app.js). Kept visually quiet, same family as
+     .launcher-credit above it, so it reads as a footnote, not a button. */
+  .launcher-version{
+    display:block; margin:6px auto 0; padding:4px 8px; border:none; background:none;
+    font:inherit; font-size:11px; font-weight:600; letter-spacing:.03em;
+    color:rgba(255,255,255,.3); cursor:pointer;
+  }
+  .launcher-version:active{ color:rgba(255,255,255,.55); }
   @media (prefers-reduced-motion: reduce){
     .launcher-tile{ transition:opacity .3s ease; }
     .launcher-tile.lifted{ transform:none; opacity:.85; }
@@ -273,7 +283,12 @@
   }
   .coin-flip-screen.open{ opacity:1; pointer-events:auto; transform:scale(1); }
   .coin-flip-close{
-    position:absolute; top:calc(env(safe-area-inset-top) + 16px); left:16px;
+    /* max(env(...), 20px): older rectangular-corner iPads/iPhones (no
+       notch, no Dynamic Island) report 0 for every safe-area-inset even in
+       standalone PWA mode, despite the OS status bar still visually
+       occupying ~20pt up there - env(safe-area-inset-top) alone left this
+       sitting right under it, faded/cut by the status bar overlay. */
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 16px); left:16px;
     width:36px; height:36px; border-radius:50%; border:none;
     background:rgba(255,255,255,.10); color:#fff; font-size:20px;
     display:flex; align-items:center; justify-content:center; cursor:pointer;
@@ -344,7 +359,7 @@
     position:absolute; inset:0; z-index:310;
     display:flex; flex-direction:column;
     background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
-    padding:calc(env(safe-area-inset-top) + 64px) 20px calc(env(safe-area-inset-bottom) + 20px);
+    padding:calc(max(env(safe-area-inset-top), 20px) + 64px) 20px calc(env(safe-area-inset-bottom) + 20px);
     opacity:0; pointer-events:none; transform:scale(1.03);
     transition:opacity .3s ease, transform .3s ease;
   }
@@ -423,7 +438,15 @@
     flex:0 0 auto;
     display:flex; align-items:center; justify-content:space-between;
     padding:10px 14px;
-    padding-top:calc(env(safe-area-inset-top) + 10px);
+    /* max(env(...), 20px): a rectangular-corner iPad/iPhone (no notch, no
+       Dynamic Island) reports 0 for env(safe-area-inset-top) even running
+       as a standalone home-screen app, but the OS status bar still sits
+       there visually - with just env() alone (0 on that device) the header
+       buttons' top edge landed right under the status bar's own
+       translucent overlay, reading as "cut off / faded at the top". 20px
+       is a safe floor close to that status bar's real height, applied
+       only as a minimum - notched devices' real (larger) inset still wins. */
+    padding-top:calc(max(env(safe-area-inset-top), 20px) + 10px);
     background:linear-gradient(180deg, rgba(22,41,74,.82), rgba(15,31,54,.82));
     -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
@@ -1146,7 +1169,6 @@
   .duration-input input:disabled{ background:#eceef0; color:var(--ink-soft); cursor:not-allowed; opacity:.45; }
   .duration-input span{ font-size:13px; color:var(--ink-soft); }
   .locked-note{ font-size:11px; font-weight:600; color:var(--ink-soft); }
-  .app-version{ text-align:right; margin-top:14px; font-size:11px; color:#c3c8ce; font-weight:600; }
 
   .settings-row{
     display:flex; align-items:center; justify-content:space-between;
@@ -1170,11 +1192,48 @@
   }
   .segmented-btn.active{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
   .info-label-row{ display:flex; align-items:center; gap:6px; }
-  .close-session-row{ display:flex; align-items:center; gap:8px; margin-top:16px; }
-  .close-session-row .export-link-btn{ flex:1 1 auto; margin-top:0; }
+  /* Every #endMatchModal action (Kampslutt/Avslutt og nullstill/Forlat
+     kampen/Forlat delt økt) is one .stack-btn-sized pill split into two
+     independent tap zones by a thin divider: the action itself, and its
+     own "i" info popup merged into the same pill rather than sitting
+     beside it as a separate circle. */
+  .stack-btn-split{
+    width:100%; display:flex; align-items:center;
+    border-radius:var(--radius-sm); background:#f0f1f3; overflow:hidden;
+    transition:background .15s ease;
+  }
   /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
      the unconditional display:flex above needs an explicit override. */
-  .close-session-row[hidden]{ display:none; }
+  .stack-btn-split[hidden]{ display:none; }
+  .stack-btn-split-main{
+    flex:1 1 auto; min-width:0; border:none; background:none; color:var(--ink);
+    font-family:inherit; font-size:15px; font-weight:700; cursor:pointer;
+    padding:14px 4px 14px 14px; text-align:center;
+    transition:transform .12s ease, color .15s ease;
+  }
+  .stack-btn-split-main:active{ transform:scale(.97); }
+  .stack-btn-split-divider{
+    flex:0 0 auto; width:1px; height:22px; margin:0 10px;
+    background:rgba(22,32,43,.12);
+    transition:background .15s ease;
+  }
+  .stack-btn-split .info-btn{ margin-right:14px; transition:border-color .15s ease, color .15s ease; }
+  .stack-btn-split.period{ background:rgba(10,132,255,.14); }
+  .stack-btn-split.period .stack-btn-split-main{ color:var(--period-blue); }
+  .stack-btn-split.period .stack-btn-split-divider{ background:rgba(10,132,255,.3); }
+  .stack-btn-split.period .info-btn{ border-color:var(--period-blue); color:var(--period-blue); }
+  .stack-btn-split.danger{ background:rgba(230,57,70,.12); }
+  .stack-btn-split.danger .stack-btn-split-main{ color:var(--danger); }
+  .stack-btn-split.danger .stack-btn-split-divider{ background:rgba(230,57,70,.3); }
+  .stack-btn-split.danger .info-btn{ border-color:var(--danger); color:var(--danger); }
+  /* "Trykk igjen for å bekrefte" (see #endResetWrap / disarmResetConfirm) -
+     the whole pill inverts to a solid fill, same intent as the old
+     .stack-btn.danger.armed before Avslutt og nullstill moved into a
+     stack-btn-split. */
+  .stack-btn-split.danger.armed{ background:var(--danger); }
+  .stack-btn-split.danger.armed .stack-btn-split-main{ color:#fff; }
+  .stack-btn-split.danger.armed .stack-btn-split-divider{ background:rgba(255,255,255,.4); }
+  .stack-btn-split.danger.armed .info-btn{ border-color:#fff; color:#fff; }
   .info-btn{
     width:16px; height:16px; border-radius:50%; flex:0 0 auto;
     border:1px solid var(--ink-soft); background:none; color:var(--ink-soft);
@@ -1196,6 +1255,19 @@
   .info-popup-close:active{ background:#e2e4e8; }
   .settings-home-btn{ right:54px; font-size:19px; }
   #infoPopupText{ margin:0; }
+  .version-history-list{
+    max-height:50vh; overflow-y:auto;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .version-history-entry{
+    padding-bottom:14px; border-bottom:1px solid #eef0f2;
+  }
+  .version-history-entry:last-child{ border-bottom:none; padding-bottom:0; }
+  .version-history-entry-version{
+    margin:0 0 3px; font-size:13px; font-weight:700; color:var(--ink);
+    font-variant-numeric:tabular-nums;
+  }
+  .version-history-entry-text{ margin:0; font-size:13px; color:var(--ink-soft); line-height:1.4; }
   .duration-picker-card{ text-align:center; }
   .duration-picker-wheel{
     margin:22px 0 4px; padding:26px 0;
@@ -1357,6 +1429,18 @@
   .modal-actions .primary.danger{ background:var(--danger); color:#fff; }
   .modal-actions-col{ flex-direction:column; }
   .modal-actions-col button{ flex:none; }
+  /* .modal-actions button (above) is more specific than .info-btn's own
+     rule (class+element beats a single class), so every property they
+     both set - padding, border, border-radius, flex, font-size/weight -
+     was silently winning over .info-btn's circle styling for any info-btn
+     living inside a modal-actions row (e.g. #closeSessionRow,
+     .stack-btn-split). Reassert the full circle here rather than patching
+     properties one at a time as each collision surfaces. */
+  .modal-actions .info-btn{
+    flex:0 0 auto; padding:0; border-radius:50%;
+    border:1px solid var(--ink-soft);
+    font-size:10px; font-weight:700;
+  }
   .stack-btn{
     width:100%; padding:14px; border-radius:var(--radius-sm); border:none;
     background:#f0f1f3; color:var(--ink);
@@ -1415,6 +1499,11 @@
   #joinCodeModal{ z-index:120; }
   #infoPopupModal{ z-index:130; }
   #goalTimesModal{ z-index:140; }
+  /* Opened directly from .launcher-version on .launcher-screen (z-index:300)
+     - needs to sit above that, like .coin-flip-screen/.history-screen do,
+     not among the other modals above (all opened only once the launcher
+     is already hidden, so 100-140 is plenty for them). */
+  #versionHistoryModal{ z-index:310; }
   .settings-card{ position:relative; padding-top:50px; }
 
   .session-code-bar{
@@ -1436,7 +1525,7 @@
   .session-code-bar.offline{ color:rgba(255,197,138,.9); }
 
   .auto-pause-notice{
-    position:absolute; left:50%; top:calc(env(safe-area-inset-top) + 10px);
+    position:absolute; left:50%; top:calc(max(env(safe-area-inset-top), 20px) + 10px);
     transform:translate(-50%,-140%);
     z-index:400;
     max-width:86%;
@@ -1461,17 +1550,18 @@
 
   /* Read-only participant in a shared session: the controls that would
      mutate shared state are visibly inert, not just functionally blocked.
-     #undoBtn and #settingsBtn are deliberately NOT in this list - opening
-     either is pure navigation, not a mutation (undoBtn's "Gå tilbake til
-     hovedmeny"; settingsBtn just to look at the current setup). Each
-     mutating control inside is individually locked instead: undoBtn's
-     "Angre siste"/"Endre tilbake" via canEdit() (see the undoBtn click
-     handler), settings' player names/kampvarighet/byttetid/sharing rows
-     via isMaster() (see openSettings) - disabling the buttons that OPEN
-     these here would leave a read-only viewer with no way to reach either
-     screen at all. */
+     #undoBtn, #settingsBtn and #endBtn are deliberately NOT in this list -
+     opening any of them is pure navigation, not a mutation (undoBtn's "Gå
+     tilbake til hovedmeny"; settingsBtn just to look at the current setup;
+     endBtn's "Forlat økt" has zero effect on the match either way - see
+     the endBtn click handler). Each mutating control inside is
+     individually locked instead: undoBtn's "Angre siste"/"Endre tilbake"
+     via canEdit(), settings' player names/kampvarighet/byttetid/sharing
+     rows via isMaster() (see openSettings), endMatchModal's "Kampslutt"/
+     "Avslutt og nullstill" via canEdit()/isMaster() (see the endBtn click
+     handler) - disabling the buttons that OPEN these here would leave a
+     read-only viewer with no way to reach any of them at all. */
   .view-only #playPauseBtn,
-  .view-only #endBtn,
   .view-only #multiSelectBtn,
   .view-only #multiSelectCancelBtn,
   .view-only #swapSuggestionBtn,

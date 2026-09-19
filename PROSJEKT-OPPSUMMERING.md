@@ -185,6 +185,14 @@ Merk: helt åpne RLS-policyer — koden (tresifret) er den eneste "nøkkelen" ti
 økt, siden appen ikke har brukerinnlogging. Bevisst forenkling for et lite,
 uformelt bruksområde.
 
+**Delete-policy** (kjør denne manuelt om den ikke allerede finnes — kreves for at
+opprydding-jobben i `.github/workflows/keep-supabase-alive.yml` faktisk skal
+kunne slette noe, se den filen for detaljer):
+```sql
+create policy "Public delete access" on sessions
+  for delete using (true);
+```
+
 **Hvordan synkroniseringen fungerer:**
 - `saveState()` er delt i `saveStateLocally()` (alltid) + `pushRemoteState()` (kun
   hvis enheten er koblet til en økt) — `pushRemoteState` gjør en Supabase
@@ -213,13 +221,9 @@ en endring i den ene, se at den dukker opp i den andre).
 ## Kjente begrensninger / ting å huske på videre
 
 - **Ingen ekte konflikthåndtering** i delt økt — siste skriving vinner.
-- **Ingen UI for å forlate/bytte økt** etter at man først har koblet seg til en
-  (kun mulig ved full "Avslutt og nullstill", som beholder samme kode).
 - **Ingen splash-screens** for PWA-oppstart (kun ikon + manifest, ikke egne
   oppstartsbilder per skjermstørrelse) — vurdert, men nedprioritert som lav verdi
   for innsatsen.
-- **Ingen automatisk sletting av gamle Supabase-rader** — økter blir liggende i
-  databasen for alltid med mindre noen rydder manuelt.
 - Et forslag som ble diskutert men **ikke bygget**: et gult "snart tid ute"-varsel
   (f.eks. når under 30 sek gjenstår), som et forvarsel før det røde
   utropstegnet.
@@ -228,5 +232,3 @@ en endring i den ene, se at den dukker opp i den andre).
 
 - 30-sekunders forvarsel (nevnt over).
 - Splash-screens for PWA.
-- Automatisk opprydding av gamle Supabase-økter.
-- UI for å bytte/forlate en delt økt uten full reset.

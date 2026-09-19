@@ -1,15 +1,37 @@
-name: Keep Supabase awake
+name: Supabase maintenance
 
-# Supabase pauses free-tier projects after ~7 days with no database
-# activity. This just does a trivial read against the `sessions` table
-# (see PROSJEKT-OPPSUMMERING.md) a couple of times a week so the project
-# never goes idle long enough to be paused.
+# Two unrelated jobs that happen to share a schedule and a free-tier
+# Supabase project - see PROSJEKT-OPPSUMMERING.md for the `sessions` table.
 #
-# Caveat: GitHub auto-disables scheduled workflows after 60 days with no
-# repository activity (commits/pushes) - harmless in-season, but if the
-# app goes untouched for two months in the off-season this stops running
-# silently. A free external cron (e.g. cron-job.org or UptimeRobot) hitting
-# the same URL has no such dependency and is worth adding as a backup:
+# 1. keep-awake: Supabase pauses free-tier projects after ~7 days with no
+#    database activity. A trivial read a couple of times a week keeps the
+#    project from ever going idle that long.
+# 2. cleanup: session codes are only 3 digits (1000 possible), and nothing
+#    ever deletes a row on its own - a session someone shared once and
+#    never explicitly ended would otherwise sit in the table forever,
+#    eventually exhausting the code space. This deletes any row whose
+#    `updated_at` is more than 60 days old, i.e. one nobody has pushed a
+#    real edit to in two months - safe to assume abandoned, since every
+#    genuine edit (a swap, a goal, even just the 8s local heartbeat's
+#    periodic saveStateLocally) keeps `updated_at` fresh while a session is
+#    in real use. Runs on the existing twice-a-week cadence rather than
+#    literally every 60 days, so a stale row's actual lifetime stays close
+#    to 60 days instead of drifting up to 120 in the worst case.
+#
+# Requires a one-time manual step in the Supabase SQL editor before this
+# job can actually delete anything - the table's RLS policies (see
+# PROSJEKT-OPPSUMMERING.md) only ever granted select/insert/update, no
+# delete. Run this once:
+#   create policy "Public delete access" on sessions for delete using (true);
+# Until that policy exists, the cleanup step below will fail every run
+# (harmless - it just means nothing gets deleted yet).
+#
+# Caveat (both jobs): GitHub auto-disables scheduled workflows after 60
+# days with no repository activity (commits/pushes) - harmless in-season,
+# but if the app goes untouched for two months in the off-season this
+# stops running silently. A free external cron (e.g. cron-job.org or
+# UptimeRobot) hitting the keep-awake URL has no such dependency and is
+# worth adding as a backup for that job specifically:
 #   https://nueguoxkynwgmynccaro.supabase.co/rest/v1/sessions?select=code&limit=1&apikey=sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
 #
 # The key below is Supabase's public "publishable" anon key (see app.js) -
@@ -21,7 +43,7 @@ on:
   workflow_dispatch: {} # lets you trigger a run manually from the Actions tab to test it
 
 jobs:
-  ping:
+  keep-awake:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Supabase REST API
@@ -33,3 +55,17 @@ jobs:
             -H "apikey: $SUPABASE_KEY" \
             -H "Authorization: Bearer $SUPABASE_KEY" \
             "$SUPABASE_URL/rest/v1/sessions?select=code&limit=1"
+
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete sessions untouched for 60+ days
+        env:
+          SUPABASE_URL: https://nueguoxkynwgmynccaro.supabase.co
+          SUPABASE_KEY: sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
+        run: |
+          CUTOFF=$(date -u -d '60 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          curl --fail --silent --show-error -X DELETE \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/sessions?updated_at=lt.$CUTOFF"

@@ -76,6 +76,7 @@
       <div class="history-tile-chevron" aria-hidden="true">›</div>
     </div>
     <p class="launcher-credit">utviklet av André Nanbjør</p>
+    <button type="button" class="launcher-version" id="launcherVersionBtn" aria-label="Versjonshistorikk"></button>
   </div>
   <div id="coinFlipScreen" class="coin-flip-screen">
     <button type="button" id="coinFlipCloseBtn" class="coin-flip-close" aria-label="Lukk myntkast">×</button>
@@ -116,7 +117,7 @@
       <p class="history-title">Historikk</p>
       <button type="button" id="historySelectModeBtn" class="history-select-mode-btn">Velg flere</button>
     </div>
-    <p class="history-info-note">Kamper eldre enn 365 dager slettes automatisk.</p>
+    <p class="history-info-note">Kamper eldre enn 5 år slettes automatisk.</p>
     <div id="historyList" class="history-list"></div>
     <p id="historyEmpty" class="history-empty" hidden>Ingen kamper registrert ennå. De dukker opp her etter "Kampslutt".</p>
     <div id="historySelectBar" class="history-select-bar" hidden>
@@ -236,6 +237,17 @@
       </label>
     </div>
 
+    <div class="settings-row">
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Lagre kamper til historikk</span>
+        <button type="button" class="info-btn" data-info="historySave" aria-label="Om lagre kamper til historikk">i</button>
+      </span>
+      <label class="toggle">
+        <input type="checkbox" id="historySaveToggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
     <div class="settings-row" id="shareSessionRow">
       <span class="settings-row-label-wrap">
         <span class="settings-row-label">Del økt med andre</span>
@@ -271,11 +283,6 @@
       <p id="transferOwnerNote" class="locked-note"></p>
     </div>
 
-    <div class="close-session-row" id="closeSessionRow" hidden>
-      <button type="button" id="closeSessionBtn" class="export-link-btn">🚪 Lukk Trenerappen</button>
-      <button type="button" class="info-btn" data-info="closeSession" aria-label="Om Lukk Trenerappen">i</button>
-    </div>
-
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
     <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
     <button type="button" id="exportBtn" class="export-link-btn">📋 Eksporter spillerdata</button>
@@ -284,7 +291,6 @@
       <button type="button" id="settingsCancelBtn" class="secondary">Avbryt</button>
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
     </div>
-    <div class="app-version" id="appVersionLabel"></div>
   </div>
 </div>
 
@@ -325,12 +331,29 @@
 <div id="endMatchModal" class="modal">
   <div class="modal-card">
     <h2>Avslutte?</h2>
-    <p class="sub">Kampslutt avslutter perioden men beholder laget og de kumulerte tallene. Avslutt og nullstill starter helt på nytt.</p>
     <div id="matchHistorySummary" class="match-history-summary"></div>
     <div id="endMatchSummary" class="end-match-summary"></div>
     <div class="modal-actions modal-actions-col">
-      <button type="button" id="endPeriodBtn" class="stack-btn period">Kampslutt</button>
-      <button type="button" id="endResetBtn" class="stack-btn danger">Avslutt og nullstill</button>
+      <div class="stack-btn-split period" id="endPeriodWrap">
+        <button type="button" id="endPeriodBtn" class="stack-btn-split-main">Kampslutt</button>
+        <span class="stack-btn-split-divider" aria-hidden="true"></span>
+        <button type="button" class="info-btn" data-info="endPeriod" aria-label="Om Kampslutt">i</button>
+      </div>
+      <div class="stack-btn-split danger" id="endResetWrap">
+        <button type="button" id="endResetBtn" class="stack-btn-split-main">Avslutt og nullstill</button>
+        <span class="stack-btn-split-divider" aria-hidden="true"></span>
+        <button type="button" class="info-btn" data-info="endReset" aria-label="Om Avslutt og nullstill">i</button>
+      </div>
+      <div class="stack-btn-split">
+        <button type="button" id="leaveMatchBtn" class="stack-btn-split-main">↩ Forlat kampen</button>
+        <span class="stack-btn-split-divider" aria-hidden="true"></span>
+        <button type="button" class="info-btn" data-info="leaveMatch" aria-label="Om Forlat kampen">i</button>
+      </div>
+      <div class="stack-btn-split" id="closeSessionRow" hidden>
+        <button type="button" id="closeSessionBtn" class="stack-btn-split-main">🚪 Forlat delt økt</button>
+        <span class="stack-btn-split-divider" aria-hidden="true"></span>
+        <button type="button" class="info-btn" data-info="closeSession" aria-label="Om Forlat delt økt">i</button>
+      </div>
       <button type="button" id="endMatchCancelBtn" class="stack-btn secondary">Avbryt</button>
     </div>
   </div>
@@ -433,6 +456,14 @@
     <button type="button" id="infoPopupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2 id="infoPopupTitle"></h2>
     <p id="infoPopupText" class="sub"></p>
+  </div>
+</div>
+
+<div id="versionHistoryModal" class="modal modal-centered">
+  <div class="modal-card info-popup-card">
+    <button type="button" id="versionHistoryCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2 id="versionHistoryTitle"></h2>
+    <div id="versionHistoryList" class="version-history-list"></div>
   </div>
 </div>
 

@@ -117,7 +117,15 @@
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
   var HISTORY_KEY = 'spillerbytte_history_v1';
-  var HISTORY_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000; // matches ordered older than this are dropped on load
+  var HISTORY_SAVE_ENABLED_KEY = 'spillerbytte_history_enabled_v1';
+  // 5 years, not 365 days - this is a local JSON array of tiny records (a
+  // few KB even after a whole season), so there's no real storage pressure
+  // pushing toward aggressive pruning. Kept short-ish rather than "forever"
+  // only so a years-abandoned install doesn't accumulate without any cap.
+  // Unrelated to the 60-day SERVER-side cleanup (see keep-supabase-alive.yml)
+  // - that one frees up session codes in Supabase and never touches this
+  // local archive at all.
+  var HISTORY_MAX_AGE_MS = 5 * 365 * 24 * 60 * 60 * 1000;
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
   var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
@@ -138,11 +146,27 @@
   var IDLE_SUGGEST_SNOOZE_MS = 24 * 60 * 60 * 1000;
   var IDLE_SUGGEST_SNOOZE_KEY_PREFIX = 'spillerbytte_idle_snooze_';
 
-  // Single source of truth for the version shown in settings - bump on
+  // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.5';
+  var APP_VERSION = '1.9.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
+
+  // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
+  // footer on the launcher) - newest first, one entry per version bump.
+  // Keep each note short (roughly 10-15 words); it's a footnote, not
+  // release notes.
+  var VERSION_HISTORY = [
+    { version: '1.9.6', text: 'Info-knappene flyttet inn i selve Avslutt-knappene. Versjonsnummer og endringslogg lagt til på hjemskjermen.' },
+    { version: '1.9.5', text: 'Ny "Historikk" på hjemskjermen som lagrer gamle kamper lokalt. Automatisk innlogging med kode og tastatur som lukkes selv.' },
+    { version: '1.9.4', text: 'Nytt merke-design på snarveiknappene på innbytterbenken. Redesignet motstander-vindu og større Trenerappen-ikon.' },
+    { version: '1.9.3', text: 'Fikset trang knapperad i liggende modus. La til "Lukk Trenerappen" for økt-eiere.' },
+    { version: '1.9.2', text: 'Fikset avkuttet knappetekst på iPad i liggende modus og en låsning ved "bli med i økt".' },
+    { version: '1.9.1', text: 'La til eier/deltaker-roller for delte økter, med mulighet til å overføre eierskap til en annen.' },
+    { version: '1.9', text: 'Fikset gammel innstillingsvisning ved å bli med i en økt. La til tidsstempel per registrert mål.' },
+    { version: '1.8.5', text: 'Fikset flere mindre logikkfeil, blant annet i "Fjern siste mål" og oppstart av en ny økt.' },
+    { version: '1.7', text: 'Redesignet multiBytte- og avbryt-knappene på innbytterbenken for bedre synlighet.' }
+  ];
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
   // back-forward cache instead of doing a real reload) to make sure the
@@ -226,9 +250,25 @@
       title: 'Kumulert tidsberegning',
       text: 'AV: Trekantene som viser mest/minst spilletid tar kun hensyn til inneværende kamp. PÅ: trekantene tar hensyn til kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
     },
+    endPeriod: {
+      title: 'Kampslutt',
+      text: 'Avslutter denne perioden, men beholder laget og de kumulerte tallene til neste periode eller kamp.'
+    },
+    endReset: {
+      title: 'Avslutt og nullstill',
+      text: 'Starter helt på nytt - nullstiller spilletid, mål og kamptelling for alle. Krever et andre trykk for å bekrefte.'
+    },
+    leaveMatch: {
+      title: 'Forlat kampen',
+      text: 'Går til hjemskjermen, akkurat som tilbake-pilen øverst til venstre. Rører ingenting - kampen fortsetter nøyaktig som den er, og "Fortsett" fra hjemskjermen henter deg rett tilbake. Deler du økten med andre, er du fortsatt med i den i bakgrunnen; bruk "Forlat delt økt" under om du faktisk vil koble fra den.'
+    },
     closeSession: {
-      title: 'Lukk Trenerappen',
-      text: 'Forlater den delte økten på denne enheten - kampen selv rører ingenting. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
+      title: 'Forlat delt økt',
+      text: 'Kobler denne enheten fra den delte økten for godt - kampen selv rører ingenting. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
+    },
+    historySave: {
+      title: 'Lagre kamper til historikk',
+      text: 'Når dette er på, lagres motstander, resultat og spilletid per spiller til "Historikk" på hjemskjermen hver gang du trykker Kampslutt. Av som standard - skrur du den på, gjelder det fra neste Kampslutt, ikke bakover i tid. Lagres kun lokalt på denne enheten, ikke i den delte økten.'
     }
   };
   var resetConfirmArmed = false; // "Avslutt og nullstill" needs a second press to confirm
@@ -638,8 +678,21 @@
     saveHistoryArchive(list);
   }
 
+  // Off by default - a local, per-device preference (see the "Lagre kamper
+  // til historikk" toggle in settings), not part of synced state: it only
+  // governs whether THIS device writes to its own archive whenever it
+  // happens to be the one that presses Kampslutt.
+  function isHistorySaveEnabled(){
+    try { return localStorage.getItem(HISTORY_SAVE_ENABLED_KEY) === '1'; }
+    catch(e){ return false; }
+  }
+  /** @param {boolean} enabled */
+  function setHistorySaveEnabled(enabled){
+    try { localStorage.setItem(HISTORY_SAVE_ENABLED_KEY, enabled ? '1' : '0'); } catch(e){}
+  }
+
   // Called once per app load (see finishStartup()) - drops anything past
-  // the announced 365-day retention (see the note in the Historikk screen)
+  // the announced 5-year retention (see the note in the Historikk screen)
   // so the local archive doesn't grow forever. Returns the pruned list so
   // callers that need it right away don't have to re-read localStorage.
   /** @returns {HistoryMatchEntry[]} */
@@ -2439,6 +2492,11 @@
     // still gated by canEdit(), same as any other shared-state mutation,
     // now that settings is reachable by a genuinely read-only viewer too.
     els.wakeLockToggle.disabled = !canEdit();
+    // Purely local (see isHistorySaveEnabled) - never gated by canEdit()/
+    // isMaster(), same reasoning as wakeLock: this doesn't touch shared
+    // state at all, so a read-only viewer can freely toggle it for
+    // themselves too.
+    els.historySaveToggle.checked = isHistorySaveEnabled();
     els.shareSessionToggle.checked = !!sessionCode;
     els.shareSessionRow.hidden = !master;
     els.rankCumulativeRow.hidden = !master;
@@ -2447,22 +2505,16 @@
     els.fieldSizeInput.disabled = !isFirstRun || !master;
     els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
     // "Bli med i delt økt" only makes sense when this device isn't already
-    // in a session - once it is, leaving/closing is "Lukk Trenerappen"
-    // below, not a re-labelled join button (that used to say "Gå ut av
-    // delt økt", which read like it led to starting/continuing something,
-    // not just closing the app).
+    // in a session - once it is, leaving/closing is "Forlat økt" under
+    // "Avslutt" instead, not a re-labelled join button (that used to say
+    // "Gå ut av delt økt", which read like it led to starting/continuing
+    // something, not just closing the app).
     els.joinExistingBtn.hidden = !!sessionCode;
 
     disarmTransferOwnerConfirm();
     var transferTarget = master ? longestTenuredOtherParticipant() : null;
     els.transferOwnerRow.hidden = !transferTarget;
     if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
-    // Available to EVERYONE in a shared session, not just the owner - a
-    // participant who just wants to stop using the app on this device
-    // shouldn't have to reason about "Gå ut av delt økt" possibly implying
-    // they want to join/start something else. The consequence text (set on
-    // click, below) is what actually differs by role.
-    els.closeSessionRow.hidden = !sessionCode;
   }
 
   /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
@@ -2917,7 +2969,7 @@
     clearTimeout(resetConfirmTimer);
     resetConfirmArmed = false;
     els.endResetBtn.textContent = RESET_LABEL;
-    els.endResetBtn.classList.remove('armed', 'shake-btn');
+    els.endResetWrap.classList.remove('armed', 'shake-btn');
   }
 
   // Same double-press pattern as disarmResetConfirm(), for "Overfør
@@ -3037,23 +3089,27 @@
     // everything else, which is right for "this session's matches so far"
     // but wrong for a durable record the coach can look back on later.
     // Snapshots player NAMES (not just ids) so old entries stay meaningful
-    // even after a player is later removed from the roster.
-    archiveMatchToHistory({
-      id: uid(),
-      endedAt: now,
-      opponentName: state.opponentName || '',
-      opponentAbbr: state.opponentAbbr || '',
-      homeScore: homeScore,
-      awayScore: awayScore,
-      players: state.players.map(function(p){
-        return {
-          id: p.id,
-          name: p.name,
-          ms: playerMs[p.id] || 0,
-          goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
-        };
-      })
-    });
+    // even after a player is later removed from the roster. Gated on the
+    // "Lagre kamper til historikk" toggle (off by default) - a coach who
+    // never turns it on should see zero rows silently pile up locally.
+    if (isHistorySaveEnabled()){
+      archiveMatchToHistory({
+        id: uid(),
+        endedAt: now,
+        opponentName: state.opponentName || '',
+        opponentAbbr: state.opponentAbbr || '',
+        homeScore: homeScore,
+        awayScore: awayScore,
+        players: state.players.map(function(p){
+          return {
+            id: p.id,
+            name: p.name,
+            ms: playerMs[p.id] || 0,
+            goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
+          };
+        })
+      });
+    }
     state.goalLog = [];
     // Next match likely means a next opponent (cup format) - clearing this
     // brings the "?" back on the scoreboard and re-arms the opponent prompt
@@ -3238,6 +3294,7 @@
     els.transferOwnerRow = qs('transferOwnerRow');
     els.transferOwnerBtn = qs('transferOwnerBtn');
     els.transferOwnerNote = qs('transferOwnerNote');
+    els.leaveMatchBtn = qs('leaveMatchBtn');
     els.closeSessionRow = qs('closeSessionRow');
     els.closeSessionBtn = qs('closeSessionBtn');
     els.closeSessionConfirmModal = qs('closeSessionConfirmModal');
@@ -3262,7 +3319,9 @@
     els.matchHistorySummary = qs('matchHistorySummary');
     els.endMatchCancelBtn = qs('endMatchCancelBtn');
     els.endPeriodBtn = qs('endPeriodBtn');
+    els.endPeriodWrap = qs('endPeriodWrap');
     els.endResetBtn = qs('endResetBtn');
+    els.endResetWrap = qs('endResetWrap');
     els.reorgPromptModal = qs('reorgPromptModal');
     els.reorgNoBtn = qs('reorgNoBtn');
     els.reorgYesBtn = qs('reorgYesBtn');
@@ -3297,6 +3356,7 @@
     els.goalTimesCloseBtn = qs('goalTimesCloseBtn');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
+    els.historySaveToggle = qs('historySaveToggle');
     els.exportBtn = qs('exportBtn');
     els.exportModal = qs('exportModal');
     els.exportText = qs('exportText');
@@ -3334,8 +3394,25 @@
     els.joinCodeError = qs('joinCodeError');
     els.joinCodeCancelBtn = qs('joinCodeCancelBtn');
     els.joinCodeConfirmBtn = qs('joinCodeConfirmBtn');
-    els.appVersionLabel = qs('appVersionLabel');
-    els.appVersionLabel.textContent = 'v' + APP_VERSION;
+    els.launcherVersionBtn = qs('launcherVersionBtn');
+    els.launcherVersionBtn.textContent = 'v' + APP_VERSION.split('.').slice(0, 2).join('.');
+    els.versionHistoryModal = qs('versionHistoryModal');
+    els.versionHistoryTitle = qs('versionHistoryTitle');
+    els.versionHistoryList = qs('versionHistoryList');
+    els.versionHistoryCloseBtn = qs('versionHistoryCloseBtn');
+    els.launcherVersionBtn.addEventListener('click', function(){
+      els.versionHistoryTitle.textContent = 'v' + APP_VERSION;
+      els.versionHistoryList.innerHTML = VERSION_HISTORY.map(function(entry){
+        return '<div class="version-history-entry">' +
+          '<p class="version-history-entry-version">v' + escapeHtml(entry.version) + '</p>' +
+          '<p class="version-history-entry-text">' + escapeHtml(entry.text) + '</p>' +
+        '</div>';
+      }).join('');
+      els.versionHistoryModal.classList.add('open');
+    });
+    els.versionHistoryCloseBtn.addEventListener('click', function(){
+      els.versionHistoryModal.classList.remove('open');
+    });
     els.syncDot = qs('syncDot');
 
     networkOnline = navigator.onLine;
@@ -3432,22 +3509,44 @@
       els.settingsCloseConfirmModal.classList.remove('open');
     });
     els.endBtn.addEventListener('click', function(){
-      if (!canEdit()) return;
+      // No canEdit() gate here anymore - "Forlat kampen"/"Forlat delt økt"
+      // below need to stay reachable even for a read-only viewer (see
+      // .view-only's comment in style.css), so the modal itself opens for
+      // everyone; each individual action inside is gated on its own.
       disarmResetConfirm();
       renderEndMatchSummary();
       renderMatchHistorySummary();
       // "Avslutt og nullstill" wipes the whole match for every connected
       // device at once - master-only, same as the other session-wide
-      // administration in settings. "Kampslutt" (next period) stays
-      // available to anyone with edit rights.
-      els.endResetBtn.hidden = !isMaster();
+      // administration in settings. "Kampslutt" (next period) needs real
+      // edit rights. Neither "Forlat kampen" (pure navigation) nor "Forlat
+      // delt økt" (detaches this device, never the match itself) touch the
+      // match at all, so neither needs a canEdit()/isMaster() gate.
+      els.endPeriodWrap.hidden = !canEdit();
+      els.endResetWrap.hidden = !isMaster();
+      els.closeSessionRow.hidden = !sessionCode;
       els.endMatchModal.classList.add('open');
     });
     els.endMatchCancelBtn.addEventListener('click', function(){
       disarmResetConfirm();
       els.endMatchModal.classList.remove('open');
     });
+    // Pure navigation, identical to backToMenuActionBtn's "Gå tilbake til
+    // hovedmeny" above (same showLauncherMenu(), no state touched at all)
+    // - just also reachable from "Avslutt", since that's where people
+    // instinctively look when they want to stop for now. Always visible,
+    // regardless of sharing/role/edit rights, and no confirmation needed:
+    // there's nothing here that could go wrong or need undoing.
+    els.leaveMatchBtn.addEventListener('click', function(){
+      els.endMatchModal.classList.remove('open');
+      showLauncherMenu();
+    });
     els.endPeriodBtn.addEventListener('click', function(){
+      // Explicit guard, not just relying on the button being hidden for a
+      // read-only viewer (see endBtn's click handler) - endMatchModal is
+      // reachable by everyone now, so this can't lean on canEdit() having
+      // already been checked before the modal even opened.
+      if (!canEdit()) return;
       disarmResetConfirm();
       els.endMatchModal.classList.remove('open');
       els.reorgPromptModal.classList.add('open');
@@ -3486,10 +3585,10 @@
       if (!resetConfirmArmed){
         resetConfirmArmed = true;
         els.endResetBtn.textContent = RESET_CONFIRM_LABEL;
-        els.endResetBtn.classList.add('armed');
-        els.endResetBtn.classList.remove('shake-btn');
-        void els.endResetBtn.offsetWidth; // restart the shake if pressed again quickly
-        els.endResetBtn.classList.add('shake-btn');
+        els.endResetWrap.classList.add('armed');
+        els.endResetWrap.classList.remove('shake-btn');
+        void els.endResetWrap.offsetWidth; // restart the shake if pressed again quickly
+        els.endResetWrap.classList.add('shake-btn');
         clearTimeout(resetConfirmTimer);
         resetConfirmTimer = setTimeout(disarmResetConfirm, 2500);
         return;
@@ -3510,6 +3609,9 @@
         wakeLock.release().catch(function(){});
         wakeLock = null;
       }
+    });
+    els.historySaveToggle.addEventListener('change', function(){
+      setHistorySaveEnabled(els.historySaveToggle.checked);
     });
     els.exportBtn.addEventListener('click', function(){
       els.exportText.value = buildExportText();
@@ -3624,16 +3726,19 @@
       // immediately, same as if a slave had just opened settings fresh.
       openSettings(false);
     });
-    // "Lukk Trenerappen" - available to everyone in a shared session, not
-    // just the owner, so "I'm done on this device" always reads as exactly
-    // that (see the info-btn beside it) rather than "Gå ut av delt økt",
-    // which sounded like it led to starting/continuing something else.
-    // Crucially, "Lukk" is NEVER "Avslutt og nullstill" in disguise - even
-    // when the owner is the only one left in the session, closing just
-    // detaches this device and leaves the match exactly as it is, so
-    // "Fortsett" from the launcher later picks it back up untouched. Only
-    // an actual OTHER participant changes the consequence (ownership has
-    // to go somewhere so the session stays administrable).
+    // "Forlat økt" - lives under "Avslutt" (see endBtn), not settings,
+    // since that's the button both an owner AND a joined participant
+    // instinctively reach for when they want to leave. Available to
+    // everyone in a shared session, not just the owner - "I'm done on
+    // this device" always reads as exactly that (see the info-btn beside
+    // it) rather than "Gå ut av delt økt", which sounded like it led to
+    // starting/continuing something else. Crucially, this is NEVER
+    // "Avslutt og nullstill" in disguise - even when the owner is the only
+    // one left in the session, leaving just detaches this device and
+    // leaves the match exactly as it is, so "Fortsett" from the launcher
+    // later picks it back up untouched. Only an actual OTHER participant
+    // changes the consequence (ownership has to go somewhere so the
+    // session stays administrable).
     els.closeSessionBtn.addEventListener('click', function(){
       if (!sessionCode) return;
       if (isMaster()){
@@ -3664,13 +3769,13 @@
         }
       }
       leaveSession();
-      els.settingsModal.classList.remove('open');
+      els.endMatchModal.classList.remove('open');
       showLauncherMenu();
     });
     els.joinExistingBtn.addEventListener('click', function(){
       // Only reachable when this device isn't already in a session (see
-      // openSettings - "Lukk Trenerappen" is what leaves one), so this is
-      // always the join flow.
+      // openSettings - "Forlat økt" under "Avslutt" is what leaves one),
+      // so this is always the join flow.
       els.settingsModal.classList.remove('open');
       els.joinCodeInput.value = '';
       els.joinCodeError.style.display = 'none';
@@ -3697,6 +3802,8 @@
         return;
       }
       joinSession(code, function(){
+        // Only on success - see the identical comment on submitLauncherJoin().
+        els.joinCodeInput.blur();
         els.joinCodeModal.classList.remove('open');
         if (state.players.length === 0){
           if (canEdit()) openSettings(true, true);
@@ -3810,6 +3917,11 @@
         return;
       }
       joinSession(code, function(){
+        // Only on success - a wrong code keeps the keyboard up so the
+        // retry (see the cleared input below) doesn't need a re-tap first.
+        // iOS never dismisses a numeric keypad on its own just because the
+        // field it belongs to scrolls out of view/behind another screen.
+        els.launcherJoinInput.blur();
         enterAppFromLauncher();
         if (state.players.length === 0){
           if (canEdit()) openSettings(true, true);
