@@ -123,7 +123,6 @@
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
   var HISTORY_KEY = 'spillerbytte_history_v1';
-  var HISTORY_SAVE_ENABLED_KEY = 'spillerbytte_history_enabled_v1';
   // 5 years, not 365 days - this is a local JSON array of tiny records (a
   // few KB even after a whole season), so there's no real storage pressure
   // pushing toward aggressive pruning. Kept short-ish rather than "forever"
@@ -155,7 +154,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.8';
+  var APP_VERSION = '1.9.9';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -163,6 +162,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.9', text: 'Spør nå om lagring til historikk ved Kampslutt/Avslutt/Ny økt, i stedet for en fast innstilling. Kun én "Er du sikker?"-knapp av gangen. Kampslutt/Avslutt omdøpt.' },
     { version: '1.9.8', text: 'Fikset at OK-knappen kunne flytte seg ved utfylling av spillernavn. Fjernet sirkelen rundt info-/×-symbolene. Oppdatert symbolforklaring og eksport.' },
     { version: '1.9.7', text: '"Er du sikker?"-bekreftelse med kryss lagt til på Kampslutt, Avslutt og nullstill, Overfør økt-eier og Ny økt.' },
     { version: '1.9.6', text: 'Info-knappene flyttet inn i selve Avslutt-knappene. Versjonsnummer og endringslogg lagt til på hjemskjermen.' },
@@ -255,12 +255,12 @@
       text: 'AV: Trekantene som viser mest/minst spilletid tar kun hensyn til inneværende kamp. PÅ: trekantene tar hensyn til kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
     },
     endPeriod: {
-      title: 'Kampslutt',
-      text: 'Avslutter denne perioden, men beholder laget og de kumulerte tallene til neste periode eller kamp.'
+      title: 'Kampslutt, ny kamp',
+      text: 'Avslutter denne kampen, men beholder laget og de kumulerte tallene til neste kamp. Du blir spurt om denne kampen skal lagres til historikk.'
     },
     endReset: {
-      title: 'Avslutt og nullstill',
-      text: 'Starter helt på nytt - nullstiller spilletid, mål og kamptelling for alle. Krever et andre trykk for å bekrefte.'
+      title: 'Avslutt',
+      text: 'Starter helt på nytt - nullstiller spilletid, mål og kamptelling for alle. Krever et andre trykk for å bekrefte. Du blir spurt om den pågående kampen skal lagres til historikk.'
     },
     leaveMatch: {
       title: 'Forlat kampen',
@@ -269,10 +269,6 @@
     closeSession: {
       title: 'Forlat delt økt',
       text: 'Kobler denne enheten fra den delte økten for godt - kampen selv røres ikke. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
-    },
-    historySave: {
-      title: 'Lagre kamper til historikk',
-      text: 'Når dette er på, lagres motstander, resultat og spilletid per spiller til "Historikk" på hjemskjermen hver gang du trykker Kampslutt. Av som standard - skrur du den på, gjelder det fra neste Kampslutt, ikke bakover i tid. Lagres kun lokalt på denne enheten, ikke i den delte økten.'
     }
   };
   // "Trykk igjen for å bekrefte"-mønsteret, brukt for enhver handling som
@@ -282,6 +278,11 @@
   // module vars (not re-declared locally) keeps disarm() reachable from
   // functions defined outside init(), like openSettings().
   var kampsluttConfirm, avsluttConfirm, transferOwnerConfirm;
+  // Coach's answer from the "lagre denne kampen?" prompt (see
+  // askSaveToHistory), read by reorgNoBtn/reorgYesBtn once the reorg prompt
+  // that follows it closes - the two questions are independent, but ask
+  // order puts the save question first.
+  var pendingSaveToHistory = false;
   /** @type {AudioContext|null} */
   var audioCtx = null;
   var els = {};
@@ -315,11 +316,19 @@
    * @param {function} [opts.onArm]
    * @param {function} [opts.onDisarm]
    */
+  // Every confirm-arm created so far (see createConfirmArm below) - only one
+  // may ever be armed ("Er du sikker?") at once, so arming one disarms the
+  // rest first. Module-scope for the same reason as kampsluttConfirm etc.
+  // above: createConfirmArm() runs several times across init(), each call
+  // needs to see every arm created before it.
+  var allConfirmArms = [];
   function createConfirmArm(opts){
     var armed = false;
     var shakeEls = opts.shakeEls || opts.armedEls;
     /** @type {ReturnType<typeof setTimeout>|undefined} */
     var timer;
+    /** @type {{disarm: function, isArmed: function, press: function}} */
+    var api;
     function disarm(){
       clearTimeout(timer);
       if (!armed) return;
@@ -330,6 +339,11 @@
       if (opts.onDisarm) opts.onDisarm();
     }
     function arm(){
+      // Only one button is ever allowed to read "Er du sikker?" at a time -
+      // pressing this one fades any other back to its resting state first
+      // (see the lengthened .15s->.5s background/color transitions in
+      // style.css for that fade).
+      allConfirmArms.forEach(function(other){ if (other !== api) other.disarm(); });
       armed = true;
       opts.labelEl.textContent = opts.confirmLabel || 'Er du sikker?';
       opts.armedEls.forEach(function(el){ el.classList.add('armed'); });
@@ -340,7 +354,7 @@
       clearTimeout(timer);
       timer = setTimeout(disarm, CONFIRM_TIMEOUT_MS);
     }
-    return {
+    api = {
       disarm: disarm,
       isArmed: function(){ return armed; },
       // Call from the main button's click handler: true the moment it
@@ -352,6 +366,8 @@
         return true;
       }
     };
+    allConfirmArms.push(api);
+    return api;
   }
 
   function uid(){
@@ -743,19 +759,6 @@
     var list = loadHistoryArchive();
     list.push(entry);
     saveHistoryArchive(list);
-  }
-
-  // Off by default - a local, per-device preference (see the "Lagre kamper
-  // til historikk" toggle in settings), not part of synced state: it only
-  // governs whether THIS device writes to its own archive whenever it
-  // happens to be the one that presses Kampslutt.
-  function isHistorySaveEnabled(){
-    try { return localStorage.getItem(HISTORY_SAVE_ENABLED_KEY) === '1'; }
-    catch(e){ return false; }
-  }
-  /** @param {boolean} enabled */
-  function setHistorySaveEnabled(enabled){
-    try { localStorage.setItem(HISTORY_SAVE_ENABLED_KEY, enabled ? '1' : '0'); } catch(e){}
   }
 
   // Called once per app load (see finishStartup()) - drops anything past
@@ -2533,11 +2536,6 @@
     // still gated by canEdit(), same as any other shared-state mutation,
     // now that settings is reachable by a genuinely read-only viewer too.
     els.wakeLockToggle.disabled = !canEdit();
-    // Purely local (see isHistorySaveEnabled) - never gated by canEdit()/
-    // isMaster(), same reasoning as wakeLock: this doesn't touch shared
-    // state at all, so a read-only viewer can freely toggle it for
-    // themselves too.
-    els.historySaveToggle.checked = isHistorySaveEnabled();
     els.shareSessionToggle.checked = !!sessionCode;
     els.shareSessionRow.hidden = !master;
     els.rankCumulativeRow.hidden = !master;
@@ -2570,13 +2568,17 @@
     var row = document.createElement('div');
     row.className = 'name-row' + (anyLocked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
-    var hasValue = !!(name && name.trim());
+    // The "x" shows on every editable row, blank or not - not just filled
+    // ones - so a spare row added via "+ Legg til spiller" (or any of the
+    // fixed starting rows) can always be closed again. There's no minimum
+    // enforced here; saveSettings already rejects the form if it ends up
+    // with zero named players.
     row.innerHTML =
       '<div class="name-input-wrap">' +
         '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (anyLocked ? ' disabled' : '') + '>' +
         (anyLocked ? '' :
-          '<span class="name-row-clear-divider"' + (hasValue ? '' : ' hidden') + ' aria-hidden="true"></span>' +
-          '<button type="button" class="name-row-clear-btn"' + (hasValue ? '' : ' hidden') + ' aria-label="Fjern">×</button>') +
+          '<span class="name-row-clear-divider" aria-hidden="true"></span>' +
+          '<button type="button" class="name-row-clear-btn" aria-label="Fjern">×</button>') +
       '</div>' +
       (anyLocked
         ? '<span class="locked-row-note" title="' + (locked ? 'Utespillere kan ikke endres eller fjernes her mens de er på banen' : 'Kun økt-eieren kan endre spillernavn') + '">🔒</span>'
@@ -2584,18 +2586,14 @@
     els.nameRows.appendChild(row);
     var wrap = row.querySelector('.name-input-wrap');
     if (anyLocked) return row;
-    var clearDivider = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-divider'));
-    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-btn'));
     var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
+    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-btn'));
     removeBtn.addEventListener('click', function(){
       row.remove();
       settingsDirty = true;
     });
     input.addEventListener('input', function(){
       clearFieldInvalid(wrap);
-      var filled = !!input.value.trim();
-      removeBtn.hidden = !filled;
-      clearDivider.hidden = !filled;
     });
     attachSuggestions(input, wrap);
     return row;
@@ -2655,6 +2653,11 @@
       if (!item) return;
       e.preventDefault();
       input.value = item.textContent;
+      // Setting .value directly doesn't fire 'input', so the row's own
+      // listener (clearing the invalid badge, showing the "x") never runs
+      // for a name picked from this list - dispatch it so picking a
+      // suggestion behaves exactly like typing the same name would.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
       list.classList.add('hidden');
     });
   }
@@ -3097,7 +3100,69 @@
     }).join('');
   }
 
-  function endMatchPeriod(reorganize){
+  // Shared by endMatchPeriod (Kampslutt) and archiveInProgressMatch
+  // (Avslutt/Ny økt) - score and per-player time for the match/period still
+  // in progress right now. Read before anything about to wipe/advance the
+  // period's baseline runs, so it's each player's time in THIS match
+  // specifically, not the running lifetime total.
+  function computeMatchScoreAndPlayerMs(now){
+    var homeScore = state.goalLog.filter(function(g){ return g.team === 'home'; }).length;
+    var awayScore = state.goalLog.filter(function(g){ return g.team === 'away'; }).length;
+    var playerMs = {};
+    state.players.forEach(function(p){ playerMs[p.id] = currentPeriodFieldMs(p.id, now); });
+    return { homeScore: homeScore, awayScore: awayScore, playerMs: playerMs };
+  }
+
+  // The persistent, local, cross-session archive entry (see
+  // loadHistoryArchive()) for the "Historikk" tile - snapshots player NAMES
+  // (not just ids) so old entries stay meaningful even after a player is
+  // later removed from the roster.
+  function buildHistoryArchiveEntry(now, calc){
+    return {
+      id: uid(),
+      endedAt: now,
+      opponentName: state.opponentName || '',
+      opponentAbbr: state.opponentAbbr || '',
+      homeScore: calc.homeScore,
+      awayScore: calc.awayScore,
+      players: state.players.map(function(p){
+        return {
+          id: p.id,
+          name: p.name,
+          ms: calc.playerMs[p.id] || 0,
+          goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
+        };
+      })
+    };
+  }
+
+  // Avslutt/Ny økt discard the whole session state via resetMatch()
+  // (defaultState()), which never goes through endMatchPeriod - so the
+  // match still in progress at that moment would otherwise vanish without
+  // ever reaching the local history archive. Called (with the coach's
+  // answer to "lagre denne kampen?") right before resetMatch() wipes
+  // everything away for good.
+  function archiveInProgressMatch(saveToHistory){
+    if (!saveToHistory) return;
+    var now = Date.now();
+    var calc = computeMatchScoreAndPlayerMs(now);
+    archiveMatchToHistory(buildHistoryArchiveEntry(now, calc));
+  }
+
+  /** @type {((saveToHistory: boolean) => void)|null} */
+  var pendingSaveHistoryCallback = null;
+  // Shown right after the coach confirms Kampslutt/Avslutt/Ny økt (any path
+  // that ends or discards the current match) - callback runs with true/false
+  // once they pick, then resetMatch()/endMatchPeriod() carries on. Not shown
+  // for "Forlat kampen"/"Forlat delt økt" - those never touch the match.
+  /** @param {(saveToHistory: boolean) => void} callback */
+  function askSaveToHistory(callback){
+    pendingSaveHistoryCallback = callback;
+    els.saveHistoryModal.classList.add('open');
+  }
+
+  /** @param {boolean} reorganize @param {boolean} saveToHistory */
+  function endMatchPeriod(reorganize, saveToHistory){
     var now = Date.now();
     state.onField.forEach(function(id){ commitFieldStint(id, now); });
     state.onBench.forEach(function(id){ commitBenchStint(id, now); });
@@ -3107,13 +3172,9 @@
     // halves of one match), so the goal tally must NOT carry over into the
     // next match either (see goalLog reset below - this used to be a bug:
     // goals kept accumulating across what the coach clearly meant as
-    // separate matches). Read now, before periodStartCumulative moves its
-    // baseline forward below, so it's each player's time in THIS match
-    // specifically, not the running lifetime total.
-    var homeScore = state.goalLog.filter(function(g){ return g.team === 'home'; }).length;
-    var awayScore = state.goalLog.filter(function(g){ return g.team === 'away'; }).length;
-    var playerMs = {};
-    state.players.forEach(function(p){ playerMs[p.id] = currentPeriodFieldMs(p.id, now); });
+    // separate matches).
+    var calc = computeMatchScoreAndPlayerMs(now);
+    var homeScore = calc.homeScore, awayScore = calc.awayScore, playerMs = calc.playerMs;
     if (!Array.isArray(state.matchHistory)) state.matchHistory = [];
     state.matchHistory.push({
       id: uid(),
@@ -3136,32 +3197,16 @@
           return { playerId: id, playerName: p ? p.name : '(fjernet spiller)', matchMs: g.matchMs };
         })
     });
-    // Separate from the above: a persistent, local, cross-session archive
-    // (see loadHistoryArchive()) for the "Historikk" tile - state.matchHistory
+    // Separate from the above: the persistent local archive - state.matchHistory
     // is synced shared-session state and gets wiped by resetMatch() same as
     // everything else, which is right for "this session's matches so far"
-    // but wrong for a durable record the coach can look back on later.
-    // Snapshots player NAMES (not just ids) so old entries stay meaningful
-    // even after a player is later removed from the roster. Gated on the
-    // "Lagre kamper til historikk" toggle (off by default) - a coach who
-    // never turns it on should see zero rows silently pile up locally.
-    if (isHistorySaveEnabled()){
-      archiveMatchToHistory({
-        id: uid(),
-        endedAt: now,
-        opponentName: state.opponentName || '',
-        opponentAbbr: state.opponentAbbr || '',
-        homeScore: homeScore,
-        awayScore: awayScore,
-        players: state.players.map(function(p){
-          return {
-            id: p.id,
-            name: p.name,
-            ms: playerMs[p.id] || 0,
-            goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
-          };
-        })
-      });
+    // but wrong for a durable record the coach can look back on later. Gated
+    // on the coach's answer to the "lagre denne kampen til historikk?"
+    // prompt shown right before this runs (see saveHistoryModal), not a
+    // standing setting - a coach who always says no should see zero rows
+    // silently pile up locally.
+    if (saveToHistory){
+      archiveMatchToHistory(buildHistoryArchiveEntry(now, calc));
     }
     state.goalLog = [];
     // Next match likely means a next opponent (cup format) - clearing this
@@ -3387,6 +3432,9 @@
     els.reorgPromptModal = qs('reorgPromptModal');
     els.reorgNoBtn = qs('reorgNoBtn');
     els.reorgYesBtn = qs('reorgYesBtn');
+    els.saveHistoryModal = qs('saveHistoryModal');
+    els.saveHistoryYesBtn = qs('saveHistoryYesBtn');
+    els.saveHistoryNoBtn = qs('saveHistoryNoBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
     els.multiSelectCancelBtn = qs('multiSelectCancelBtn');
@@ -3418,7 +3466,6 @@
     els.goalTimesCloseBtn = qs('goalTimesCloseBtn');
     els.matchDurationInput = qs('matchDurationInput');
     els.wakeLockToggle = qs('wakeLockToggle');
-    els.historySaveToggle = qs('historySaveToggle');
     els.exportBtn = qs('exportBtn');
     els.exportModal = qs('exportModal');
     els.exportText = qs('exportText');
@@ -3504,7 +3551,7 @@
     kampsluttConfirm = createConfirmArm({
       armedEls: [els.endPeriodWrap],
       labelEl: els.endPeriodBtn,
-      restingLabel: 'Kampslutt',
+      restingLabel: 'Kampslutt, ny kamp',
       onArm: function(){
         els.endPeriodInfoBtn.textContent = '×';
         els.endPeriodInfoBtn.classList.add('is-cancel');
@@ -3519,7 +3566,7 @@
     avsluttConfirm = createConfirmArm({
       armedEls: [els.endResetWrap],
       labelEl: els.endResetBtn,
-      restingLabel: 'Avslutt og nullstill',
+      restingLabel: 'Avslutt',
       onArm: function(){
         els.endResetInfoBtn.textContent = '×';
         els.endResetInfoBtn.classList.add('is-cancel');
@@ -3576,6 +3623,22 @@
     // session viewer) - it's pure navigation, and the mutating fields
     // inside gate themselves individually (see openSettings/isMaster).
     els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
+    // A focused <input type=number> silently changes its value on mouse-
+    // wheel/trackpad scroll in Chrome/Firefox - completely invisible if the
+    // input is scrolled past rather than deliberately spun. On
+    // fieldSizeInput specifically that was the real cause behind "new name
+    // fields keep appearing on their own": scrolling the settings modal
+    // past "Antall utespillere" while it still had focus (e.g. right after
+    // tapping it) silently bumped the count, which syncNameRows()
+    // immediately (and correctly) followed by adding more rows - a
+    // one-scroll-tick change nobody actually asked for, made to look like
+    // two unrelated systems fighting when it was really just this. Blurring
+    // on wheel stops the browser from applying that default page-scroll
+    // action to the input's value, while the page itself keeps scrolling
+    // normally underneath.
+    Array.prototype.forEach.call(document.querySelectorAll('input[type=number]'), function(el){
+      el.addEventListener('wheel', function(){ el.blur(); });
+    });
     els.fieldSizeInput.addEventListener('input', syncNameRows);
     els.addPlayerRowBtn.addEventListener('click', function(){
       addNameRow(null, '', els.nameRows.querySelectorAll('.name-row').length + 1, false, true);
@@ -3668,20 +3731,35 @@
       if (!kampsluttConfirm.press()) return; // just armed ("Er du sikker?") - wait for the second press
       avsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
-      els.reorgPromptModal.classList.add('open');
+      askSaveToHistory(function(saveToHistory){
+        pendingSaveToHistory = saveToHistory;
+        els.reorgPromptModal.classList.add('open');
+      });
     });
     els.reorgNoBtn.addEventListener('click', function(){
       els.reorgPromptModal.classList.remove('open');
-      endMatchPeriod(false);
+      endMatchPeriod(false, pendingSaveToHistory);
       renderAll();
       openOpponentModal(); // next match, likely a different opponent (cup format) - see endMatchPeriod
     });
     els.reorgYesBtn.addEventListener('click', function(){
       els.reorgPromptModal.classList.remove('open');
       animateReorganization(function(){
-        endMatchPeriod(true);
+        endMatchPeriod(true, pendingSaveToHistory);
         openOpponentModal();
       });
+    });
+    els.saveHistoryYesBtn.addEventListener('click', function(){
+      els.saveHistoryModal.classList.remove('open');
+      var cb = pendingSaveHistoryCallback;
+      pendingSaveHistoryCallback = null;
+      if (cb) cb(true);
+    });
+    els.saveHistoryNoBtn.addEventListener('click', function(){
+      els.saveHistoryModal.classList.remove('open');
+      var cb = pendingSaveHistoryCallback;
+      pendingSaveHistoryCallback = null;
+      if (cb) cb(false);
     });
     els.idleSuggestCancelBtn.addEventListener('click', function(){
       els.idleSuggestModal.classList.remove('open');
@@ -3696,21 +3774,34 @@
       els.idleSuggestModal.classList.remove('open');
       var kind = idleSuggestKind;
       idleSuggestKind = null;
-      if (kind === 'reset') resetMatch();
-      else if (kind === 'endPeriod'){ endMatchPeriod(false); renderAll(); }
+      if (kind === 'reset'){
+        askSaveToHistory(function(saveToHistory){
+          archiveInProgressMatch(saveToHistory);
+          resetMatch();
+        });
+      } else if (kind === 'endPeriod'){
+        askSaveToHistory(function(saveToHistory){
+          endMatchPeriod(false, saveToHistory);
+          renderAll();
+        });
+      }
     });
     els.endResetBtn.addEventListener('click', function(){
       if (!isMaster()) return;
       if (!avsluttConfirm.press()) return; // just armed - wait for the second press
       kampsluttConfirm.disarm();
-      resetMatch();
-      // resetMatch() itself opens settings (the same first-run flow "Ny
-      // økt" relies on, to set up a fresh roster right away) - "Avslutt og
-      // nullstill" instead sends the user back to the home screen, same as
-      // "Forlat kampen", since they're mid-match here and more likely to
-      // want a clean slate than to fill in a new roster immediately.
-      els.settingsModal.classList.remove('open');
-      showLauncherMenu();
+      els.endMatchModal.classList.remove('open');
+      askSaveToHistory(function(saveToHistory){
+        archiveInProgressMatch(saveToHistory);
+        resetMatch();
+        // resetMatch() itself opens settings (the same first-run flow "Ny
+        // økt" relies on, to set up a fresh roster right away) - "Avslutt"
+        // instead sends the user back to the home screen, same as "Forlat
+        // kampen", since they're mid-match here and more likely to want a
+        // clean slate than to fill in a new roster immediately.
+        els.settingsModal.classList.remove('open');
+        showLauncherMenu();
+      });
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
@@ -3725,9 +3816,6 @@
         wakeLock.release().catch(function(){});
         wakeLock = null;
       }
-    });
-    els.historySaveToggle.addEventListener('change', function(){
-      setHistorySaveEnabled(els.historySaveToggle.checked);
     });
     els.exportBtn.addEventListener('click', function(){
       els.exportText.value = buildExportText();
@@ -4108,8 +4196,16 @@
         return;
       }
       if (!newSessionConfirm.press()) return; // just armed - wait for the second press
-      resetMatch();
-      enterAppFromLauncher();
+      // Close the glass popup itself before the save-prompt opens - it's a
+      // z-index:5 overlay nested in .launcher-tile, well below a .modal's
+      // z-index:100, but left "open" it still visually doubles up behind
+      // the prompt and (worse) can eat its taps.
+      closeLauncherChoice();
+      askSaveToHistory(function(saveToHistory){
+        archiveInProgressMatch(saveToHistory);
+        resetMatch();
+        enterAppFromLauncher();
+      });
     });
     els.joinSessionChoiceBtn.addEventListener('click', showLauncherJoinPanel);
     els.launcherChoiceCancelBtn.addEventListener('click', closeLauncherChoice);

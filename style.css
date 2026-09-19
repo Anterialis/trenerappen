@@ -1153,9 +1153,6 @@
     cursor:pointer; transition:transform .1s ease; outline:none;
   }
   .name-row-clear-btn:active{ transform:scale(.8); }
-  /* [hidden] gotcha: the unconditional display:flex above would otherwise
-     silently defeat the native [hidden]{display:none} rule. */
-  .name-row-clear-btn[hidden]{ display:none; }
   .suggest-list{
     position:absolute; left:0; right:0; top:calc(100% + 4px);
     background:#fff; border:1px solid #e1e4e9; border-radius:var(--radius-sm);
@@ -1222,7 +1219,10 @@
   .stack-btn-split{
     position:relative; width:100%;
     border-radius:var(--radius-sm); background:#f0f1f3;
-    transition:background .15s ease;
+    /* .5s (not .15s) so the armed->resting fade (see createConfirmArm's
+       mutual-exclusivity disarm) reads as a fade, not a flicker, when one
+       press-again button bumps another back to resting. */
+    transition:background .5s ease;
   }
   /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
      [hidden] alone can't beat position:relative's own display:block, but
@@ -1238,18 +1238,18 @@
     display:block; width:100%; border:none; background:none; color:var(--ink);
     font-family:inherit; font-size:15px; font-weight:700; cursor:pointer;
     padding:14px 44px 14px 14px; text-align:center;
-    transition:transform .12s ease, color .15s ease;
+    transition:transform .12s ease, color .5s ease;
   }
   .stack-btn-split-main:active{ transform:scale(.97); }
   .stack-btn-split-divider{
     position:absolute; top:10px; bottom:10px; right:38px; width:1px;
     background:rgba(22,32,43,.12);
-    transition:background .15s ease;
+    transition:background .5s ease;
     pointer-events:none;
   }
   .stack-btn-split .info-btn{
     position:absolute; top:50%; right:14px; transform:translateY(-50%);
-    transition:border-color .15s ease, color .15s ease, transform .1s ease;
+    transition:border-color .5s ease, color .5s ease, transform .1s ease;
     outline:none;
   }
   /* Deliberate "pressed into the screen" shrink on tap, replacing the
@@ -1628,6 +1628,10 @@
      not among the other modals above (all opened only once the launcher
      is already hidden, so 100-140 is plenty for them). */
   #versionHistoryModal{ z-index:310; }
+  /* Same reasoning as #versionHistoryModal above - "Ny økt" can ask this
+     while .launcher-screen is still up (the match being discarded hasn't
+     been replaced by a fresh one yet), so this needs to clear it too. */
+  #saveHistoryModal{ z-index:310; }
   .settings-card{ position:relative; padding-top:50px; }
 
   .session-code-bar{
