@@ -95,7 +95,7 @@
   // Single source of truth for the version shown in settings - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.2';
+  var APP_VERSION = '1.9.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Runs at startup (and when iOS restores a suspended PWA tab from its
@@ -2059,6 +2059,11 @@
     var transferTarget = master ? longestTenuredOtherParticipant() : null;
     els.transferOwnerRow.hidden = !transferTarget;
     if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
+    // "Lukk Trenerappen" only makes sense for the owner of an actually
+    // shared session - a non-shared session already closes via the normal
+    // "Avslutt og nullstill" path, and a non-owner already has "Gå ut av
+    // delt økt" for the same "I'm done on this device" need.
+    els.closeSessionBtn.hidden = !(master && sessionCode);
   }
 
   /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
@@ -2681,6 +2686,11 @@
     els.transferOwnerRow = qs('transferOwnerRow');
     els.transferOwnerBtn = qs('transferOwnerBtn');
     els.transferOwnerNote = qs('transferOwnerNote');
+    els.closeSessionBtn = qs('closeSessionBtn');
+    els.closeSessionConfirmModal = qs('closeSessionConfirmModal');
+    els.closeSessionConfirmText = qs('closeSessionConfirmText');
+    els.closeSessionCancelBtn = qs('closeSessionCancelBtn');
+    els.closeSessionConfirmBtn = qs('closeSessionConfirmBtn');
     els.nameRows = qs('nameRows');
     els.durMin = qs('durMin');
     els.durSec = qs('durSec');
@@ -3015,6 +3025,37 @@
       // isMaster()-gated field/row needs to flip to its locked/hidden state
       // immediately, same as if a slave had just opened settings fresh.
       openSettings(false);
+    });
+    // "Lukk Trenerappen" - the owner's own way to step away from the match
+    // (dead battery, hand phone to someone else, etc.) without ending it
+    // for everyone else. Unlike "Overfør økt-eier" this also detaches THIS
+    // device from the session afterwards, and unlike "Avslutt og
+    // nullstill" it only wipes the match when there's genuinely nobody
+    // left to hand it to.
+    els.closeSessionBtn.addEventListener('click', function(){
+      if (!isMaster() || !sessionCode) return;
+      var target = longestTenuredOtherParticipant();
+      els.closeSessionConfirmText.textContent = target
+        ? 'Økten overføres til enheten som ' + formatJoinedAgo(target.joinedAt) + ', og denne enheten forlater økten.'
+        : 'Ingen andre er med i økten, så kampen avsluttes og nullstilles idet du lukker.';
+      els.closeSessionConfirmModal.classList.add('open');
+    });
+    els.closeSessionCancelBtn.addEventListener('click', function(){
+      els.closeSessionConfirmModal.classList.remove('open');
+    });
+    els.closeSessionConfirmBtn.addEventListener('click', function(){
+      els.closeSessionConfirmModal.classList.remove('open');
+      if (!isMaster() || !sessionCode) return;
+      var target = longestTenuredOtherParticipant();
+      if (target){
+        state.sessionOwnerDeviceId = target.deviceId;
+        saveState();
+      } else {
+        resetMatch(); // reopens settings for a fresh setup - overridden below
+      }
+      leaveSession();
+      els.settingsModal.classList.remove('open');
+      showLauncherMenu();
     });
     els.joinExistingBtn.addEventListener('click', function(){
       if (!isMaster() && sessionCode){

@@ -231,6 +231,8 @@
       <p id="transferOwnerNote" class="locked-note"></p>
     </div>
 
+    <button type="button" id="closeSessionBtn" class="export-link-btn" hidden>🚪 Lukk Trenerappen (denne enheten)</button>
+
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
     <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
     <button type="button" id="exportBtn" class="export-link-btn">📋 Eksporter spillerdata</button>
@@ -240,6 +242,17 @@
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
     </div>
     <div class="app-version" id="appVersionLabel"></div>
+  </div>
+</div>
+
+<div id="closeSessionConfirmModal" class="modal">
+  <div class="modal-card">
+    <h2>Lukk Trenerappen?</h2>
+    <p class="sub" id="closeSessionConfirmText"></p>
+    <div class="modal-actions">
+      <button type="button" id="closeSessionCancelBtn" class="secondary">Avbryt</button>
+      <button type="button" id="closeSessionConfirmBtn" class="primary">Lukk</button>
+    </div>
   </div>
 </div>
 

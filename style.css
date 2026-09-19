@@ -491,14 +491,21 @@
     }
   }
   .bench-label-row{
-    display:flex; align-items:center; justify-content:space-between;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
     padding:10px calc(16px + env(safe-area-inset-right)) 2px calc(16px + env(safe-area-inset-left));
   }
   .bench-label{
     font-size:17px; font-weight:800; letter-spacing:-.01em;
     color:var(--ink);
+    /* Without this, .bench-label-row's justify-content:space-between only
+       guarantees a gap when the two sides' natural widths leave room - in
+       landscape #bench-wrap is just ~36% of the screen (see below), so a
+       long label + the action buttons could butt right up against each
+       other. min-width:0 lets the label actually shrink/truncate instead,
+       and the row's own `gap` above becomes a real minimum. */
+    flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
-  .bench-actions{ display:flex; gap:8px; }
+  .bench-actions{ display:flex; gap:8px; flex-shrink:0; }
   .bench-action-btn{
     display:flex; align-items:center; gap:5px;
     border:none; border-radius:999px;
