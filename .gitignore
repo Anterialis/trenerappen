@@ -1,2 +1,6 @@
 # Local Netlify folder
 .netlify
+
+# Local Supabase CLI link/cache state (from `supabase link`) - no secrets,
+# just this machine's project linkage, not meant to be committed
+supabase/

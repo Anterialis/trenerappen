@@ -119,15 +119,55 @@
     <button type="button" id="historyCloseBtn" class="coin-flip-close" aria-label="Lukk historikk">×</button>
     <div class="history-header">
       <p class="history-title">Historikk</p>
-      <button type="button" id="historySelectModeBtn" class="history-select-mode-btn">Velg flere</button>
+      <div class="history-header-actions">
+        <button type="button" id="historyLogoutBtn" class="history-select-mode-btn" hidden>Logg ut</button>
+        <button type="button" id="historySelectModeBtn" class="history-select-mode-btn" hidden>Velg flere</button>
+      </div>
     </div>
-    <p class="history-info-note">Kamper eldre enn 5 år slettes automatisk.</p>
-    <div id="historyList" class="history-list"></div>
-    <p id="historyEmpty" class="history-empty" hidden>Ingen kamper registrert ennå. De dukker opp her etter "Kampslutt".</p>
-    <div id="historySelectBar" class="history-select-bar" hidden>
-      <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
-      <span id="historySelectCount" class="history-select-count">0 valgt</span>
-      <button type="button" id="historyDeleteSelectedBtn" class="history-select-bar-btn danger" disabled>Slett valgte</button>
+
+    <div id="historyLoginPanel" class="history-login-panel">
+      <button type="button" id="historyLockBtn" class="history-lock-btn" aria-label="Logg inn som admin">
+        <svg class="history-lock-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="lockShackleGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#f6f8fa"/>
+              <stop offset=".5" stop-color="#aab2bd"/>
+              <stop offset="1" stop-color="#eef1f4"/>
+            </linearGradient>
+            <linearGradient id="lockBodyGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fff3b0" stop-opacity=".95"/>
+              <stop offset=".5" stop-color="#ffd93d" stop-opacity=".82"/>
+              <stop offset="1" stop-color="#f2b705" stop-opacity=".88"/>
+            </linearGradient>
+          </defs>
+          <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
+          <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
+          <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
+          <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
+          <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
+        </svg>
+      </button>
+      <p class="history-login-text" id="historyLoginHint">Kamphistorikken er kun synlig for admin. Trykk hengelåsen for å logge inn.</p>
+      <div id="historyLoginFields" class="history-login-fields" hidden>
+        <div class="field-invalid-wrap" id="historyLoginEmailWrap">
+          <input type="email" id="historyLoginEmail" class="text-input" placeholder="E-post" autocomplete="username">
+        </div>
+        <div class="field-invalid-wrap" id="historyLoginPasswordWrap">
+          <input type="password" id="historyLoginPassword" class="text-input" placeholder="Passord" autocomplete="current-password">
+        </div>
+        <p id="historyLoginError" class="join-code-error" style="display:none;">Feil e-post eller passord.</p>
+        <button type="button" id="historyLoginBtn" class="glass-choice-btn primary">Logg inn</button>
+      </div>
+    </div>
+
+    <div id="historyAuthedPanel" class="history-authed-panel" hidden>
+      <div id="historyList" class="history-list"></div>
+      <p id="historyEmpty" class="history-empty" hidden>Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".</p>
+      <div id="historySelectBar" class="history-select-bar" hidden>
+        <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
+        <span id="historySelectCount" class="history-select-count">0 valgt</span>
+        <button type="button" id="historyDeleteSelectedBtn" class="history-select-bar-btn danger" disabled>Slett valgte</button>
+      </div>
     </div>
   </div>
 

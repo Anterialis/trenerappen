@@ -193,6 +193,55 @@ create policy "Public delete access" on sessions
   for delete using (true);
 ```
 
+**`match_history` / `admins`** (satt opp 2026-09-19, samme Supabase-prosjekt som
+`sessions` men et helt annet tillitsmodell): den delte, varige "Historikk" på
+hjemskjermen — motstander, resultat, spilletid per spiller — lagret i databasen
+i stedet for `localStorage`, slik at den overlever på tvers av enheter. Enhver
+enhet kan lagre et ferdig kamp-resultat uten innlogging, men **kun en admin kan
+lese, endre eller slette** — håndhevet av Postgres RLS, ikke av klientkoden:
+```sql
+create table if not exists public.match_history (
+  id uuid primary key default gen_random_uuid(),
+  ended_at timestamptz not null,
+  opponent_name text not null default '',
+  opponent_abbr text not null default '',
+  home_score integer not null default 0,
+  away_score integer not null default 0,
+  players jsonb not null default '[]'::jsonb,
+  origin text,
+  created_at timestamptz not null default now()
+);
+alter table public.match_history enable row level security;
+
+-- Ingen policyer i det hele tatt her - default-deny, kun service_role
+-- (aldri klientkoden) kan lese/skrive. auth.uid() alene er IKKE nok til å
+-- regnes som admin - måtte også stått i denne tabellen - så et vanlig
+-- Supabase Auth-signup (om det noensinne åpnes) gir ikke automatisk tilgang.
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+alter table public.admins enable row level security;
+
+create policy "Public insert access" on public.match_history
+  for insert with check (true);
+create policy "Admin select access" on public.match_history
+  for select using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin update access" on public.match_history
+  for update using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin delete access" on public.match_history
+  for delete using (exists (select 1 from public.admins where user_id = auth.uid()));
+```
+Admin-kontoen(e) opprettes manuelt i Supabase-dashbordet (Authentication →
+Users) — appen har ingen selvregistrering. Etter å ha opprettet en bruker der,
+legg dem til i `admins`:
+```sql
+insert into public.admins (user_id)
+values ((select id from auth.users where email = 'the-admins-email@example.com'));
+```
+Klienten (`app.js`) logger inn via `sb.auth.signInWithPassword(...)` i
+Historikk-skjermen; samme `sb`-klient som gjør de åpne `sessions`-kallene
+bærer automatisk med seg admin-brukerens token etter innlogging.
+
 **Hvordan synkroniseringen fungerer:**
 - `saveState()` er delt i `saveStateLocally()` (alltid) + `pushRemoteState()` (kun
   hvis enheten er koblet til en økt) — `pushRemoteState` gjør en Supabase
@@ -210,11 +259,15 @@ create policy "Public delete access" on sessions
 - `joinSession(code, onOk, onFail)` henter raden, adopterer dataene som lokal
   `state`, og abonnerer på fremtidige endringer.
 
-**Ikke testet mot ekte Supabase-instans av Claude** — kjøremiljøet Claude har
-jobbet i har ikke nettverkstilgang til Supabase sine servere. Logikken er testet
-grundig med en simulert/mocket backend (se utviklingshistorikk), men selve
-nettverks-integrasjonen bør verifiseres live (åpne appen i to faner/enheter, gjør
-en endring i den ene, se at den dukker opp i den andre).
+**`sessions`-sanntidssynkroniseringen er ikke testet mot ekte Supabase av
+Claude** — kun testet grundig med en simulert/mocket backend (se
+utviklingshistorikk); bør verifiseres live (åpne appen i to faner/enheter, gjør
+en endring i den ene, se at den dukker opp i den andre). `match_history`/`admins`
+derimot *er* satt opp og verifisert direkte mot den ekte databasen (Supabase
+CLI, `supabase db query --linked`, koblet til prosjektet via `supabase link`) —
+tabellene, RLS-policyene og selve lagre/hente/slette-flyten fra appen er alle
+bekreftet å faktisk virke, inkludert at en anonym `select`/`delete` blir
+blokkert av RLS (tomt resultat, ingen rader slettet).
 
 ---
 

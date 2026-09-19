@@ -365,6 +365,7 @@
   }
   .history-screen.open{ opacity:1; pointer-events:auto; transform:scale(1); }
   .history-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .history-header-actions{ display:flex; align-items:center; gap:8px; }
   .history-title{ margin:0; color:#fff; font-size:19px; font-weight:700; }
   .history-select-mode-btn{
     border:1px solid rgba(255,255,255,.25); border-radius:999px;
@@ -374,6 +375,45 @@
   }
   .history-select-mode-btn.active{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
   .history-info-note{ margin:8px 0 14px; color:rgba(255,255,255,.55); font-size:12px; line-height:1.5; }
+  /* Wraps the list + select bar so it, not .history-screen itself, is what
+     switches with the login panel (see historyLoginPanel/historyAuthedPanel
+     in renderHistoryAuthUI) - needs the same flex sizing .history-list had
+     directly from .history-screen before, or the scrolling list collapses. */
+  .history-authed-panel{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  .history-authed-panel[hidden]{ display:none; }
+  .history-login-panel{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:40px; text-align:center; }
+  .history-login-panel[hidden]{ display:none; }
+  .history-login-text{ color:rgba(255,255,255,.75); font-size:13.5px; line-height:1.5; margin:0 0 4px; max-width:280px; }
+  /* Glass-tile padlock, same recipe as .launcher-tile/.coin-tile's frosted
+     background (rgba white + blur) - tap reveals #historyLoginFields below
+     (see historyLockBtn's click handler) rather than showing the form
+     right away, so a stray tap into "Historikk" doesn't put an empty
+     email/password prompt in front of a parent who has no admin account. */
+  .history-lock-btn{
+    width:104px; height:104px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.20);
+    background:rgba(255,255,255,.09);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    cursor:pointer;
+    transition:transform .15s ease, background .15s ease;
+  }
+  .history-lock-btn:active{ transform:scale(.94); background:rgba(255,255,255,.15); }
+  .history-lock-btn[hidden]{ display:none; }
+  .history-lock-icon{ width:56px; height:56px; filter:drop-shadow(0 3px 8px rgba(0,0,0,.3)); }
+  .history-login-fields{
+    display:flex; flex-direction:column; gap:12px; width:100%;
+    animation:history-fields-in .3s ease both;
+  }
+  .history-login-fields[hidden]{ display:none; }
+  @keyframes history-fields-in{
+    from{ opacity:0; transform:translateY(6px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .history-login-fields{ animation:none; }
+  }
   .history-list{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-bottom:4px; }
   .history-empty{ color:rgba(255,255,255,.55); font-size:13.5px; text-align:center; margin-top:40px; line-height:1.6; }
 
@@ -1093,6 +1133,22 @@
     outline:none; border-color:var(--accent); background:#fff;
     box-shadow:0 0 0 3px rgba(255,138,61,.15);
   }
+  /* Same glass recipe as .history-lock-btn/.launcher-tile, not the pale
+     #fafbfc opponent-name-input above - these sit directly on the dark
+     .history-screen background, not inside a white modal card. */
+  .text-input{
+    width:100%; border:1.5px solid rgba(255,255,255,.22); border-radius:12px;
+    padding:14px 15px; font-size:16px; color:#fff;
+    background:rgba(255,255,255,.08);
+    -webkit-backdrop-filter:blur(12px) saturate(160%);
+    backdrop-filter:blur(12px) saturate(160%);
+    transition:border-color .15s ease, background .15s ease, box-shadow .15s ease;
+  }
+  .text-input::placeholder{ color:rgba(255,255,255,.45); }
+  .text-input:focus{
+    outline:none; border-color:var(--accent); background:rgba(255,255,255,.13);
+    box-shadow:0 0 0 3px rgba(255,138,61,.25);
+  }
   /* Styled like a little scoreboard code (echoes #matchClock's digital
      look) rather than a plain text field, since that's exactly what it
      becomes on the pitch - see .away-team-label. */
@@ -1632,6 +1688,13 @@
      while .launcher-screen is still up (the match being discarded hasn't
      been replaced by a fresh one yet), so this needs to clear it too. */
   #saveHistoryModal{ z-index:310; }
+  /* Opened from inside .history-screen itself (z-index:310, same as
+     .launcher-screen) - same reasoning as the two rules above, one level
+     higher again since .history-screen is already at 310. Pre-existing bug
+     fixed alongside this: #historyDeleteConfirmModal ("Slett valgte") had
+     the exact same gap - opened from .history-screen too, but never had an
+     override, so it silently rendered underneath. */
+  #historyDeleteConfirmModal{ z-index:320; }
   .settings-card{ position:relative; padding-top:50px; }
 
   .session-code-bar{

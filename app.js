@@ -122,15 +122,6 @@
 
   var STORAGE_KEY = 'spillerbytte_v4';
   var ROSTER_KEY = 'spillerbytte_roster_v1';
-  var HISTORY_KEY = 'spillerbytte_history_v1';
-  // 5 years, not 365 days - this is a local JSON array of tiny records (a
-  // few KB even after a whole season), so there's no real storage pressure
-  // pushing toward aggressive pruning. Kept short-ish rather than "forever"
-  // only so a years-abandoned install doesn't accumulate without any cap.
-  // Unrelated to the 60-day SERVER-side cleanup (see keep-supabase-alive.yml)
-  // - that one frees up session codes in Supabase and never touches this
-  // local archive at all.
-  var HISTORY_MAX_AGE_MS = 5 * 365 * 24 * 60 * 60 * 1000;
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
   var IDLE_AUTO_PAUSE_MS = 60 * 60 * 1000; // auto-pause a running match after this long with no heartbeat
@@ -154,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.9';
+  var APP_VERSION = '1.9.10';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -162,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.10', text: 'Historikk er nå delt i skyen (ikke bare denne enheten) - alle kan lagre en kamp, men kun admin kan logge inn for å se eller slette.' },
     { version: '1.9.9', text: 'Spør nå om lagring til historikk ved Kampslutt/Avslutt/Ny økt, i stedet for en fast innstilling. Kun én "Er du sikker?"-knapp av gangen. Kampslutt/Avslutt omdøpt.' },
     { version: '1.9.8', text: 'Fikset at OK-knappen kunne flytte seg ved utfylling av spillernavn. Fjernet sirkelen rundt info-/×-symbolene. Oppdatert symbolforklaring og eksport.' },
     { version: '1.9.7', text: '"Er du sikker?"-bekreftelse med kryss lagt til på Kampslutt, Avslutt og nullstill, Overfør økt-eier og Ny økt.' },
@@ -731,61 +723,80 @@
     saveRoster();
   }
 
-  // Persistent, local, cross-session record of finished matches (see
-  // "Historikk" on the launcher) - deliberately separate from
-  // state.matchHistory (which is synced shared-session state, wiped by
-  // resetMatch()). Like ROSTER_KEY above, this is per-device and never
-  // synced: a season's worth of match history isn't something the current
-  // Supabase sync model (one row per active session) has any natural home
-  // for, and making it shared would mean deciding whose copy wins across
-  // devices for something that's really just personal record-keeping.
-  /** @returns {HistoryMatchEntry[]} */
-  function loadHistoryArchive(){
-    try {
-      var raw = localStorage.getItem(HISTORY_KEY);
-      var arr = raw ? JSON.parse(raw) : [];
-      return Array.isArray(arr) ? arr : [];
-    } catch(e){ console.warn('Kunne ikke lese historikk', e); return []; }
-  }
-
-  /** @param {HistoryMatchEntry[]} list */
-  function saveHistoryArchive(list){
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
-    catch(e){ console.warn('Kunne ikke lagre historikk', e); }
-  }
-
+  // Shared, cross-device match archive (see "Historikk" on the launcher) -
+  // lives in Supabase's match_history table, not localStorage: any device
+  // can INSERT a finished match (no login needed - see saveMatchToHistory),
+  // but only an admin (an authenticated user listed in the admins table,
+  // enforced by Postgres row-level security, not just this client-side
+  // check) can SELECT/UPDATE/DELETE. Parents/other coaches can never read
+  // it without an admin's login - see PROSJEKT-OPPSUMMERING.md.
   /** @param {HistoryMatchEntry} entry */
-  function archiveMatchToHistory(entry){
-    var list = loadHistoryArchive();
-    list.push(entry);
-    saveHistoryArchive(list);
+  function saveMatchToHistory(entry){
+    if (!sb) return;
+    sb.from('match_history').insert({
+      ended_at: new Date(entry.endedAt).toISOString(),
+      opponent_name: entry.opponentName || '',
+      opponent_abbr: entry.opponentAbbr || '',
+      home_score: entry.homeScore || 0,
+      away_score: entry.awayScore || 0,
+      players: entry.players || [],
+      origin: deviceOrigin
+    }).then(function(res){
+      if (res.error) console.warn('Kunne ikke lagre kamp til historikk', res.error);
+    });
   }
 
-  // Called once per app load (see finishStartup()) - drops anything past
-  // the announced 5-year retention (see the note in the Historikk screen)
-  // so the local archive doesn't grow forever. Returns the pruned list so
-  // callers that need it right away don't have to re-read localStorage.
-  /** @returns {HistoryMatchEntry[]} */
-  function pruneHistoryArchive(){
-    var list = loadHistoryArchive();
-    var cutoff = Date.now() - HISTORY_MAX_AGE_MS;
-    var kept = list.filter(function(m){ return m.endedAt >= cutoff; });
-    if (kept.length !== list.length) saveHistoryArchive(kept);
-    return kept;
+  /** @returns {Promise<HistoryMatchEntry[]>} */
+  function fetchMatchHistory(){
+    if (!sb) return Promise.resolve([]);
+    return sb.from('match_history').select('*').order('ended_at', { ascending: false }).then(function(res){
+      if (res.error){ console.warn('Kunne ikke hente historikk', res.error); return []; }
+      return (res.data || []).map(function(row){
+        return {
+          id: row.id,
+          endedAt: new Date(row.ended_at).getTime(),
+          opponentName: row.opponent_name || '',
+          opponentAbbr: row.opponent_abbr || '',
+          homeScore: row.home_score || 0,
+          awayScore: row.away_score || 0,
+          players: row.players || []
+        };
+      });
+    });
   }
 
-  /** @param {string[]} ids */
+  /** @param {string[]} ids @returns {Promise<boolean>} */
   function deleteHistoryEntries(ids){
-    var idSet = {};
-    ids.forEach(function(id){ idSet[id] = true; });
-    saveHistoryArchive(loadHistoryArchive().filter(function(m){ return !idSet[m.id]; }));
-    historySelected = {};
-    historyDeleteArmedId = null;
+    if (!sb) return Promise.resolve(false);
+    return sb.from('match_history').delete().in('id', ids).then(function(res){
+      historySelected = {};
+      historyDeleteArmedId = null;
+      if (res.error){ console.warn('Kunne ikke slette fra historikk', res.error); return false; }
+      return true;
+    });
   }
 
   /** @param {number} ts @returns {string} */
   function formatHistoryDate(ts){
     return new Date(ts).toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  // ---------------- Historikk admin login ----------------
+  // Supabase JS persists the session in localStorage itself and restores it
+  // on load - adminUser here just mirrors that for synchronous UI checks
+  // (isHistoryAdmin()) without awaiting getSession() everywhere it's read.
+  /** @type {any} */
+  var adminUser = null;
+  function isHistoryAdmin(){ return !!adminUser; }
+
+  if (sb){
+    sb.auth.onAuthStateChange(function(_event, session){
+      adminUser = (session && session.user) || null;
+      // Only touch the Historikk screen's own UI, and only if it's actually
+      // open - this fires on every token refresh too, not just real
+      // sign-in/out, so it must stay a no-op the rest of the time.
+      if (els.historyScreen && els.historyScreen.classList.contains('open')) renderHistoryAuthUI();
+    });
   }
 
   // ---------------- Historikk screen ----------------
@@ -804,11 +815,57 @@
   var historyDeleteArmTimer;
   /** @type {string[]|null} */
   var pendingHistoryDeleteIds = null;
+  /** @type {HistoryMatchEntry[]} */
+  var historyListCache = [];
+  var historyListLoading = false;
+
+  // Toggles between the login form and the actual list, and kicks off a
+  // fetch whenever an admin session becomes available - the single place
+  // both openHistoryScreen() and the onAuthStateChange listener above route
+  // through, so login/logout/token-refresh and first open all stay in sync.
+  function renderHistoryAuthUI(){
+    var admin = isHistoryAdmin();
+    els.historyLoginPanel.hidden = admin;
+    els.historyAuthedPanel.hidden = !admin;
+    els.historyLogoutBtn.hidden = !admin;
+    els.historySelectModeBtn.hidden = !admin;
+    if (admin){
+      fetchAndRenderHistoryList();
+    } else {
+      // Back to "locked" - a logout, or simply opening Historikk fresh,
+      // should never land straight on an empty email/password prompt (see
+      // historyLockBtn's click handler for why that tap-to-reveal exists).
+      showHistoryLock();
+    }
+  }
+
+  function showHistoryLock(){
+    els.historyLockBtn.hidden = false;
+    els.historyLoginHint.hidden = false;
+    els.historyLoginFields.hidden = true;
+  }
+
+  function fetchAndRenderHistoryList(){
+    historyListLoading = true;
+    renderHistoryList();
+    fetchMatchHistory().then(function(list){
+      historyListLoading = false;
+      historyListCache = list;
+      renderHistoryList();
+    });
+  }
 
   function renderHistoryList(){
-    var list = loadHistoryArchive().slice().sort(function(a,b){ return b.endedAt - a.endedAt; });
+    var list = historyListCache;
+    if (historyListLoading){
+      els.historyEmpty.hidden = false;
+      els.historyEmpty.textContent = 'Laster...';
+      els.historyList.innerHTML = '';
+      els.historySelectBar.hidden = true;
+      return;
+    }
+    els.historyEmpty.textContent = 'Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".';
     els.historyEmpty.hidden = list.length > 0;
-    els.historySelectModeBtn.hidden = list.length === 0;
     if (list.length === 0){
       els.historyList.innerHTML = '';
       els.historySelectBar.hidden = true;
@@ -860,8 +917,10 @@
         delBtn.addEventListener('click', function(e){
           e.stopPropagation(); // don't also toggle the row's own expand/collapse
           if (historyDeleteArmedId === id){
-            deleteHistoryEntries([id]);
-            renderHistoryList();
+            deleteHistoryEntries([id]).then(function(ok){
+              if (ok) historyListCache = historyListCache.filter(function(m){ return m.id !== id; });
+              renderHistoryList();
+            });
             return;
           }
           historyDeleteArmedId = id;
@@ -888,7 +947,8 @@
     historyDeleteArmedId = null;
     els.historySelectModeBtn.textContent = 'Velg flere';
     els.historySelectModeBtn.classList.remove('active');
-    renderHistoryList();
+    els.historyLoginError.style.display = 'none';
+    renderHistoryAuthUI();
     els.historyScreen.classList.add('open');
   }
 
@@ -2844,6 +2904,12 @@
     els.coinFlipCloseBtn.addEventListener('click', closeCoinFlip);
     els.historyTile.addEventListener('click', openHistoryScreen);
     els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
+    els.historyLockBtn.addEventListener('click', function(){
+      els.historyLockBtn.hidden = true;
+      els.historyLoginHint.hidden = true;
+      els.historyLoginFields.hidden = false;
+      setTimeout(function(){ els.historyLoginEmail.focus(); }, 50);
+    });
     els.historySelectModeBtn.addEventListener('click', function(){
       historySelectMode = !historySelectMode;
       historySelected = {};
@@ -2853,7 +2919,7 @@
       renderHistoryList();
     });
     els.historySelectAllBtn.addEventListener('click', function(){
-      var list = loadHistoryArchive();
+      var list = historyListCache;
       var allSelected = list.length > 0 && list.every(function(m){ return historySelected[m.id]; });
       historySelected = {};
       if (!allSelected) list.forEach(function(m){ historySelected[m.id] = true; });
@@ -2874,14 +2940,57 @@
     });
     els.historyDeleteConfirmBtn.addEventListener('click', function(){
       els.historyDeleteConfirmModal.classList.remove('open');
-      if (pendingHistoryDeleteIds){
-        deleteHistoryEntries(pendingHistoryDeleteIds);
-        pendingHistoryDeleteIds = null;
+      var ids = pendingHistoryDeleteIds;
+      pendingHistoryDeleteIds = null;
+      if (!ids) return;
+      var idsToDelete = ids;
+      deleteHistoryEntries(idsToDelete).then(function(ok){
+        if (ok){
+          var idSet = {};
+          idsToDelete.forEach(function(id){ idSet[id] = true; });
+          historyListCache = historyListCache.filter(function(m){ return !idSet[m.id]; });
+        }
+        historySelectMode = false;
+        els.historySelectModeBtn.textContent = 'Velg flere';
+        els.historySelectModeBtn.classList.remove('active');
+        renderHistoryList();
+      });
+    });
+    // Admin login - only an account listed in Supabase's admins table can
+    // actually read/delete match_history (enforced by row-level security,
+    // not this form) - a wrong password just comes back as a normal
+    // Supabase auth error, same as any other login form.
+    els.historyLoginBtn.addEventListener('click', function(){
+      var email = els.historyLoginEmail.value.trim();
+      var password = els.historyLoginPassword.value;
+      els.historyLoginError.style.display = 'none';
+      clearFieldInvalid(els.historyLoginEmailWrap);
+      clearFieldInvalid(els.historyLoginPasswordWrap);
+      if (!sb){
+        els.historyLoginError.textContent = 'Ingen tilkobling til databasen akkurat nå.';
+        els.historyLoginError.style.display = '';
+        return;
       }
-      historySelectMode = false;
-      els.historySelectModeBtn.textContent = 'Velg flere';
-      els.historySelectModeBtn.classList.remove('active');
-      renderHistoryList();
+      if (!email || !password){
+        if (!email) markFieldInvalid(els.historyLoginEmailWrap);
+        if (!password) markFieldInvalid(els.historyLoginPasswordWrap);
+        return;
+      }
+      els.historyLoginBtn.disabled = true;
+      sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
+        els.historyLoginBtn.disabled = false;
+        if (res.error){
+          els.historyLoginError.textContent = 'Feil e-post eller passord.';
+          els.historyLoginError.style.display = '';
+          return;
+        }
+        els.historyLoginPassword.value = '';
+        // adminUser is set via onAuthStateChange (fires synchronously off
+        // this same signInWithPassword call), which also re-renders.
+      });
+    });
+    els.historyLogoutBtn.addEventListener('click', function(){
+      if (sb) sb.auth.signOut();
     });
     els.coinFlipStartBtn.addEventListener('click', startCoinFlip);
     els.coinFlipAgainBtn.addEventListener('click', function(){
@@ -3113,10 +3222,9 @@
     return { homeScore: homeScore, awayScore: awayScore, playerMs: playerMs };
   }
 
-  // The persistent, local, cross-session archive entry (see
-  // loadHistoryArchive()) for the "Historikk" tile - snapshots player NAMES
-  // (not just ids) so old entries stay meaningful even after a player is
-  // later removed from the roster.
+  // The shared archive entry (see saveMatchToHistory()) for the "Historikk"
+  // tile - snapshots player NAMES (not just ids) so old entries stay
+  // meaningful even after a player is later removed from the roster.
   function buildHistoryArchiveEntry(now, calc){
     return {
       id: uid(),
@@ -3139,14 +3247,14 @@
   // Avslutt/Ny økt discard the whole session state via resetMatch()
   // (defaultState()), which never goes through endMatchPeriod - so the
   // match still in progress at that moment would otherwise vanish without
-  // ever reaching the local history archive. Called (with the coach's
+  // ever reaching the shared history archive. Called (with the coach's
   // answer to "lagre denne kampen?") right before resetMatch() wipes
   // everything away for good.
   function archiveInProgressMatch(saveToHistory){
     if (!saveToHistory) return;
     var now = Date.now();
     var calc = computeMatchScoreAndPlayerMs(now);
-    archiveMatchToHistory(buildHistoryArchiveEntry(now, calc));
+    saveMatchToHistory(buildHistoryArchiveEntry(now, calc));
   }
 
   /** @type {((saveToHistory: boolean) => void)|null} */
@@ -3197,16 +3305,15 @@
           return { playerId: id, playerName: p ? p.name : '(fjernet spiller)', matchMs: g.matchMs };
         })
     });
-    // Separate from the above: the persistent local archive - state.matchHistory
+    // Separate from the above: the shared Supabase archive - state.matchHistory
     // is synced shared-session state and gets wiped by resetMatch() same as
     // everything else, which is right for "this session's matches so far"
-    // but wrong for a durable record the coach can look back on later. Gated
+    // but wrong for a durable record admins can look back on later. Gated
     // on the coach's answer to the "lagre denne kampen til historikk?"
     // prompt shown right before this runs (see saveHistoryModal), not a
-    // standing setting - a coach who always says no should see zero rows
-    // silently pile up locally.
+    // standing setting - a coach who always says no just doesn't add a row.
     if (saveToHistory){
-      archiveMatchToHistory(buildHistoryArchiveEntry(now, calc));
+      saveMatchToHistory(buildHistoryArchiveEntry(now, calc));
     }
     state.goalLog = [];
     // Next match likely means a next opponent (cup format) - clearing this
@@ -3385,6 +3492,18 @@
     els.historyDeleteConfirmText = qs('historyDeleteConfirmText');
     els.historyDeleteCancelBtn = qs('historyDeleteCancelBtn');
     els.historyDeleteConfirmBtn = qs('historyDeleteConfirmBtn');
+    els.historyLogoutBtn = qs('historyLogoutBtn');
+    els.historyLoginPanel = qs('historyLoginPanel');
+    els.historyAuthedPanel = qs('historyAuthedPanel');
+    els.historyLockBtn = qs('historyLockBtn');
+    els.historyLoginHint = qs('historyLoginHint');
+    els.historyLoginFields = qs('historyLoginFields');
+    els.historyLoginEmailWrap = qs('historyLoginEmailWrap');
+    els.historyLoginEmail = qs('historyLoginEmail');
+    els.historyLoginPasswordWrap = qs('historyLoginPasswordWrap');
+    els.historyLoginPassword = qs('historyLoginPassword');
+    els.historyLoginError = qs('historyLoginError');
+    els.historyLoginBtn = qs('historyLoginBtn');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
@@ -4252,7 +4371,6 @@
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
       checkLongIdleSuggestion();
-      pruneHistoryArchive(); // drop Historikk entries past the 365-day retention
       stampLastAlive();
       setInterval(updateTimersOnly, 250);
       // Local-only: this used to call saveState() (which also pushes to
