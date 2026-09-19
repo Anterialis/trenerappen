@@ -41,7 +41,11 @@
             <p class="launcher-choice-title">Trenerappen</p>
             <p class="launcher-choice-sub">Hvordan vil du starte?</p>
             <button type="button" id="continueSessionChoiceBtn" class="glass-choice-btn primary" hidden>Fortsett fra forrige økt</button>
-            <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
+            <div class="confirm-wrap" id="newSessionWrap">
+              <button type="button" id="newSessionChoiceBtn" class="glass-choice-btn primary">Ny økt</button>
+              <span class="confirm-wrap-divider" id="newSessionDivider" hidden aria-hidden="true"></span>
+              <button type="button" id="newSessionCancelBtn" class="confirm-wrap-cancel" hidden aria-label="Avbryt">×</button>
+            </div>
             <button type="button" id="joinSessionChoiceBtn" class="glass-choice-btn">Delta i eksisterende økt</button>
             <button type="button" id="launcherChoiceCancelBtn" class="launcher-choice-cancel">Avbryt</button>
           </div>
@@ -279,7 +283,11 @@
     </div>
 
     <div id="transferOwnerRow" hidden>
-      <button type="button" id="transferOwnerBtn" class="export-link-btn">🔁 Overfør økt-eier</button>
+      <div class="confirm-wrap" id="transferOwnerWrap">
+        <button type="button" id="transferOwnerBtn" class="export-link-btn">🔁 Overfør økt-eier</button>
+        <span class="confirm-wrap-divider" id="transferOwnerDivider" hidden aria-hidden="true"></span>
+        <button type="button" id="transferOwnerCancelBtn" class="confirm-wrap-cancel" hidden aria-label="Avbryt overføring">×</button>
+      </div>
       <p id="transferOwnerNote" class="locked-note"></p>
     </div>
 
@@ -337,12 +345,12 @@
       <div class="stack-btn-split period" id="endPeriodWrap">
         <button type="button" id="endPeriodBtn" class="stack-btn-split-main">Kampslutt</button>
         <span class="stack-btn-split-divider" aria-hidden="true"></span>
-        <button type="button" class="info-btn" data-info="endPeriod" aria-label="Om Kampslutt">i</button>
+        <button type="button" id="endPeriodInfoBtn" class="info-btn" data-info="endPeriod" aria-label="Om Kampslutt">i</button>
       </div>
       <div class="stack-btn-split danger" id="endResetWrap">
         <button type="button" id="endResetBtn" class="stack-btn-split-main">Avslutt og nullstill</button>
         <span class="stack-btn-split-divider" aria-hidden="true"></span>
-        <button type="button" class="info-btn" data-info="endReset" aria-label="Om Avslutt og nullstill">i</button>
+        <button type="button" id="endResetInfoBtn" class="info-btn" data-info="endReset" aria-label="Om Avslutt og nullstill">i</button>
       </div>
       <div class="stack-btn-split">
         <button type="button" id="leaveMatchBtn" class="stack-btn-split-main">↩ Forlat kampen</button>

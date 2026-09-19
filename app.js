@@ -149,7 +149,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.6';
+  var APP_VERSION = '1.9.7';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -157,6 +157,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.7', text: '"Er du sikker?"-bekreftelse med kryss lagt til på Kampslutt, Avslutt og nullstill, Overfør økt-eier og Ny økt.' },
     { version: '1.9.6', text: 'Info-knappene flyttet inn i selve Avslutt-knappene. Versjonsnummer og endringslogg lagt til på hjemskjermen.' },
     { version: '1.9.5', text: 'Ny "Historikk" på hjemskjermen som lagrer gamle kamper lokalt. Automatisk innlogging med kode og tastatur som lukkes selv.' },
     { version: '1.9.4', text: 'Nytt merke-design på snarveiknappene på innbytterbenken. Redesignet motstander-vindu og større Trenerappen-ikon.' },
@@ -219,10 +220,6 @@
   /** @type {AppState[]} */
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
-  var newSessionConfirmArmed = false; // "Ny økt" needs a second press to confirm when there's already a session to discard - see disarmNewSessionConfirm()
-  var newSessionConfirmTimer = /** @type {ReturnType<typeof setTimeout>|undefined} */ (undefined);
-  var NEW_SESSION_LABEL = 'Ny økt';
-  var NEW_SESSION_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
   var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
@@ -271,21 +268,84 @@
       text: 'Når dette er på, lagres motstander, resultat og spilletid per spiller til "Historikk" på hjemskjermen hver gang du trykker Kampslutt. Av som standard - skrur du den på, gjelder det fra neste Kampslutt, ikke bakover i tid. Lagres kun lokalt på denne enheten, ikke i den delte økten.'
     }
   };
-  var resetConfirmArmed = false; // "Avslutt og nullstill" needs a second press to confirm
-  /** @type {ReturnType<typeof setTimeout>|undefined} */
-  var resetConfirmTimer; // clearTimeout(undefined) is a safe no-op, same as our old null check
-  var RESET_LABEL = 'Avslutt og nullstill';
-  var RESET_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
-  var transferOwnerConfirmArmed = false; // "Overfør økt-eier" needs a second press to confirm
-  /** @type {ReturnType<typeof setTimeout>|undefined} */
-  var transferOwnerConfirmTimer;
-  var TRANSFER_OWNER_LABEL = '🔁 Overfør økt-eier';
-  var TRANSFER_OWNER_CONFIRM_LABEL = 'Trykk igjen for å bekrefte';
+  // "Trykk igjen for å bekrefte"-mønsteret, brukt for enhver handling som
+  // er vanskelig/umulig å angre (Kampslutt, Avslutt og nullstill, Overfør
+  // økt-eier, Ny økt når det finnes noe å miste) - assigned once els exist,
+  // inside init(), see createConfirmArm() below. Holding these as plain
+  // module vars (not re-declared locally) keeps disarm() reachable from
+  // functions defined outside init(), like openSettings().
+  var kampsluttConfirm, avsluttConfirm, transferOwnerConfirm;
   /** @type {AudioContext|null} */
   var audioCtx = null;
   var els = {};
 
   function qs(id){ return document.getElementById(id); }
+
+  var CONFIRM_TIMEOUT_MS = 2500;
+
+  /**
+   * Creates one "press again to confirm" state machine: first press arms
+   * (saturated fill via .armed on every el in armedEls, shake via
+   * .shake-btn on every el in shakeEls; label switches to "Er du
+   * sikker?"), second press on the main button confirms. Auto-disarms
+   * after CONFIRM_TIMEOUT_MS. Where a button already has an info-btn
+   * (Kampslutt, Avslutt og nullstill), that same circle is repurposed as
+   * the cancel "×" while armed via onArm/onDisarm instead of a separate
+   * cancel element - see .stack-btn-split .info-btn.is-cancel in
+   * style.css. armedEls and shakeEls are kept separate (not just one
+   * list) because "Overfør økt-eier"/"Ny økt" need .armed on both their
+   * outer .confirm-wrap (colors the divider/× - see #transferOwnerWrap.
+   * armed in style.css) AND their own button (the pre-existing
+   * .export-link-btn.armed/.glass-choice-btn.armed background), but
+   * should only shake ONCE as a single unit (the wrap) - shaking both
+   * would visibly double the motion, since the button sits inside the wrap.
+   * @param {Object} opts
+   * @param {HTMLElement[]} opts.armedEls
+   * @param {HTMLElement[]} [opts.shakeEls] - defaults to armedEls
+   * @param {HTMLElement} opts.labelEl
+   * @param {string} opts.restingLabel
+   * @param {string} [opts.confirmLabel]
+   * @param {function} [opts.onArm]
+   * @param {function} [opts.onDisarm]
+   */
+  function createConfirmArm(opts){
+    var armed = false;
+    var shakeEls = opts.shakeEls || opts.armedEls;
+    /** @type {ReturnType<typeof setTimeout>|undefined} */
+    var timer;
+    function disarm(){
+      clearTimeout(timer);
+      if (!armed) return;
+      armed = false;
+      opts.labelEl.textContent = opts.restingLabel;
+      opts.armedEls.forEach(function(el){ el.classList.remove('armed'); });
+      shakeEls.forEach(function(el){ el.classList.remove('shake-btn'); });
+      if (opts.onDisarm) opts.onDisarm();
+    }
+    function arm(){
+      armed = true;
+      opts.labelEl.textContent = opts.confirmLabel || 'Er du sikker?';
+      opts.armedEls.forEach(function(el){ el.classList.add('armed'); });
+      shakeEls.forEach(function(el){ el.classList.remove('shake-btn'); });
+      void shakeEls[0].offsetWidth; // restart the shake if pressed again quickly
+      shakeEls.forEach(function(el){ el.classList.add('shake-btn'); });
+      if (opts.onArm) opts.onArm();
+      clearTimeout(timer);
+      timer = setTimeout(disarm, CONFIRM_TIMEOUT_MS);
+    }
+    return {
+      disarm: disarm,
+      isArmed: function(){ return armed; },
+      // Call from the main button's click handler: true the moment it
+      // actually confirms (was already armed), so the caller can proceed;
+      // false the first time, when it only just armed and should wait.
+      press: function(){
+        if (!armed){ arm(); return false; }
+        disarm();
+        return true;
+      }
+    };
+  }
 
   function uid(){
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -2511,7 +2571,7 @@
     // something, not just closing the app).
     els.joinExistingBtn.hidden = !!sessionCode;
 
-    disarmTransferOwnerConfirm();
+    transferOwnerConfirm.disarm();
     var transferTarget = master ? longestTenuredOtherParticipant() : null;
     els.transferOwnerRow.hidden = !transferTarget;
     if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
@@ -2961,28 +3021,6 @@
     return lines.join('\n');
   }
 
-  // Resets the "Avslutt og nullstill" double-press confirmation back to its
-  // resting state - called whenever the Avslutt modal is (re)opened,
-  // cancelled, or navigated away from, so a stale "trykk igjen" never lingers
-  // into a later, unrelated visit to this modal.
-  function disarmResetConfirm(){
-    clearTimeout(resetConfirmTimer);
-    resetConfirmArmed = false;
-    els.endResetBtn.textContent = RESET_LABEL;
-    els.endResetWrap.classList.remove('armed', 'shake-btn');
-  }
-
-  // Same double-press pattern as disarmResetConfirm(), for "Overfør
-  // økt-eier" - called whenever settings is (re)opened so a stale "trykk
-  // igjen" from a previous visit never lingers into this one.
-  function disarmTransferOwnerConfirm(){
-    clearTimeout(transferOwnerConfirmTimer);
-    transferOwnerConfirmArmed = false;
-    if (els.transferOwnerBtn){
-      els.transferOwnerBtn.textContent = TRANSFER_OWNER_LABEL;
-      els.transferOwnerBtn.classList.remove('armed', 'shake-btn');
-    }
-  }
 
   function renderEndMatchSummary(){
     var now = Date.now();
@@ -3243,7 +3281,10 @@
     els.launcherChoicePanelChoice = qs('launcherChoicePanelChoice');
     els.launcherChoicePanelJoin = qs('launcherChoicePanelJoin');
     els.continueSessionChoiceBtn = qs('continueSessionChoiceBtn');
+    els.newSessionWrap = qs('newSessionWrap');
     els.newSessionChoiceBtn = qs('newSessionChoiceBtn');
+    els.newSessionDivider = qs('newSessionDivider');
+    els.newSessionCancelBtn = qs('newSessionCancelBtn');
     els.joinSessionChoiceBtn = qs('joinSessionChoiceBtn');
     els.launcherChoiceCancelBtn = qs('launcherChoiceCancelBtn');
     els.launcherChoiceBackBtn = qs('launcherChoiceBackBtn');
@@ -3292,7 +3333,10 @@
     els.shareSessionRow = qs('shareSessionRow');
     els.rankCumulativeRow = qs('rankCumulativeRow');
     els.transferOwnerRow = qs('transferOwnerRow');
+    els.transferOwnerWrap = qs('transferOwnerWrap');
     els.transferOwnerBtn = qs('transferOwnerBtn');
+    els.transferOwnerDivider = qs('transferOwnerDivider');
+    els.transferOwnerCancelBtn = qs('transferOwnerCancelBtn');
     els.transferOwnerNote = qs('transferOwnerNote');
     els.leaveMatchBtn = qs('leaveMatchBtn');
     els.closeSessionRow = qs('closeSessionRow');
@@ -3320,8 +3364,10 @@
     els.endMatchCancelBtn = qs('endMatchCancelBtn');
     els.endPeriodBtn = qs('endPeriodBtn');
     els.endPeriodWrap = qs('endPeriodWrap');
+    els.endPeriodInfoBtn = qs('endPeriodInfoBtn');
     els.endResetBtn = qs('endResetBtn');
     els.endResetWrap = qs('endResetWrap');
+    els.endResetInfoBtn = qs('endResetInfoBtn');
     els.reorgPromptModal = qs('reorgPromptModal');
     els.reorgNoBtn = qs('reorgNoBtn');
     els.reorgYesBtn = qs('reorgYesBtn');
@@ -3434,6 +3480,57 @@
     state = loadState();
     roster = loadRoster();
 
+    // Assigned here (not at module scope, where els.* don't exist yet) but
+    // still module-scope vars - openSettings() (defined outside init())
+    // calls transferOwnerConfirm.disarm() every render, and this runs
+    // before any code path that could call openSettings() during startup
+    // (the empty-roster bootstrap near the end of init()).
+    kampsluttConfirm = createConfirmArm({
+      armedEls: [els.endPeriodWrap],
+      labelEl: els.endPeriodBtn,
+      restingLabel: 'Kampslutt',
+      onArm: function(){
+        els.endPeriodInfoBtn.textContent = '×';
+        els.endPeriodInfoBtn.classList.add('is-cancel');
+        els.endPeriodInfoBtn.setAttribute('aria-label', 'Avbryt Kampslutt');
+      },
+      onDisarm: function(){
+        els.endPeriodInfoBtn.textContent = 'i';
+        els.endPeriodInfoBtn.classList.remove('is-cancel');
+        els.endPeriodInfoBtn.setAttribute('aria-label', 'Om Kampslutt');
+      }
+    });
+    avsluttConfirm = createConfirmArm({
+      armedEls: [els.endResetWrap],
+      labelEl: els.endResetBtn,
+      restingLabel: 'Avslutt og nullstill',
+      onArm: function(){
+        els.endResetInfoBtn.textContent = '×';
+        els.endResetInfoBtn.classList.add('is-cancel');
+        els.endResetInfoBtn.setAttribute('aria-label', 'Avbryt Avslutt og nullstill');
+      },
+      onDisarm: function(){
+        els.endResetInfoBtn.textContent = 'i';
+        els.endResetInfoBtn.classList.remove('is-cancel');
+        els.endResetInfoBtn.setAttribute('aria-label', 'Om Avslutt og nullstill');
+      }
+    });
+    transferOwnerConfirm = createConfirmArm({
+      armedEls: [els.transferOwnerWrap, els.transferOwnerBtn],
+      shakeEls: [els.transferOwnerWrap],
+      labelEl: els.transferOwnerBtn,
+      restingLabel: '🔁 Overfør økt-eier',
+      onArm: function(){
+        els.transferOwnerDivider.hidden = false;
+        els.transferOwnerCancelBtn.hidden = false;
+      },
+      onDisarm: function(){
+        els.transferOwnerDivider.hidden = true;
+        els.transferOwnerCancelBtn.hidden = true;
+      }
+    });
+    els.transferOwnerCancelBtn.addEventListener('click', function(){ transferOwnerConfirm.disarm(); });
+
     els.playPauseBtn.addEventListener('click', togglePlayPause);
     els.undoBtn.addEventListener('click', function(){
       // Angre/Gjør om are real mutations (blocked for a read-only shared-
@@ -3513,7 +3610,8 @@
       // below need to stay reachable even for a read-only viewer (see
       // .view-only's comment in style.css), so the modal itself opens for
       // everyone; each individual action inside is gated on its own.
-      disarmResetConfirm();
+      kampsluttConfirm.disarm();
+      avsluttConfirm.disarm();
       renderEndMatchSummary();
       renderMatchHistorySummary();
       // "Avslutt og nullstill" wipes the whole match for every connected
@@ -3528,7 +3626,8 @@
       els.endMatchModal.classList.add('open');
     });
     els.endMatchCancelBtn.addEventListener('click', function(){
-      disarmResetConfirm();
+      kampsluttConfirm.disarm();
+      avsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
     });
     // Pure navigation, identical to backToMenuActionBtn's "Gå tilbake til
@@ -3547,7 +3646,8 @@
       // reachable by everyone now, so this can't lean on canEdit() having
       // already been checked before the modal even opened.
       if (!canEdit()) return;
-      disarmResetConfirm();
+      if (!kampsluttConfirm.press()) return; // just armed ("Er du sikker?") - wait for the second press
+      avsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
       els.reorgPromptModal.classList.add('open');
     });
@@ -3582,19 +3682,16 @@
     });
     els.endResetBtn.addEventListener('click', function(){
       if (!isMaster()) return;
-      if (!resetConfirmArmed){
-        resetConfirmArmed = true;
-        els.endResetBtn.textContent = RESET_CONFIRM_LABEL;
-        els.endResetWrap.classList.add('armed');
-        els.endResetWrap.classList.remove('shake-btn');
-        void els.endResetWrap.offsetWidth; // restart the shake if pressed again quickly
-        els.endResetWrap.classList.add('shake-btn');
-        clearTimeout(resetConfirmTimer);
-        resetConfirmTimer = setTimeout(disarmResetConfirm, 2500);
-        return;
-      }
-      disarmResetConfirm();
+      if (!avsluttConfirm.press()) return; // just armed - wait for the second press
+      kampsluttConfirm.disarm();
       resetMatch();
+      // resetMatch() itself opens settings (the same first-run flow "Ny
+      // økt" relies on, to set up a fresh roster right away) - "Avslutt og
+      // nullstill" instead sends the user back to the home screen, same as
+      // "Forlat kampen", since they're mid-match here and more likely to
+      // want a clean slate than to fill in a new roster immediately.
+      els.settingsModal.classList.remove('open');
+      showLauncherMenu();
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
@@ -3620,8 +3717,18 @@
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
     els.legendCloseBtn.addEventListener('click', function(){ els.legendModal.classList.remove('open'); });
+    // Kampslutt/Avslutt og nullstill repurpose their info-btn as a cancel
+    // "×" while armed (see kampsluttConfirm/avsluttConfirm's onArm above) -
+    // this map lets the one generic click handler below know, by the
+    // button's own id, to disarm instead of opening the info popup.
+    var infoBtnConfirmArms = {
+      endPeriodInfoBtn: kampsluttConfirm,
+      endResetInfoBtn: avsluttConfirm
+    };
     Array.prototype.forEach.call(document.querySelectorAll('.info-btn'), function(btn){
       btn.addEventListener('click', function(){
+        var arm = infoBtnConfirmArms[btn.id];
+        if (arm && arm.isArmed()){ arm.disarm(); return; }
         var info = INFO_TEXTS[btn.dataset.info || ''];
         if (!info) return;
         els.infoPopupTitle.textContent = info.title;
@@ -3707,18 +3814,7 @@
       if (!isMaster()) return;
       var target = longestTenuredOtherParticipant();
       if (!target){ shakeElement(els.transferOwnerBtn); return; }
-      if (!transferOwnerConfirmArmed){
-        transferOwnerConfirmArmed = true;
-        els.transferOwnerBtn.textContent = TRANSFER_OWNER_CONFIRM_LABEL;
-        els.transferOwnerBtn.classList.add('armed');
-        els.transferOwnerBtn.classList.remove('shake-btn');
-        void els.transferOwnerBtn.offsetWidth; // restart the shake if pressed again quickly
-        els.transferOwnerBtn.classList.add('shake-btn');
-        clearTimeout(transferOwnerConfirmTimer);
-        transferOwnerConfirmTimer = setTimeout(disarmTransferOwnerConfirm, 2500);
-        return;
-      }
-      disarmTransferOwnerConfirm();
+      if (!transferOwnerConfirm.press()) return; // just armed - wait for the second press
       state.sessionOwnerDeviceId = target.deviceId;
       saveState();
       // Rebuild the modal in place - this device is now a slave, so every
@@ -3861,12 +3957,21 @@
       }, 500);
     }
 
-    function disarmNewSessionConfirm(){
-      clearTimeout(newSessionConfirmTimer);
-      newSessionConfirmArmed = false;
-      els.newSessionChoiceBtn.textContent = NEW_SESSION_LABEL;
-      els.newSessionChoiceBtn.classList.remove('armed', 'shake-btn');
-    }
+    var newSessionConfirm = createConfirmArm({
+      armedEls: [els.newSessionWrap, els.newSessionChoiceBtn],
+      shakeEls: [els.newSessionWrap],
+      labelEl: els.newSessionChoiceBtn,
+      restingLabel: 'Ny økt',
+      onArm: function(){
+        els.newSessionDivider.hidden = false;
+        els.newSessionCancelBtn.hidden = false;
+      },
+      onDisarm: function(){
+        els.newSessionDivider.hidden = true;
+        els.newSessionCancelBtn.hidden = true;
+      }
+    });
+    els.newSessionCancelBtn.addEventListener('click', function(){ newSessionConfirm.disarm(); });
 
     // Re-run every time the choice panel is (re)shown - not just on the
     // very first launcher visit - so "Fortsett fra forrige økt" only
@@ -3875,7 +3980,7 @@
     function showLauncherChoicePanel(){
       els.launcherChoicePanelChoice.hidden = false;
       els.launcherChoicePanelJoin.hidden = true;
-      disarmNewSessionConfirm();
+      newSessionConfirm.disarm();
       var hasSession = state.players.length > 0;
       els.continueSessionChoiceBtn.hidden = !hasSession;
       els.continueSessionChoiceBtn.classList.toggle('primary', hasSession);
@@ -3904,7 +4009,7 @@
 
     function closeLauncherChoice(){
       els.launcherChoiceOverlay.classList.remove('open');
-      disarmNewSessionConfirm();
+      newSessionConfirm.disarm();
     }
 
     function submitLauncherJoin(){
@@ -3978,23 +4083,12 @@
         // A team exists but the match clock has never run - nothing about
         // an actual match to lose, so skip the confirm-shake below (same
         // reasoning as the empty-roster case above).
-        disarmNewSessionConfirm();
+        newSessionConfirm.disarm();
         resetMatch();
         enterAppFromLauncher();
         return;
       }
-      if (!newSessionConfirmArmed){
-        newSessionConfirmArmed = true;
-        els.newSessionChoiceBtn.textContent = NEW_SESSION_CONFIRM_LABEL;
-        els.newSessionChoiceBtn.classList.add('armed');
-        els.newSessionChoiceBtn.classList.remove('shake-btn');
-        void els.newSessionChoiceBtn.offsetWidth; // restart the shake if pressed again quickly
-        els.newSessionChoiceBtn.classList.add('shake-btn');
-        clearTimeout(newSessionConfirmTimer);
-        newSessionConfirmTimer = setTimeout(disarmNewSessionConfirm, 2500);
-        return;
-      }
-      disarmNewSessionConfirm();
+      if (!newSessionConfirm.press()) return; // just armed - wait for the second press
       resetMatch();
       enterAppFromLauncher();
     });

@@ -1229,7 +1229,27 @@
   }
   .stack-btn-split .info-btn{
     position:absolute; top:50%; right:14px; transform:translateY(-50%);
-    transition:border-color .15s ease, color .15s ease;
+    transition:border-color .15s ease, color .15s ease, transform .1s ease;
+    outline:none;
+  }
+  /* Deliberate "pressed into the screen" shrink on tap, replacing the
+     browser's own default focus ring (very visible - and ugly - on this
+     small a target in a Chromium devtools/webview context; real touch
+     taps on iOS/Android never trigger it in the first place). Keep the
+     translateY(-50%) centering alongside the scale, or the button jumps
+     vertically instead of just shrinking in place. */
+  .stack-btn-split .info-btn:active{ transform:translateY(-50%) scale(.82); }
+  /* Invisible tap-target enlargement, no visual change - the 16px circle
+     was hard to hit precisely. ::before paints nothing (no background/
+     border) but still counts for hit-testing, so it silently widens the
+     button's clickable box: mostly leftward, past the divider and a bit
+     into .stack-btn-split-main's own territory (positioned elements like
+     .info-btn always paint above normal-flow siblings, so this still wins
+     the tap there), a little rightward toward the pill's corner, and only
+     a few px top/bottom so it doesn't reach into the next stack-btn-split
+     row (10px .modal-actions gap between them). */
+  .stack-btn-split .info-btn::before{
+    content:''; position:absolute; top:-4px; bottom:-4px; left:-16px; right:-8px;
   }
   .stack-btn-split.period{ background:rgba(10,132,255,.14); }
   .stack-btn-split.period .stack-btn-split-main{ color:var(--period-blue); }
@@ -1239,14 +1259,17 @@
   .stack-btn-split.danger .stack-btn-split-main{ color:var(--danger); }
   .stack-btn-split.danger .stack-btn-split-divider{ background:rgba(230,57,70,.3); }
   .stack-btn-split.danger .info-btn{ border-color:var(--danger); color:var(--danger); }
-  /* "Trykk igjen for å bekrefte" (see #endResetWrap / disarmResetConfirm) -
-     the whole pill inverts to a solid fill, same intent as the old
-     .stack-btn.danger.armed before Avslutt og nullstill moved into a
-     stack-btn-split. */
+  /* "Er du sikker?" (see createConfirmArm() in app.js) - the whole pill
+     inverts to a solid fill on the first press, same for every .armed
+     variant below. */
   .stack-btn-split.danger.armed{ background:var(--danger); }
   .stack-btn-split.danger.armed .stack-btn-split-main{ color:#fff; }
   .stack-btn-split.danger.armed .stack-btn-split-divider{ background:rgba(255,255,255,.4); }
   .stack-btn-split.danger.armed .info-btn{ border-color:#fff; color:#fff; }
+  .stack-btn-split.period.armed{ background:var(--period-blue); }
+  .stack-btn-split.period.armed .stack-btn-split-main{ color:#fff; }
+  .stack-btn-split.period.armed .stack-btn-split-divider{ background:rgba(255,255,255,.4); }
+  .stack-btn-split.period.armed .info-btn{ border-color:#fff; color:#fff; }
   .info-btn{
     width:16px; height:16px; border-radius:50%; flex:0 0 auto;
     border:1px solid var(--ink-soft); background:none; color:var(--ink-soft);
@@ -1256,6 +1279,21 @@
     transition:background .12s ease;
   }
   .info-btn:active{ background:rgba(15,31,54,.08); }
+  /* The info-btn repurposed as a cancel "×" while its button is armed
+     (createConfirmArm's onArm/onDisarm swap the glyph + this class) -
+     same circle, bigger/bolder glyph so it still reads as a distinct
+     control, not a smaller "i". Scoped under .stack-btn-split (0,3,0) to
+     beat .modal-actions .info-btn (0,2,0) below, the same specificity
+     collision documented there. */
+  .stack-btn-split .info-btn.is-cancel{
+    width:20px; height:20px; font-size:14px; font-weight:800; font-style:normal;
+    /* Re-centered in the 38px zone left of the divider (right:38px on
+       .stack-btn-split-divider) now that it's 20px wide, not 16px -
+       (38-20)/2 = 9px on each side, so it sits equidistant from the
+       divider and the pill's own right edge instead of hugging the
+       divider like the smaller "i" reasonably could. */
+    right:9px;
+  }
   .info-popup-card{ position:relative; padding-top:46px; }
   .info-popup-close{
     position:absolute; top:14px; right:14px;
@@ -1329,6 +1367,41 @@
      destructive the way "Avslutt og nullstill" is. */
   .export-link-btn.armed{ background:var(--accent); color:var(--accent-ink); border-style:solid; border-color:transparent; }
   #transferOwnerNote{ margin:6px 0 0; text-align:center; }
+  /* Generic wrapper for a confirm button that has NO info-btn of its own
+     to repurpose as the cancel "×" (contrast Kampslutt/Avslutt og
+     nullstill, which reuse .stack-btn-split .info-btn instead - see
+     createConfirmArm() in app.js) - #transferOwnerWrap, #newSessionWrap.
+     Purely a positioning box: no background/border of its own, so the
+     wrapped button keeps its full existing look (dashed pill, glass tile,
+     whatever) untouched while unarmed. The divider/× stay `hidden` until
+     armed, so they add nothing to the layout normally - same fixed
+     right:38px/right:14px geometry as .stack-btn-split, just colored to
+     match each button's own armed state via the ID-scoped rules below. */
+  .confirm-wrap{ position:relative; width:100%; }
+  .confirm-wrap-divider{
+    position:absolute; top:10px; bottom:10px; right:38px; width:1px;
+    pointer-events:none;
+  }
+  .confirm-wrap-cancel{
+    /* right:9px - same (38-20)/2 centering as .stack-btn-split .info-btn.
+       is-cancel above, between .confirm-wrap-divider's right:38px and the
+       wrap's own right edge. */
+    position:absolute; top:50%; right:9px; transform:translateY(-50%);
+    width:20px; height:20px; border-radius:50%; border:1px solid currentColor;
+    background:none; color:inherit; font-size:14px; font-weight:800; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:0; cursor:pointer; outline:none;
+    transition:transform .1s ease;
+  }
+  .confirm-wrap-cancel:active{ transform:translateY(-50%) scale(.82); }
+  /* Same invisible hit-area widening as .stack-btn-split .info-btn::before. */
+  .confirm-wrap-cancel::before{
+    content:''; position:absolute; top:-4px; bottom:-4px; left:-16px; right:-8px;
+  }
+  #transferOwnerWrap.armed .confirm-wrap-divider{ background:var(--accent-ink); opacity:.3; }
+  #transferOwnerWrap.armed .confirm-wrap-cancel{ border-color:var(--accent-ink); color:var(--accent-ink); }
+  #newSessionWrap.armed .confirm-wrap-divider{ background:#fff; opacity:.4; }
+  #newSessionWrap.armed .confirm-wrap-cancel{ border-color:#fff; color:#fff; }
 
   .export-textarea{
     width:100%; min-height:200px; margin:10px 0;
