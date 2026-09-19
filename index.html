@@ -215,6 +215,7 @@
 
     <label class="section-label">Spillere</label>
     <div id="nameRows"></div>
+    <button type="button" id="addPlayerRowBtn" class="add-player-row-btn">+ Legg til spiller</button>
 
     <label class="section-label">Kampvarighet</label>
     <div class="duration-input">
@@ -393,43 +394,27 @@
 <div id="legendModal" class="modal">
   <div class="modal-card">
     <h2>Symbolforklaring og om appen</h2>
-    <p class="sub">Kort oversikt over alt du kan gjøre i appen, og hva symbolene betyr.</p>
+    <p class="sub">Kort oversikt over appen, og hva symbolene betyr.</p>
     <div class="func-list">
       <div class="func-item">
         <p class="func-title">Bytte spillere</p>
-        <p class="func-text">Dra en spiller til motsatt sone. Eller: trykk spilleren, trykk så plassen du vil bytte med.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Forslag ⇄</p>
-        <p class="func-text">Foreslår bytte: mest spilletid + passert byttetid ut, lengst ventet på benk inn. Trykk for å markere, trykk spilleren for å bekrefte.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">multiBytte ⇅</p>
-        <p class="func-text">Velg flere ute- og innbyttere samtidig, bytt alle med ett trykk. Rødt kryss avbryter.</p>
+        <p class="func-text">Dra en spiller til motsatt sone, eller trykk spilleren og så plassen du vil bytte med.</p>
       </div>
       <div class="func-item">
         <p class="func-title">Registrere mål</p>
-        <p class="func-text">Trykk tallet ved klokka - telles med én gang. Trykkes samme lag igjen innen 30 sek: bekreft for å unngå dobbeltregistrering. Langt trykk fjerner ett mål.</p>
+        <p class="func-text">Trykk tallet ved klokka for å telle et mål. Trykkes samme lag igjen innen 30 sek, må du bekrefte for å unngå dobbeltregistrering. Langt trykk fjerner ett mål.</p>
       </div>
       <div class="func-item">
-        <p class="func-title">Angre siste</p>
-        <p class="func-text">↩ øverst til venstre. Angrer siste handling - bytte eller mål. Kan også gjøres om, eller gå tilbake til hovedmenyen.</p>
+        <p class="func-title">Angre eller gå tilbake</p>
+        <p class="func-text">↩ øverst til venstre angrer siste bytte eller mål, gjør det om igjen, eller tar deg til hjemskjermen.</p>
       </div>
       <div class="func-item">
-        <p class="func-title">Kampklokke og byttetid</p>
-        <p class="func-text">Trykk selve klokka for å endre kampvarighet. ⇅-merket varsler når byttetiden er nådd (settes i innstillinger). Pauses automatisk ved lang inaktivitet.</p>
+        <p class="func-title">Kampklokke og perioder</p>
+        <p class="func-text">Trykk klokka for å endre kampvarighet. ▶/⏸ styrer alle klokker samtidig. «Kampslutt» starter en ny periode og beholder tallene; «Avslutt og nullstill» starter helt på nytt - begge krever et bekreftende trykk til.</p>
       </div>
       <div class="func-item">
-        <p class="func-title">Start, pause og avslutt</p>
-        <p class="func-text">▶/⏸ styrer alle klokker samtidig. «Kampslutt»: ny periode, beholder tallene. «Avslutt og nullstill»: helt på nytt.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Innstillinger ⚙</p>
-        <p class="func-text">Spillernavn, banestørrelse, kampvarighet, byttetid, skjerm-våken, rangeringsmodus, deling av økt.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Del økt</p>
-        <p class="func-text">Del en tresifret kode - andre ser kampen live på sin telefon. Du velger om de kan redigere eller kun se.</p>
+        <p class="func-title">Innstillinger ⚙ og del økt</p>
+        <p class="func-text">Spillernavn, banestørrelse, kampvarighet, byttetid, skjerm-våken, rangeringsmodus, og deling av økten med en tresifret kode (du velger om andre kan redigere eller bare se).</p>
       </div>
       <div class="func-item">
         <p class="func-title">Myntkast</p>
@@ -439,19 +424,18 @@
     <hr class="legend-divider">
     <p class="legend-section-title">Symboler</p>
     <div class="legend-list">
-      <div class="legend-row"><span class="legend-swatch warning due">⇅</span><span class="legend-text">Byttetiden er nådd for en utespiller – klar for bytte.</span></div>
-      <div class="legend-row"><span class="legend-swatch warning overtime">⇅</span><span class="legend-text">Spilt 50% lenger enn byttetiden – merket pulserer forsiktig.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt mest – vurder benk til neste kamp. Rød trekant på spilleren.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#ff9500" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest mest. Oransje trekant.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#7dd3fc" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt nest minst. Lyseblå trekant.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Har spilt minst – vurder start til neste kamp. Blå trekant.</span></div>
-      <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert – trykk på en spiller i motsatt sone for å bytte dem.</span></div>
-      <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i "Velg flere"-modus (grønn ring), klar til å sendes ut.</span></div>
-      <div class="legend-row"><span class="legend-swatch suggest-ring"></span><span class="legend-text">Foreslått byttepartner (pulserende grønn ring) – trykk for å bekrefte bytteforslaget.</span></div>
-      <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre = har spilt/ventet lengst.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄</span><span class="legend-text">Bytteforslag – foreslår å bytte ut utespilleren med mest spilletid som også har spilt lenger enn byttetiden, med innbytteren som har sittet lengst på benken.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅</span><span class="legend-text">multiBytte – velg flere utespillere og innbyttere og bytt dem samtidig.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="background:var(--danger);">×</span><span class="legend-text">Avbryt multiBytte – fjerner markeringen og avslutter valgmodus. Vises kun mens multiBytte er aktivert.</span></div>
+      <div class="legend-row"><span class="legend-swatch warning due">⇅</span><span class="legend-text">Byttetiden er nådd, klar for bytte - pulserer rødlig når spilleren har sittet 50 % lenger enn det.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Rød trekant - spilt mest denne kampen.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#ff9500" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Oransje trekant - spilt nest mest.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#7dd3fc" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Lyseblå trekant - spilt nest minst.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Blå trekant - spilt minst denne kampen.</span></div>
+      <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert - trykk en spiller i motsatt sone for å bytte dem.</span></div>
+      <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i multiBytte (grønn ring), klar til å sendes ut.</span></div>
+      <div class="legend-row"><span class="legend-swatch suggest-ring"></span><span class="legend-text">Foreslått byttepartner (pulserende grønn ring) - trykk for å bekrefte.</span></div>
+      <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre har spilt/ventet lengst.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄<span class="legend-badge">?</span></span><span class="legend-text">Bytteforslag - foreslår å bytte ut spilleren med mest spilletid (som har passert byttetiden) mot innbytteren som har ventet lengst. Trykk for å markere, trykk spilleren for å bekrefte.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅<span class="legend-badge">×2</span></span><span class="legend-text">multiBytte - velg flere ute- og innbyttere, og bytt dem alle samtidig.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="background:var(--danger);">×</span><span class="legend-text">Avbryt multiBytte - fjerner markeringene. Vises kun mens multiBytte er aktivert.</span></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>

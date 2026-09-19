@@ -1104,15 +1104,21 @@
   }
   #nameRows{ display:flex; flex-direction:column; gap:8px; }
   .name-row{ display:flex; gap:8px; align-items:center; }
-  /* The name list manages its own row count (see syncNameRows) - a new
-     blank row fades in as soon as you fill the second-to-last one, and
-     fades out again if a name is deleted leaving too many spares. */
+  /* A fixed floor of rows (see syncNameRows) - "+ Legg til spiller" below
+     adds one more, explicitly, on its own tap. */
   .name-row-enter{ animation:nameRowEnter .3s cubic-bezier(.25,.8,.25,1) both; }
   @keyframes nameRowEnter{
     from{ opacity:0; transform:translateY(-4px); }
     to{ opacity:1; transform:translateY(0); }
   }
-  .name-row-exit{ opacity:0; transition:opacity .3s ease; pointer-events:none; }
+  .add-player-row-btn{
+    width:100%; margin-top:8px; padding:11px;
+    border:1px dashed #c7ccd3; border-radius:var(--radius-sm);
+    background:transparent; color:var(--ink-soft);
+    font-size:14px; font-weight:700; cursor:pointer;
+    transition:transform .1s ease;
+  }
+  .add-player-row-btn:active{ transform:scale(.98); }
   .name-input-wrap{ position:relative; flex:1; }
   /* Small red "!" attached to any field that's blocking progress (e.g. a
      required name field left empty, an invalid join code) - pairs with the
@@ -1129,9 +1135,27 @@
   }
   .name-row input[type=text]{
     width:100%; border:1px solid #dde1e6; border-radius:var(--radius-sm);
-    padding:10px 12px; font-size:15px; background:#fafbfc;
+    padding:10px 44px 10px 12px; font-size:15px; background:#fafbfc;
   }
   .name-row input[type=text]:focus{ outline:2px solid var(--accent); border-color:transparent; }
+  /* Same divider+"x" language as the confirm-arm buttons elsewhere (Kampslutt,
+     Avslutt og nullstill, etc.) - just without their circle, since this one
+     lives inside a text field rather than on a pill button. */
+  .name-row-clear-divider{
+    position:absolute; top:8px; bottom:8px; right:38px; width:1px;
+    background:#dde1e6; pointer-events:none;
+  }
+  .name-row-clear-btn{
+    position:absolute; top:0; bottom:0; right:0; width:38px;
+    display:flex; align-items:center; justify-content:center;
+    background:none; border:none; padding:0; margin:0;
+    font-size:20px; font-weight:800; line-height:1; color:var(--ink-soft);
+    cursor:pointer; transition:transform .1s ease; outline:none;
+  }
+  .name-row-clear-btn:active{ transform:scale(.8); }
+  /* [hidden] gotcha: the unconditional display:flex above would otherwise
+     silently defeat the native [hidden]{display:none} rule. */
+  .name-row-clear-btn[hidden]{ display:none; }
   .suggest-list{
     position:absolute; left:0; right:0; top:calc(100% + 4px);
     background:#fff; border:1px solid #e1e4e9; border-radius:var(--radius-sm);
@@ -1146,10 +1170,6 @@
   }
   .suggest-item:last-child{ border-bottom:none; }
   .suggest-item:active{ background:#f5f6f8; }
-  .removeRow{
-    width:34px; height:34px; border-radius:50%; border:none;
-    background:#f0f1f3; color:var(--ink-soft); font-size:16px; cursor:pointer;
-  }
   /* A player currently on the field can't be renamed/removed from settings
      - the input is disabled (grayed) and there's a lock note instead of the
      remove button. Only innbyttere stay editable. */
@@ -1254,39 +1274,41 @@
   .stack-btn-split.period{ background:rgba(10,132,255,.14); }
   .stack-btn-split.period .stack-btn-split-main{ color:var(--period-blue); }
   .stack-btn-split.period .stack-btn-split-divider{ background:rgba(10,132,255,.3); }
-  .stack-btn-split.period .info-btn{ border-color:var(--period-blue); color:var(--period-blue); }
+  .stack-btn-split.period .info-btn{ color:var(--period-blue); }
   .stack-btn-split.danger{ background:rgba(230,57,70,.12); }
   .stack-btn-split.danger .stack-btn-split-main{ color:var(--danger); }
   .stack-btn-split.danger .stack-btn-split-divider{ background:rgba(230,57,70,.3); }
-  .stack-btn-split.danger .info-btn{ border-color:var(--danger); color:var(--danger); }
+  .stack-btn-split.danger .info-btn{ color:var(--danger); }
   /* "Er du sikker?" (see createConfirmArm() in app.js) - the whole pill
      inverts to a solid fill on the first press, same for every .armed
      variant below. */
   .stack-btn-split.danger.armed{ background:var(--danger); }
   .stack-btn-split.danger.armed .stack-btn-split-main{ color:#fff; }
   .stack-btn-split.danger.armed .stack-btn-split-divider{ background:rgba(255,255,255,.4); }
-  .stack-btn-split.danger.armed .info-btn{ border-color:#fff; color:#fff; }
+  .stack-btn-split.danger.armed .info-btn{ color:#fff; }
   .stack-btn-split.period.armed{ background:var(--period-blue); }
   .stack-btn-split.period.armed .stack-btn-split-main{ color:#fff; }
   .stack-btn-split.period.armed .stack-btn-split-divider{ background:rgba(255,255,255,.4); }
-  .stack-btn-split.period.armed .info-btn{ border-color:#fff; color:#fff; }
+  .stack-btn-split.period.armed .info-btn{ color:#fff; }
+  /* No circle - just the bare glyph ("i" for info, swapped to a bigger "×"
+     while armed via .is-cancel below), same borderless language as
+     .name-row-clear-btn. */
   .info-btn{
-    width:16px; height:16px; border-radius:50%; flex:0 0 auto;
-    border:1px solid var(--ink-soft); background:none; color:var(--ink-soft);
+    width:16px; height:16px; flex:0 0 auto;
+    border:none; background:none; color:var(--ink-soft);
     font-size:10px; font-weight:700; font-style:italic; line-height:1;
     display:inline-flex; align-items:center; justify-content:center;
-    padding:0; cursor:pointer;
-    transition:background .12s ease;
+    padding:0; cursor:pointer; transition:transform .1s ease;
   }
-  .info-btn:active{ background:rgba(15,31,54,.08); }
+  .info-btn:active{ transform:scale(.8); }
   /* The info-btn repurposed as a cancel "×" while its button is armed
      (createConfirmArm's onArm/onDisarm swap the glyph + this class) -
-     same circle, bigger/bolder glyph so it still reads as a distinct
-     control, not a smaller "i". Scoped under .stack-btn-split (0,3,0) to
-     beat .modal-actions .info-btn (0,2,0) below, the same specificity
+     bigger/bolder glyph so it still reads as a distinct control, not a
+     smaller "i". Scoped under .stack-btn-split (0,3,0) to beat
+     .modal-actions .info-btn (0,2,0) below, the same specificity
      collision documented there. */
   .stack-btn-split .info-btn.is-cancel{
-    width:20px; height:20px; font-size:14px; font-weight:800; font-style:normal;
+    width:20px; height:20px; font-size:18px; font-weight:800; font-style:normal;
     /* Re-centered in the 38px zone left of the divider (right:38px on
        .stack-btn-split-divider) now that it's 20px wide, not 16px -
        (38-20)/2 = 9px on each side, so it sits equidistant from the
@@ -1387,21 +1409,26 @@
        is-cancel above, between .confirm-wrap-divider's right:38px and the
        wrap's own right edge. */
     position:absolute; top:50%; right:9px; transform:translateY(-50%);
-    width:20px; height:20px; border-radius:50%; border:1px solid currentColor;
-    background:none; color:inherit; font-size:14px; font-weight:800; line-height:1;
+    width:20px; height:20px; border:none;
+    background:none; color:inherit; font-size:18px; font-weight:800; line-height:1;
     display:inline-flex; align-items:center; justify-content:center;
     padding:0; cursor:pointer; outline:none;
     transition:transform .1s ease;
   }
   .confirm-wrap-cancel:active{ transform:translateY(-50%) scale(.82); }
+  /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
+     the unconditional display:inline-flex above needs an explicit
+     override, or this stays visible (and unresponsive - createConfirmArm's
+     internal armed flag stays false) even while `hidden`. */
+  .confirm-wrap-cancel[hidden]{ display:none; }
   /* Same invisible hit-area widening as .stack-btn-split .info-btn::before. */
   .confirm-wrap-cancel::before{
     content:''; position:absolute; top:-4px; bottom:-4px; left:-16px; right:-8px;
   }
   #transferOwnerWrap.armed .confirm-wrap-divider{ background:var(--accent-ink); opacity:.3; }
-  #transferOwnerWrap.armed .confirm-wrap-cancel{ border-color:var(--accent-ink); color:var(--accent-ink); }
+  #transferOwnerWrap.armed .confirm-wrap-cancel{ color:var(--accent-ink); }
   #newSessionWrap.armed .confirm-wrap-divider{ background:#fff; opacity:.4; }
-  #newSessionWrap.armed .confirm-wrap-cancel{ border-color:#fff; color:#fff; }
+  #newSessionWrap.armed .confirm-wrap-cancel{ color:#fff; }
 
   .export-textarea{
     width:100%; min-height:200px; margin:10px 0;
@@ -1481,13 +1508,25 @@
   .legend-list{ display:flex; flex-direction:column; gap:14px; margin:14px 0; }
   .legend-row{ display:flex; align-items:center; gap:12px; }
   .legend-swatch{
+    position:relative;
     width:30px; height:30px; border-radius:50%; flex:0 0 auto;
     display:flex; align-items:center; justify-content:center;
     font-size:14px; font-weight:800;
     background:#eef1f0;
   }
   .legend-swatch.warning{ background:var(--orange); color:#fff; }
-  .legend-swatch.warning.overtime{ animation:badgePulse 1.4s ease-in-out infinite; }
+  /* Mirrors .btn-badge on the real Forslag/multiBytte buttons (see
+     .bench-action-btn .btn-icon), scaled down and re-anchored for this
+     30px round swatch instead of that button's small rectangular icon
+     box - keeps the legend's icons matching what's actually on screen. */
+  .legend-badge{
+    position:absolute; top:-5px; right:-6px;
+    display:flex; align-items:center; justify-content:center;
+    min-width:13px; height:13px; padding:0 3px;
+    font-size:8.5px; font-weight:800; line-height:1; color:#fff;
+    background:var(--navy); border:1.5px solid #fff; border-radius:999px;
+    box-shadow:0 1px 2px rgba(15,31,54,.35);
+  }
   /* Rank swatches show the same SVG polygon+stroke markup rankBadgeHtml()
      draws on a player's avatar - a navy backdrop (matching the avatar
      itself) so the white outline reads the same way it does in the app,
@@ -1517,14 +1556,13 @@
   .modal-actions-col button{ flex:none; }
   /* .modal-actions button (above) is more specific than .info-btn's own
      rule (class+element beats a single class), so every property they
-     both set - padding, border, border-radius, flex, font-size/weight -
-     was silently winning over .info-btn's circle styling for any info-btn
-     living inside a modal-actions row (e.g. #closeSessionRow,
-     .stack-btn-split). Reassert the full circle here rather than patching
-     properties one at a time as each collision surfaces. */
+     both set - padding, border, flex, font-size/weight - was silently
+     winning over .info-btn's own styling for any info-btn living inside a
+     modal-actions row (e.g. #closeSessionRow, .stack-btn-split). Reassert
+     it here rather than patching properties one at a time as each
+     collision surfaces. */
   .modal-actions .info-btn{
-    flex:0 0 auto; padding:0; border-radius:50%;
-    border:1px solid var(--ink-soft);
+    flex:0 0 auto; padding:0; border:none;
     font-size:10px; font-weight:700;
   }
   .stack-btn{
@@ -1677,7 +1715,6 @@
     .token.suggested-partner .avatar{ animation:none; box-shadow:0 0 0 4px rgba(50,180,90,.75), var(--shadow-sm); }
     .token.swap-flash .avatar{ animation:none; }
     .name-row-enter{ animation:none; }
-    .name-row-exit{ transition:none; }
     .badge-warning.overtime{ animation:none; opacity:1; }
     .multi-cancel-btn{ transition:none; }
   }

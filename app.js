@@ -38,6 +38,11 @@
    * @property {string} deviceId
    * @property {number} joinedAt
    *
+   * @typedef {Object} MatchGoalEntry
+   * @property {string} playerId
+   * @property {string} playerName
+   * @property {number} matchMs
+   *
    * @typedef {Object} MatchHistoryEntry
    * @property {string} id
    * @property {string} opponentName
@@ -46,6 +51,7 @@
    * @property {number} awayScore
    * @property {number} endedAt
    * @property {Object<string, number>} playerMs
+   * @property {MatchGoalEntry[]} goals
    *
    * @typedef {Object} HistoryPlayerEntry
    * @property {string} id
@@ -149,7 +155,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.7';
+  var APP_VERSION = '1.9.8';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -157,6 +163,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.8', text: 'Fikset at OK-knappen kunne flytte seg ved utfylling av spillernavn. Fjernet sirkelen rundt info-/×-symbolene. Oppdatert symbolforklaring og eksport.' },
     { version: '1.9.7', text: '"Er du sikker?"-bekreftelse med kryss lagt til på Kampslutt, Avslutt og nullstill, Overfør økt-eier og Ny økt.' },
     { version: '1.9.6', text: 'Info-knappene flyttet inn i selve Avslutt-knappene. Versjonsnummer og endringslogg lagt til på hjemskjermen.' },
     { version: '1.9.5', text: 'Ny "Historikk" på hjemskjermen som lagrer gamle kamper lokalt. Automatisk innlogging med kode og tastatur som lukkes selv.' },
@@ -233,7 +240,7 @@
   var INFO_TEXTS = {
     byttetid: {
       title: 'Standard byttetid',
-      text: 'Tiden en utespiller skal spille før et oransje byttemerke (⇅) varsler at byttetiden er nådd. Spiller de 50% lenger enn byttetiden, begynner merket å pulsere forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
+      text: 'Tiden en utespiller skal spille før et oransje byttemerke (⇅) varsler at byttetiden er nådd. Spiller vedkommende 50 % lenger enn byttetiden, begynner merket å pulsere forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
     },
     wakelock: {
       title: 'Hold skjermen våken',
@@ -257,11 +264,11 @@
     },
     leaveMatch: {
       title: 'Forlat kampen',
-      text: 'Går til hjemskjermen, akkurat som tilbake-pilen øverst til venstre. Rører ingenting - kampen fortsetter nøyaktig som den er, og "Fortsett" fra hjemskjermen henter deg rett tilbake. Deler du økten med andre, er du fortsatt med i den i bakgrunnen; bruk "Forlat delt økt" under om du faktisk vil koble fra den.'
+      text: 'Går til hjemskjermen, akkurat som tilbake-pilen øverst til venstre. Kampen røres ikke - den fortsetter nøyaktig som den er, og "Fortsett" fra hjemskjermen henter deg rett tilbake. Deler du økten med andre, er du fortsatt med i den i bakgrunnen; bruk "Forlat delt økt" under om du faktisk vil koble fra den.'
     },
     closeSession: {
       title: 'Forlat delt økt',
-      text: 'Kobler denne enheten fra den delte økten for godt - kampen selv rører ingenting. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
+      text: 'Kobler denne enheten fra den delte økten for godt - kampen selv røres ikke. Om du ikke er økt-eier fortsetter kampen som normalt for de andre. Er du økt-eier og noen andre er med, overføres økten til dem; er du alene, forblir kampen som den er til du fortsetter den igjen fra hjemskjermen.'
     },
     historySave: {
       title: 'Lagre kamper til historikk',
@@ -2373,54 +2380,28 @@
 
   /* ---------------- Settings modal ---------------- */
 
-  // A row counts as "blank" (safe to auto-add/auto-trim) only if it's an
-  // ordinary editable row with nothing typed in it - a locked row (a
-  // player currently on the field) never counts, even though its input
-  // can't be edited here.
-  /** @param {HTMLElement} row @returns {boolean} */
-  function isBlankRow(row){
-    if (row.classList.contains('field-locked')) return false;
-    var input = /** @type {HTMLInputElement|null} */ (row.querySelector('input'));
-    return !!input && !input.value.trim();
-  }
+  // Fixed field count, topped up by a manual "+ Legg til spiller" button -
+  // deliberately simple instead of the earlier self-managing version (which
+  // auto-added a row the moment the second-to-last blank was filled). That
+  // auto-add, no matter when it was triggered (on blur, or even on the
+  // input event itself), could still land while a tap elsewhere in the
+  // modal was in flight and reflow everything below it - including the OK
+  // button - out from under the tap. A row count that only ever changes on
+  // an explicit, separate button press can't collide with an unrelated tap
+  // like that.
+  var MIN_NAME_ROWS = 5;
 
-  /** @param {HTMLElement} row */
-  function fadeOutRow(row){
-    row.classList.add('name-row-exit');
-    setTimeout(function(){ row.remove(); }, 300);
-  }
-
-  // Keeps the name list self-managing, replacing the old fixed 5/8/10
-  // ladder and the "+ Legg til spiller" button entirely:
-  //  - never fewer than fieldSize+1 rows total (a full XI plus one sub -
-  //    the practical minimum to actually run a match)
-  //  - always exactly 2 blank rows available at the tail, so there's
-  //    always room to type the next name without any extra step - a new
-  //    one fades in the moment the second-to-last blank is filled, and
-  //    spares fade back out if a name is deleted and leaves too many.
-  // Called after anything that could change the count: a name field
-  // losing focus, a row being deleted, or (first-run only, before "Antall
-  // utespillere" locks) the field size changing.
+  // Tops up to at least fieldSize+1 rows (a full lineup plus one sub - the
+  // practical minimum to run a match) or MIN_NAME_ROWS, whichever is
+  // larger. Called on open and (first-run only, before "Antall
+  // utespillere" locks) when the field size changes - never from typing or
+  // blur, so it can't run mid-click.
   function syncNameRows(){
     var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 3));
-    var floor = fieldSize + 1;
+    var floor = Math.max(fieldSize + 1, MIN_NAME_ROWS);
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
-
     while (rows.length < floor){
       rows.push(addNameRow(null, '', rows.length + 1));
-    }
-
-    function trailingBlankCount(){
-      var n = 0;
-      for (var i = rows.length - 1; i >= 0 && isBlankRow(rows[i]); i--) n++;
-      return n;
-    }
-
-    while (trailingBlankCount() > 2 && rows.length > floor){
-      fadeOutRow(/** @type {HTMLElement} */ (rows.pop()));
-    }
-    while (trailingBlankCount() < 2){
-      rows.push(addNameRow(null, '', rows.length + 1, false, true));
     }
   }
 
@@ -2537,7 +2518,7 @@
     state.players.forEach(function(p, idx){
       addNameRow(p.id, p.name, idx+1, state.onField.indexOf(p.id) !== -1);
     });
-    syncNameRows(); // tops up to fieldSize+1 rows and the 2 trailing blanks
+    syncNameRows(); // tops up to fieldSize+1 rows, or MIN_NAME_ROWS, whichever is larger
 
     els.matchDurationInput.value = Math.round(state.matchDurationMs/60000);
     var totalMs = state.defaultDurationMs;
@@ -2587,42 +2568,35 @@
     var masterLocked = !locked && !isMaster();
     var anyLocked = locked || masterLocked;
     var row = document.createElement('div');
-    // 'locked' drives the grey styling for both reasons, but isBlankRow()
-    // needs to tell them apart: a masterLocked row can still be an empty
-    // trailing slot (syncNameRows must be able to count it as blank), while
-    // a field-locked row never is. Without 'field-locked' as a separate
-    // marker, a non-master device would see every trailing blank row report
-    // as "not blank" and syncNameRows()'s trailingBlankCount() loop would
-    // never reach its target - an infinite loop that freezes the tab (the
-    // "settings crashes to a black screen" bug reported after joining a
-    // session someone else owns).
-    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (locked ? ' field-locked' : '') + (fadeIn ? ' name-row-enter' : '');
+    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
+    var hasValue = !!(name && name.trim());
     row.innerHTML =
       '<div class="name-input-wrap">' +
         '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (anyLocked ? ' disabled' : '') + '>' +
+        (anyLocked ? '' :
+          '<span class="name-row-clear-divider"' + (hasValue ? '' : ' hidden') + ' aria-hidden="true"></span>' +
+          '<button type="button" class="name-row-clear-btn"' + (hasValue ? '' : ' hidden') + ' aria-label="Fjern">×</button>') +
       '</div>' +
       (anyLocked
         ? '<span class="locked-row-note" title="' + (locked ? 'Utespillere kan ikke endres eller fjernes her mens de er på banen' : 'Kun økt-eieren kan endre spillernavn') + '">🔒</span>'
-        : '<button type="button" class="removeRow" aria-label="Fjern"' + (name && name.trim() ? '' : ' style="display:none;"') + '>×</button>');
+        : '');
     els.nameRows.appendChild(row);
     var wrap = row.querySelector('.name-input-wrap');
     if (anyLocked) return row;
-    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.removeRow'));
+    var clearDivider = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-divider'));
+    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-btn'));
     var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
     removeBtn.addEventListener('click', function(){
       row.remove();
-      syncNameRows();
       settingsDirty = true;
     });
-    // A blank row manages itself (syncNameRows keeps exactly 2 spares) -
-    // the remove button only makes sense once there's an actual name to
-    // take back out.
     input.addEventListener('input', function(){
       clearFieldInvalid(wrap);
-      removeBtn.style.display = input.value.trim() ? '' : 'none';
+      var filled = !!input.value.trim();
+      removeBtn.hidden = !filled;
+      clearDivider.hidden = !filled;
     });
-    input.addEventListener('blur', syncNameRows);
     attachSuggestions(input, wrap);
     return row;
   }
@@ -3015,9 +2989,38 @@
     });
     rows.sort(function(a,b){ return b.fieldMs - a.fieldMs; });
     var lines = ['Trenerappen – eksport ' + new Date().toLocaleString('nb-NO')];
+    lines.push('');
+    lines.push('Kumulert spilletid (siden siste nullstilling):');
     rows.forEach(function(r){
       lines.push(r.name + ': ' + formatCumulative(r.fieldMs) + ' spilt, ' + formatCumulative(r.benchMs) + ' benk');
     });
+
+    // Per-match breakdown - opponent, resultat, hvert mål med tidspunkt og
+    // scorer, og spilletid per spiller den kampen (see state.matchHistory,
+    // archived by endMatchPeriod). Kronologisk, eldste først, samme
+    // rekkefølge kampene faktisk ble spilt i.
+    var history = state.matchHistory || [];
+    if (history.length > 0){
+      lines.push('');
+      lines.push('Kamper spilt denne økten:');
+      history.forEach(function(m, i){
+        var opponent = m.opponentName || m.opponentAbbr || 'ukjent motstander';
+        lines.push('');
+        lines.push((i + 1) + '. ' + new Date(m.endedAt).toLocaleString('nb-NO') + ' - mot ' + opponent + ' (' + m.homeScore + '-' + m.awayScore + ')');
+        var goals = m.goals || [];
+        if (goals.length > 0){
+          lines.push('   Mål: ' + goals.map(function(g){ return formatMs(g.matchMs) + ' ' + g.playerName; }).join(', '));
+        }
+        var nameById = {};
+        state.players.forEach(function(p){ nameById[p.id] = p.name; });
+        var playerMsRows = Object.keys(m.playerMs || {})
+          .map(function(id){ return { name: nameById[id] || '(fjernet spiller)', ms: m.playerMs[id] }; })
+          .sort(function(a, b){ return b.ms - a.ms; });
+        if (playerMsRows.length > 0){
+          lines.push('   Spilletid: ' + playerMsRows.map(function(r){ return r.name + ' ' + formatCumulative(r.ms); }).join(', '));
+        }
+      });
+    }
     return lines.join('\n');
   }
 
@@ -3119,7 +3122,19 @@
       homeScore: homeScore,
       awayScore: awayScore,
       endedAt: now,
-      playerMs: playerMs
+      playerMs: playerMs,
+      // Snapshots the scorer's name (not just id, like playerMs above) so
+      // "Eksporter spillerdata" (buildExportText) still shows who scored
+      // and when even after a player is later removed from the roster -
+      // away-team goals have no playerId (see recordGoal/computeGoalBadges,
+      // never attributed to an individual) and are skipped here.
+      goals: state.goalLog
+        .filter(function(g){ return g.team === 'home' && g.playerId; })
+        .map(function(g){
+          var id = /** @type {string} */ (g.playerId);
+          var p = playerById(id);
+          return { playerId: id, playerName: p ? p.name : '(fjernet spiller)', matchMs: g.matchMs };
+        })
     });
     // Separate from the above: a persistent, local, cross-session archive
     // (see loadHistoryArchive()) for the "Historikk" tile - state.matchHistory
@@ -3346,6 +3361,7 @@
     els.closeSessionCancelBtn = qs('closeSessionCancelBtn');
     els.closeSessionConfirmBtn = qs('closeSessionConfirmBtn');
     els.nameRows = qs('nameRows');
+    els.addPlayerRowBtn = qs('addPlayerRowBtn');
     els.durMin = qs('durMin');
     els.durSec = qs('durSec');
     els.fieldSizeInput = qs('fieldSizeInput');
@@ -3561,6 +3577,9 @@
     // inside gate themselves individually (see openSettings/isMaster).
     els.settingsBtn.addEventListener('click', function(){ openSettings(false); });
     els.fieldSizeInput.addEventListener('input', syncNameRows);
+    els.addPlayerRowBtn.addEventListener('click', function(){
+      addNameRow(null, '', els.nameRows.querySelectorAll('.name-row').length + 1, false, true);
+    });
     els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
