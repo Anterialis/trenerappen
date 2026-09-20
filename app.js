@@ -59,6 +59,11 @@
    * @property {number} ms
    * @property {number} goals
    *
+   * @typedef {Object} HistoryGoalEntry
+   * @property {'home'|'away'} team
+   * @property {string} scorerName
+   * @property {number} matchMs
+   *
    * @typedef {Object} HistoryMatchEntry
    * @property {string} id
    * @property {number} endedAt
@@ -67,6 +72,8 @@
    * @property {number} homeScore
    * @property {number} awayScore
    * @property {HistoryPlayerEntry[]} players
+   * @property {HistoryGoalEntry[]} goals
+   * @property {number} [durationMs] - only set on the entry built by buildHistoryArchiveEntry() right when a match ends (see lastMatchSummary); never persisted to Supabase, so absent on anything fetched back via fetchMatchHistory()
    *
    * @typedef {Object} AppState
    * @property {Player[]} players
@@ -146,7 +153,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.6';
+  var APP_VERSION = '2.0.7';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -154,6 +161,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0.7', text: 'Målene i Historikk viser nå tidspunkt for hver scoring. Ny "Kampen er ferdig"-oppsummering vises rett etter Kampslutt/Avslutt.' },
     { version: '2.0.6', text: 'Sikret delt økt mot at en inaktiv enhet kan overskrive en aktiv kamp med gamle data. Innlogging til Historikk kan nå også skje med brukernavn.' },
     { version: '2.0.5', text: 'Fikset blått felt nederst ved første åpning i portrettmodus (iOS-kaldstart målte skjermhøyden litt for lavt før den rettet seg selv ved rotasjon).' },
     { version: '2.0.4', text: 'Lagt touchmove-sperren mot rubber-band-scroll tilbake - touch-action alene holdt ikke siden fikset.' },
@@ -290,6 +298,13 @@
   // that follows it closes - the two questions are independent, but ask
   // order puts the save question first.
   var pendingSaveToHistory = false;
+  // The just-ended match's full summary (score, duration, goal timeline,
+  // player times) - set by endMatchPeriod()/archiveInProgressMatch() right
+  // as a match ends, read by showMatchSummaryThen() to render the "Kampen
+  // er ferdig" popup shown right after, regardless of whether the coach
+  // also chose to save it to the shared Historikk.
+  /** @type {HistoryMatchEntry|null} */
+  var lastMatchSummary = null;
   /** @type {AudioContext|null} */
   var audioCtx = null;
   var els = {};
@@ -803,6 +818,7 @@
       home_score: entry.homeScore || 0,
       away_score: entry.awayScore || 0,
       players: entry.players || [],
+      goals: entry.goals || [],
       origin: deviceOrigin
     }).then(function(res){
       if (res.error) console.warn('Kunne ikke lagre kamp til historikk', res.error);
@@ -822,7 +838,8 @@
           opponentAbbr: row.opponent_abbr || '',
           homeScore: row.home_score || 0,
           awayScore: row.away_score || 0,
-          players: row.players || []
+          players: row.players || [],
+          goals: row.goals || []
         };
       });
     });
@@ -1108,6 +1125,15 @@
           '<span class="history-row-player-stats">' + formatCumulative(p.ms) + '</span>' +
         '</div>';
       }).join('') || '<div class="history-row-player"><span class="history-row-player-name">Ingen spillerdata registrert.</span></div>';
+      var goalRows = (m.goals || []).map(function(g){
+        return '<div class="history-row-goal history-row-goal-' + g.team + '">' +
+          '<span class="history-row-goal-time">' + formatMs(g.matchMs) + '</span>' +
+          '<span class="history-row-goal-scorer">' + escapeHtml(g.scorerName) + '</span>' +
+        '</div>';
+      }).join('');
+      var goalsBlock = goalRows
+        ? '<div class="history-row-goals-title">Mål</div><div class="history-row-goals">' + goalRows + '</div>'
+        : '';
       return '<div class="history-row' + (expanded ? ' expanded' : '') + '" data-id="' + m.id + '">' +
         '<div class="history-row-main">' +
           (historySelectMode ? '<input type="checkbox" class="history-row-check"' + (selected ? ' checked' : '') + '>' : '') +
@@ -1122,7 +1148,7 @@
             '<button type="button" class="history-row-delete' + (armed ? ' armed' : '') + '" aria-label="Slett kamp">🗑</button>' +
             '<span class="history-row-chevron" aria-hidden="true">⌄</span>') +
         '</div>' +
-        (historySelectMode ? '' : '<div class="history-row-detail"' + (expanded ? '' : ' hidden') + '>' + playerRows + '</div>') +
+        (historySelectMode ? '' : '<div class="history-row-detail"' + (expanded ? '' : ' hidden') + '>' + playerRows + goalsBlock + '</div>') +
       '</div>';
     }).join('');
 
@@ -3517,6 +3543,9 @@
   // tile - snapshots player NAMES (not just ids) so old entries stay
   // meaningful even after a player is later removed from the roster.
   function buildHistoryArchiveEntry(now, calc){
+    var nameById = {};
+    state.players.forEach(function(p){ nameById[p.id] = p.name; });
+    var opponentLabel = state.opponentName || (state.opponentAbbr ? state.opponentAbbr : 'Motstander');
     return {
       id: uid(),
       endedAt: now,
@@ -3531,6 +3560,18 @@
           ms: calc.playerMs[p.id] || 0,
           goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
         };
+      }),
+      // Chronological goal timeline - home goals keep the scorer's name
+      // (playerId is always set for those, see recordGoal), away goals
+      // never have a player attached (nobody logs who scored FOR the
+      // opponent) so the opponent's own team name stands in as the
+      // "scorer" instead.
+      goals: state.goalLog.slice().sort(function(a,b){ return a.matchMs - b.matchMs; }).map(function(g){
+        return {
+          team: g.team,
+          scorerName: g.team === 'home' ? (nameById[g.playerId || ''] || '(fjernet spiller)') : opponentLabel,
+          matchMs: g.matchMs
+        };
       })
     };
   }
@@ -3542,10 +3583,52 @@
   // answer to "lagre denne kampen?") right before resetMatch() wipes
   // everything away for good.
   function archiveInProgressMatch(saveToHistory){
-    if (!saveToHistory) return;
+    // Always computes the summary (for the "Kampen er ferdig" popup right
+    // after this, see lastMatchSummary/showMatchSummaryThen) - only the
+    // Supabase save itself is conditional on the coach's answer.
     var now = Date.now();
     var calc = computeMatchScoreAndPlayerMs(now);
-    saveMatchToHistory(buildHistoryArchiveEntry(now, calc));
+    var entry = buildHistoryArchiveEntry(now, calc);
+    entry.durationMs = matchClockElapsed(now);
+    lastMatchSummary = entry;
+    if (saveToHistory) saveMatchToHistory(entry);
+  }
+
+  /** @type {(() => void)|null} */
+  var matchSummaryNextFn = null;
+  // "Kampen er ferdig" popup - shown right after Kampslutt/Avslutt actually
+  // finishes (see the 5 call sites of endMatchPeriod()/archiveInProgressMatch()),
+  // using whatever they just set on lastMatchSummary, regardless of whether
+  // the coach also chose to save it to the shared Historikk. `next` is
+  // whatever would otherwise have run immediately (openOpponentModal(),
+  // showLauncherMenu(), ...) - deferred until "OK" is pressed instead, so
+  // the summary isn't instantly buried under the next screen. Safe to call
+  // with no `next` at all (the idle-auto-pause paths do this).
+  /** @param {() => void} [next] */
+  function showMatchSummaryThen(next){
+    var entry = lastMatchSummary;
+    if (!entry){ if (next) next(); return; }
+    matchSummaryNextFn = next || null;
+    var opponent = entry.opponentName || (entry.opponentAbbr ? entry.opponentAbbr : 'Ukjent motstander');
+    els.matchSummaryHeadline.textContent =
+      'vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore +
+      ' · ' + formatMs(entry.durationMs || 0) + ' spilt';
+    var goals = entry.goals || [];
+    els.matchSummaryGoalsTitle.hidden = goals.length === 0;
+    els.matchSummaryGoals.innerHTML = goals.map(function(g){
+      return '<div class="match-summary-goal match-summary-goal-' + g.team + '">' +
+        '<span class="match-summary-goal-time">' + formatMs(g.matchMs) + '</span>' +
+        '<span class="match-summary-goal-scorer">' + escapeHtml(g.scorerName) + '</span>' +
+      '</div>';
+    }).join('');
+    var players = (entry.players || []).slice().sort(function(a,b){ return b.ms - a.ms; });
+    els.matchSummaryPlayers.innerHTML = players.map(function(p){
+      return '<div class="match-summary-player">' +
+        '<span class="match-summary-player-name">' + escapeHtml(p.name) + (p.goals > 0 ? ' (' + p.goals + ' mål)' : '') + '</span>' +
+        '<span class="match-summary-player-time">' + formatMs(p.ms) + '</span>' +
+      '</div>';
+    }).join('') || '<div class="match-summary-empty">Ingen spillerdata registrert.</div>';
+    els.matchSummaryModal.classList.add('open');
   }
 
   /** @type {((saveToHistory: boolean) => void)|null} */
@@ -3574,6 +3657,13 @@
     // separate matches).
     var calc = computeMatchScoreAndPlayerMs(now);
     var homeScore = calc.homeScore, awayScore = calc.awayScore, playerMs = calc.playerMs;
+    // Built once here (before goalLog/matchClock/onField are touched below)
+    // and reused both for the optional Supabase archive AND the "Kampen er
+    // ferdig" summary shown right after this - see showMatchSummaryThen()
+    // at every call site of endMatchPeriod/archiveInProgressMatch.
+    var summaryEntry = buildHistoryArchiveEntry(now, calc);
+    summaryEntry.durationMs = matchClockElapsed(now);
+    lastMatchSummary = summaryEntry;
     if (!Array.isArray(state.matchHistory)) state.matchHistory = [];
     state.matchHistory.push({
       id: uid(),
@@ -3604,7 +3694,7 @@
     // prompt shown right before this runs (see saveHistoryModal), not a
     // standing setting - a coach who always says no just doesn't add a row.
     if (saveToHistory){
-      saveMatchToHistory(buildHistoryArchiveEntry(now, calc));
+      saveMatchToHistory(summaryEntry);
     }
     state.goalLog = [];
     // Next match likely means a next opponent (cup format) - clearing this
@@ -3879,6 +3969,12 @@
     els.saveHistoryModal = qs('saveHistoryModal');
     els.saveHistoryYesBtn = qs('saveHistoryYesBtn');
     els.saveHistoryNoBtn = qs('saveHistoryNoBtn');
+    els.matchSummaryModal = qs('matchSummaryModal');
+    els.matchSummaryHeadline = qs('matchSummaryHeadline');
+    els.matchSummaryGoalsTitle = qs('matchSummaryGoalsTitle');
+    els.matchSummaryGoals = qs('matchSummaryGoals');
+    els.matchSummaryPlayers = qs('matchSummaryPlayers');
+    els.matchSummaryCloseBtn = qs('matchSummaryCloseBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
     els.multiSelectCancelBtn = qs('multiSelectCancelBtn');
@@ -4186,13 +4282,16 @@
       els.reorgPromptModal.classList.remove('open');
       endMatchPeriod(false, pendingSaveToHistory);
       renderAll();
-      openOpponentModal(); // next match, likely a different opponent (cup format) - see endMatchPeriod
+      // next match, likely a different opponent (cup format) - see
+      // endMatchPeriod - deferred until the "Kampen er ferdig" summary
+      // (see showMatchSummaryThen) is dismissed.
+      showMatchSummaryThen(openOpponentModal);
     });
     els.reorgYesBtn.addEventListener('click', function(){
       els.reorgPromptModal.classList.remove('open');
       animateReorganization(function(){
         endMatchPeriod(true, pendingSaveToHistory);
-        openOpponentModal();
+        showMatchSummaryThen(openOpponentModal);
       });
     });
     els.saveHistoryYesBtn.addEventListener('click', function(){
@@ -4206,6 +4305,12 @@
       var cb = pendingSaveHistoryCallback;
       pendingSaveHistoryCallback = null;
       if (cb) cb(false);
+    });
+    els.matchSummaryCloseBtn.addEventListener('click', function(){
+      els.matchSummaryModal.classList.remove('open');
+      var next = matchSummaryNextFn;
+      matchSummaryNextFn = null;
+      if (next) next();
     });
     els.idleSuggestCancelBtn.addEventListener('click', function(){
       els.idleSuggestModal.classList.remove('open');
@@ -4224,11 +4329,13 @@
         askSaveToHistory(function(saveToHistory){
           archiveInProgressMatch(saveToHistory);
           resetMatch();
+          showMatchSummaryThen();
         });
       } else if (kind === 'endPeriod'){
         askSaveToHistory(function(saveToHistory){
           endMatchPeriod(false, saveToHistory);
           renderAll();
+          showMatchSummaryThen();
         });
       }
     });
@@ -4246,7 +4353,7 @@
         // kampen", since they're mid-match here and more likely to want a
         // clean slate than to fill in a new roster immediately.
         els.settingsModal.classList.remove('open');
-        showLauncherMenu();
+        showMatchSummaryThen(showLauncherMenu);
       });
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);

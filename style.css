@@ -442,6 +442,25 @@
   }
   .history-row-player-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .history-row-player-stats{ font-variant-numeric:tabular-nums; white-space:nowrap; color:rgba(255,255,255,.6); }
+  .history-row-goals-title{
+    margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.14);
+    font-size:10.5px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+    color:rgba(255,255,255,.5);
+  }
+  .history-row-goal{
+    display:flex; align-items:center; gap:8px;
+    font-size:12.5px; color:rgba(255,255,255,.8); padding:3px 0;
+  }
+  /* Small colored dot instead of repeating "hjemme/borte" in text - green
+     for our own goals (matches the app's other "positive/active" green,
+     e.g. multiBytte's ring), muted grey for the opponent's. */
+  .history-row-goal::before{
+    content:''; width:7px; height:7px; border-radius:50%; flex:0 0 auto;
+    background:#32b45a;
+  }
+  .history-row-goal-away::before{ background:rgba(255,255,255,.35); }
+  .history-row-goal-time{ font-variant-numeric:tabular-nums; color:rgba(255,255,255,.6); }
+  .history-row-goal-scorer{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
   .history-select-bar{
     display:flex; align-items:center; gap:10px; margin-top:12px; flex-shrink:0;
@@ -1193,10 +1212,37 @@
     border-radius:var(--radius-sm);
     font-size:12.5px; line-height:1.42; color:var(--ink-soft);
   }
-  .modal-card label.section-label{
+  .modal-card label.section-label,
+  .modal-card div.section-label{
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
   }
+  /* "Kampen er ferdig" summary popup (see showMatchSummaryThen in app.js) -
+     light-themed siblings of the dark .history-row-goal/.history-row-player
+     rows the "Historikk" screen uses for the same data, since this modal
+     sits on the normal white .modal-card instead of that screen's dark
+     background. */
+  .match-summary-goals, .match-summary-players{
+    max-height:150px; overflow-y:auto; touch-action:pan-y;
+    margin-bottom:4px;
+  }
+  .match-summary-goal, .match-summary-player{
+    display:flex; align-items:center; gap:8px;
+    font-size:13px; color:var(--ink); padding:4px 0;
+  }
+  .match-summary-goal::before{
+    content:''; width:7px; height:7px; border-radius:50%; flex:0 0 auto;
+    background:#32b45a;
+  }
+  .match-summary-goal-away::before{ background:#c7ccd3; }
+  .match-summary-goal-time, .match-summary-player-time{
+    font-variant-numeric:tabular-nums; color:var(--ink-soft); flex:0 0 auto;
+  }
+  .match-summary-goal-scorer, .match-summary-player-name{
+    flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .match-summary-empty{ font-size:13px; color:var(--ink-soft); padding:4px 0; }
+
   /* #opponentModal's two fields - bigger and more considered than a bare
      .name-row input (that class needed its .name-row parent for styling,
      which these never had - the plain, unstyled browser input that left

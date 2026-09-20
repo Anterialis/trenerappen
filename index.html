@@ -444,10 +444,24 @@
 <div id="saveHistoryModal" class="modal">
   <div class="modal-card">
     <h2>Lagre kampen?</h2>
-    <p class="sub">Vil du lagre motstander, resultat og spilletid for denne kampen til "Historikk" på hjemskjermen? Lagres kun lokalt på denne enheten.</p>
+    <p class="sub">Vil du lagre motstander, resultat og spilletid for denne kampen til "Historikk" på hjemskjermen? Kun admin kan senere se den der.</p>
     <div class="modal-actions">
       <button type="button" id="saveHistoryNoBtn" class="secondary">Ikke lagre</button>
       <button type="button" id="saveHistoryYesBtn" class="primary">Lagre</button>
+    </div>
+  </div>
+</div>
+
+<div id="matchSummaryModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Kampen er ferdig</h2>
+    <p class="sub" id="matchSummaryHeadline"></p>
+    <div id="matchSummaryGoalsTitle" class="section-label" hidden>Mål</div>
+    <div id="matchSummaryGoals" class="match-summary-goals"></div>
+    <div class="section-label">Spilletid</div>
+    <div id="matchSummaryPlayers" class="match-summary-players"></div>
+    <div class="modal-actions">
+      <button type="button" id="matchSummaryCloseBtn" class="primary">OK</button>
     </div>
   </div>
 </div>
