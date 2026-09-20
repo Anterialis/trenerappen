@@ -75,6 +75,18 @@ respektere om dere fortsetter å bygge videre:
     i `style.css` for den fulle begrunnelsen. Scroll-låsen (touch-action +
     touchmove-sperre) løser selve scroll-opplevelsen uten å røre ved den
     avveiningen.
+  - **Denne kaldstart-avveiningen slo faktisk ut i praksis (2026-09-20):** et
+    synlig blått (navy `body`-bakgrunn) felt under innbytterbenken ved aller
+    første åpning i portrettmodus, som forsvant etter å ha rotert til
+    landskap og tilbake. `applyRealViewportHeight()` i `app.js` fikser dette
+    aktivt nå - setter en eksplisitt, JS-målt pikselhøyde
+    (`visualViewport.height`) på `#viewport-frame`/`#app` i stedet for å
+    stole blindt på at ren CSS `100dvh` korrigerer seg selv. Kjøres på de
+    samme "Safari-chrome har satt seg"-signalene som `renderPitchMarkings()`
+    allerede lyttet på (visualViewport-resize, vanlig resize/orientationchange,
+    og en 400ms-fallback ved oppstart) - se `updateFrameFit()`-kommentaren i
+    `app.js`. Hoppes bevisst over på ikke-touch (desktop-preview-modus), så
+    den aldri kolliderer med den letterboxede rammens egen bredde/høyde-utregning.
 
 ---
 

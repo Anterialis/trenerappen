@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.4';
+  var APP_VERSION = '2.0.5';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0.5', text: 'Fikset blått felt nederst ved første åpning i portrettmodus (iOS-kaldstart målte skjermhøyden litt for lavt før den rettet seg selv ved rotasjon).' },
     { version: '2.0.4', text: 'Lagt touchmove-sperren mot rubber-band-scroll tilbake - touch-action alene holdt ikke siden fikset.' },
     { version: '2.0.3', text: 'Forsøk: fjernet touchmove-sperren igjen (beholder kun touch-action-CSS-en) for å se om den alene holder siden fra å scrolle.' },
     { version: '2.0.2', text: 'Stoppet at siden fortsatt kunne "gynge" opp/ned ved dra-forbi-kant (touch-action alene var ikke nok til å hindre iOS sin egen elastiske bounce).' },
@@ -1821,6 +1822,28 @@
     var actualRatio = vw/vh;
     var diff = Math.abs(actualRatio - targetRatio) / targetRatio;
     els.viewportFrame.classList.toggle('desktop-preview', diff >= 0.04);
+  }
+
+  // #app/#viewport-frame size themselves with CSS 100dvh normally, which is
+  // meant to be self-correcting - but on a cold PWA launch on iOS, the very
+  // first 100dvh the engine reports can land a bit short (before Safari's
+  // own chrome/status-bar has finished settling), and unlike renderPitchMarkings
+  // (which already re-measures on the same settle signals below), nothing
+  // was forcing #app to pick up the corrected value - it just silently kept
+  // rendering at that first, too-short height, leaving a gap of bare navy
+  // background under the pitch/bench until something else (any resize,
+  // e.g. rotating the device) happened to invalidate its layout. Setting an
+  // explicit inline pixel height here - re-applied on the exact same settle
+  // signals as renderPitchMarkings - replaces that silent trust with an
+  // active correction. Skipped entirely on non-touch (desktop-preview) so
+  // it never fights that mode's own letterboxed width/height calc.
+  function applyRealViewportHeight(){
+    var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    if (!isTouchDevice) return;
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    if (!h) return;
+    els.viewportFrame.style.height = h + 'px';
+    els.appEl.style.height = h + 'px';
   }
 
   // SVG (not a CSS border-triangle) specifically so the white outline
@@ -4605,20 +4628,22 @@
     initCoinFlip();
 
     updateFrameFit();
+    applyRealViewportHeight();
     renderPitchMarkings();
     requestWakeLock();
-    window.addEventListener('resize', function(){ updateFrameFit(); renderPitchMarkings(); });
-    window.addEventListener('orientationchange', function(){ updateFrameFit(); renderPitchMarkings(); });
+    window.addEventListener('resize', function(){ updateFrameFit(); applyRealViewportHeight(); renderPitchMarkings(); });
+    window.addEventListener('orientationchange', function(){ updateFrameFit(); applyRealViewportHeight(); renderPitchMarkings(); });
     if (window.visualViewport){
-      // #viewport-frame/#app size themselves now (see updateFrameFit),
-      // but renderPitchMarkings() reads #field-wrap's rendered box as a
-      // one-off snapshot each call - re-run it whenever Safari's chrome
-      // settles so the pitch lines aren't drawn against a still-short box.
-      window.visualViewport.addEventListener('resize', renderPitchMarkings);
+      // #viewport-frame/#app re-measure their height here too now (see
+      // applyRealViewportHeight), and renderPitchMarkings() reads
+      // #field-wrap's rendered box as a one-off snapshot each call - both
+      // re-run whenever Safari's chrome settles so neither is left drawn
+      // against a still-short box.
+      window.visualViewport.addEventListener('resize', function(){ applyRealViewportHeight(); renderPitchMarkings(); });
     }
     // Same reasoning as above, in case the very first measurement (on
     // load) was still mid-settle - cheap, and harmless if not needed.
-    setTimeout(renderPitchMarkings, 400);
+    setTimeout(function(){ applyRealViewportHeight(); renderPitchMarkings(); }, 400);
     if (window.ResizeObserver){
       new ResizeObserver(function(){ renderPitchMarkings(); }).observe(els.fieldWrap);
     }
