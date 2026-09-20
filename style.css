@@ -239,30 +239,66 @@
     .launcher-choice-overlay{ transition:opacity .3s ease; transform:none; }
   }
 
-  /* ---------- Myntkast (coin toss) launcher tile + screen ---------- */
-  .launcher-tiles-row{ display:flex; gap:12px; width:100%; max-width:380px; align-items:flex-start; }
+  /* ---------- Myntkast / Innstillinger launcher tiles + screen ----------
+     .side-col deliberately sets no height of its own: align-items on
+     .launcher-tiles-row is left at flexbox's default (stretch, not
+     flex-start), which hands .side-col the exact same height as
+     .launcher-tile. justify-content:center then centers the fixed-size
+     Myntkast+gap+Innstillinger pair within that stretched height, so
+     Myntkast sits a bit below Trenerappen's own top and Innstillinger a bit
+     above its bottom, symmetrically, by whatever's left over - not a fixed
+     pixel margin that only happens to work for one line count. (An earlier
+     version used space-between to land exactly on both edges - moved off
+     that on purpose, to leave Innstillinger some breathing room from the
+     Historikk tile below it.) */
+  .launcher-tiles-row{ display:flex; gap:12px; width:100%; max-width:380px; }
   .launcher-tiles-row .launcher-tile{ max-width:none; flex:1 1 auto; min-width:0; }
-  .coin-tile{
-    flex:0 0 104px; width:104px;
-    border-radius:22px; overflow:hidden;
-    background:rgba(255,255,255,.09);
+  .side-col{ flex:0 0 104px; width:104px; display:flex; flex-direction:column; justify-content:center; gap:14px; }
+  .coin-tile, .settings-tile{
+    position:relative; flex:0 0 auto;
+    width:104px; aspect-ratio:1/1; border-radius:22px; overflow:hidden;
     border:1px solid rgba(255,255,255,.20);
-    -webkit-backdrop-filter:blur(20px) saturate(160%);
-    backdrop-filter:blur(20px) saturate(160%);
     box-shadow:0 10px 26px rgba(0,0,0,.4);
     cursor:pointer;
     transition:transform .15s ease, box-shadow .15s ease;
-    display:flex; flex-direction:column; align-items:center;
-    padding:0 0 10px;
-  }
-  .coin-tile:active{ transform:scale(.96); }
-  .coin-tile-art{
-    width:100%; aspect-ratio:1/1;
     display:flex; align-items:center; justify-content:center;
-    background:radial-gradient(circle at 35% 30%, #ffe6a8, #d9a02f 55%, #a9760f 100%);
+    /* Excludes the label zone's height from the centering box below, so the
+       icon centers between the tile's top edge and the top of the label -
+       not the tile's true vertical middle, which would sit low once the
+       label scrim visually claims the bottom third. */
+    padding-bottom:32px;
   }
-  .coin-tile-art svg{ width:56%; height:56%; display:block; }
-  .coin-tile-label{ margin:8px 0 0; font-size:12px; font-weight:700; color:#fff; text-align:center; }
+  .coin-tile:active, .settings-tile:active{ transform:scale(.96); }
+  .coin-tile{ background:radial-gradient(circle at 35% 28%, #ffe6a8, #d9a02f 55%, #a9760f 100%); }
+  .settings-tile{ background:linear-gradient(160deg,#2c3e52,#1a2738); }
+  .coin-tile-art{ width:40%; height:40%; display:flex; }
+  .coin-tile-art svg{ width:100%; height:100%; display:block; }
+  .settings-tile-art{ width:40%; height:40%; display:flex; }
+  .settings-tile-art svg{ width:100%; height:100%; display:block; }
+  /* Label sits INSIDE the square as an overlay on a bottom scrim, rather
+     than as a strip below it - that extra strip was exactly what made the
+     tile taller than it is wide despite the art itself being square. */
+  .tile-label-scrim{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:16px 6px 8px;
+    background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+  }
+  .tile-label-scrim p{ margin:0; font-size:11.5px; font-weight:700; color:#fff; text-align:center; }
+
+  /* ---------- "Mitt lag" account button ---------- */
+  .account-btn{
+    position:absolute; top:16px; right:16px; z-index:1;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    background:none; border:none; cursor:pointer; padding:0;
+  }
+  .account-btn-circle{
+    width:34px; height:34px; border-radius:50%;
+    background:rgba(255,255,255,.09); border:1px solid rgba(255,255,255,.22);
+    -webkit-backdrop-filter:blur(20px) saturate(160%); backdrop-filter:blur(20px) saturate(160%);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .account-btn:active .account-btn-circle{ transform:scale(.92); }
+  .account-label{ font-size:9.5px; font-weight:700; color:rgba(255,255,255,.55); letter-spacing:.02em; }
 
   /* ---------- Historikk launcher tile ---------- */
   .history-tile{
@@ -278,23 +314,22 @@
     transition:transform .15s ease;
   }
   .history-tile:active{ transform:scale(.97); }
-  /* Always-on lock/unlock status badge, hung slightly off the tile's own
-     top-right corner - locked (see #historyBadgeLocked/Open, swapped by
-     renderHistoryBadge()) whenever there's no admin session, open once
-     there is. No plate/bubble behind it (picked over three bubble variants
-     in review - see the "01-03 boble" specimens this replaced) - just the
-     padlock itself, fully opaque, lifted off the tile with a drop-shadow. */
-  .history-tile-badge{
-    position:absolute; top:-9px; right:11px; z-index:1;
-    width:26px; height:26px;
-    display:flex; align-items:center; justify-content:center;
-  }
+  /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
+     .history-tile's own unconditional display:flex above has the same
+     specificity as the browser's default [hidden]{display:none} and comes
+     later in the cascade, so it silently wins unless this is spelled out
+     explicitly too. See updateHistoryTileVisibility() in app.js - not
+     logged in means this attribute is set, and it has to actually work. */
+  .history-tile[hidden]{ display:none; }
+  /* .history-tile-badge (the lock/unlock status badge) is gone - the whole
+     tile is either in the DOM or isn't now, see updateHistoryTileVisibility()
+     in app.js. #lockClosedSymbol/#lockOpenSymbol themselves are untouched,
+     .lock-icon below is still used by the login popup's own icon. */
   .lock-icon{
     width:20px; height:20px; display:block;
     filter:drop-shadow(0 2px 3px rgba(0,0,0,.55)) drop-shadow(0 1px 2px rgba(0,0,0,.4));
   }
   .lock-icon[hidden]{ display:none; }
-  .history-tile-badge .lock-icon{ width:24px; height:24px; }
   .history-tile-icon{ width:30px; height:30px; flex-shrink:0; }
   .history-tile-body{ flex:1 1 auto; min-width:0; }
   .history-tile-title{ margin:0 0 2px; font-size:14px; font-weight:700; color:#fff; }
@@ -395,8 +430,20 @@
     transition:opacity .3s ease, transform .3s ease;
   }
   .history-screen.open{ opacity:1; pointer-events:auto; transform:scale(1); }
+  /* Settings/Register reuse .history-screen but don't need the big top
+     reservation Historikk's own floating close button wants - Settings
+     puts its back button inline in the header row instead (no floating
+     button to clear), and Register's centered card doesn't sit under one
+     either, so both can start much closer to the top. */
+  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 20px); }
   .history-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .history-header-actions{ display:flex; align-items:center; gap:8px; }
+  .screen-back-btn{
+    width:30px; height:30px; border-radius:50%; flex:0 0 auto;
+    background:rgba(255,255,255,.1); border:none; color:#fff;
+    font-size:18px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .history-header.compact-header{ justify-content:flex-start; }
   .history-title{ margin:0; color:#fff; font-size:19px; font-weight:700; }
   .history-select-mode-btn{
     border:1px solid rgba(255,255,255,.25); border-radius:999px;
@@ -431,6 +478,12 @@
     transition:background .15s ease, color .15s ease;
   }
   .history-row-delete.armed{ background:var(--danger); color:#fff; }
+  .history-row-visibility{
+    flex-shrink:0; width:30px; height:30px; border-radius:50%; border:none;
+    background:rgba(255,255,255,.10);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .history-row-visibility.visible{ background:rgba(50,215,75,.16); }
   .history-row-chevron{
     flex-shrink:0; color:rgba(255,255,255,.5); font-size:12px; transition:transform .2s ease;
   }
@@ -1166,24 +1219,31 @@
   }
   .modal-card h2{ margin:0 0 4px; font-size:19px; }
   .modal-card .sub{ margin:0 0 16px; font-size:13px; color:var(--ink-soft); }
-  /* Dark/glass variant of the frosted .modal-centered card, used only for
-     #historyLoginModal - a plain white card would clash with the gold/
-     silver padlock artwork, and this is explicitly a "security" moment
-     the rest of the app's white modals don't need to signal. */
-  /* Specificity has to beat .modal-centered .modal-card (0,2,0)'s own
-     background, or that pale frosted-white wins the cascade regardless of
-     source order - #historyLoginModal .modal-card (0,2,0) alone would tie
-     and lose to source order, so this pins it down explicitly. */
-  #historyLoginModal .modal-card{
+  /* Dark/glass variant of the frosted .modal-centered card - originally
+     built only for #historyLoginModal (a plain white card would've clashed
+     with the gold/silver padlock artwork, and a login is explicitly a
+     "security" moment the rest of the app's white modals don't need to
+     signal), now a shared class so #accountLoginModal (Mitt lag) can reuse
+     the same look instead of redefining it. */
+  .modal-card-dark{
     background:rgba(12,26,46,.92);
     border:1px solid rgba(255,255,255,.16);
     text-align:center;
+    /* Trims the "empty air above the icon" feel - the shared
+       .modal-centered .modal-card's 20px top padding was tuned for plain
+       text-only info popups, more than this icon+heading layout needs. */
+    padding-top:14px;
   }
-  #historyLoginModal .modal-card h2{ color:#fff; }
-  #historyLoginModal .modal-card .sub{ color:rgba(255,255,255,.6); }
-  #historyLoginModal .info-popup-close{ background:rgba(255,255,255,.12); color:#fff; }
-  #historyLoginModal .info-popup-close:active{ background:rgba(255,255,255,.2); }
-  .history-login-card-icon{ width:56px; height:56px; margin:4px auto 10px; display:block; filter:drop-shadow(0 3px 8px rgba(0,0,0,.35)); }
+  .modal-card-dark h2{ color:#fff; }
+  .modal-card-dark .sub{ color:rgba(255,255,255,.6); }
+  .modal-card-dark .info-popup-close{ background:rgba(255,255,255,.12); color:#fff; }
+  .modal-card-dark .info-popup-close:active{ background:rgba(255,255,255,.2); }
+  .modal-card-dark .login-link-row{ margin:16px 0 0; font-size:12.5px; color:rgba(255,255,255,.55); }
+  .login-link-btn{
+    border:none; background:none; padding:0; font:inherit;
+    color:var(--accent); font-weight:700; cursor:pointer;
+  }
+  .history-login-card-icon{ width:48px; height:48px; margin:0 auto 8px; display:block; filter:drop-shadow(0 3px 8px rgba(0,0,0,.35)); }
   #historyLoginFormFields{ display:flex; flex-direction:column; gap:12px; }
   #historyLoginFormFields[hidden]{ display:none; }
   .history-login-locked-note{
@@ -1217,16 +1277,16 @@
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
   }
-  /* "Kampen er ferdig" summary popup (see showMatchSummaryThen in app.js) -
+  /* "Kampresultat" summary popup (see showMatchSummaryThen in app.js) -
      light-themed siblings of the dark .history-row-goal/.history-row-player
      rows the "Historikk" screen uses for the same data, since this modal
      sits on the normal white .modal-card instead of that screen's dark
      background. */
-  .match-summary-goals, .match-summary-players{
+  .match-summary-goals{
     max-height:150px; overflow-y:auto; touch-action:pan-y;
     margin-bottom:4px;
   }
-  .match-summary-goal, .match-summary-player{
+  .match-summary-goal{
     display:flex; align-items:center; gap:8px;
     font-size:13px; color:var(--ink); padding:4px 0;
   }
@@ -1235,13 +1295,77 @@
     background:#32b45a;
   }
   .match-summary-goal-away::before{ background:#c7ccd3; }
-  .match-summary-goal-time, .match-summary-player-time{
+  .match-summary-goal-time{
     font-variant-numeric:tabular-nums; color:var(--ink-soft); flex:0 0 auto;
   }
-  .match-summary-goal-scorer, .match-summary-player-name{
+  .match-summary-goal-scorer{
     flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   .match-summary-empty{ font-size:13px; color:var(--ink-soft); padding:4px 0; }
+
+  /* Sun+S (win) / raincloud+T (loss) badge, pinned in the card's own corner -
+     absent entirely for a draw (see showMatchSummaryThen), on purpose: no
+     symbol has been agreed on for that case yet, and a plain score reads
+     fine on its own. */
+  .match-summary-weather{
+    position:absolute; top:14px; right:18px;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  .match-summary-weather-letter{ font-size:15px; font-weight:800; line-height:1; }
+  .match-summary-weather-letter-win{ color:#ff8a00; }
+  .match-summary-weather-letter-loss{ color:#5b9bd5; }
+  @keyframes matchSummarySunPulse{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.06); } }
+  @keyframes matchSummaryRaindrop{ 0%{ transform:translateY(-2px); opacity:0; } 30%{ opacity:1; } 100%{ transform:translateY(9px); opacity:0; } }
+  .match-summary-sun-rays{ transform-origin:center; animation:matchSummarySunPulse 3.2s ease-in-out infinite; }
+  .match-summary-rain-drop{ animation:matchSummaryRaindrop 1.3s linear infinite; }
+  .match-summary-rain-drop:nth-child(2){ animation-delay:.35s; }
+  .match-summary-rain-drop:nth-child(3){ animation-delay:.7s; }
+  @media (prefers-reduced-motion: reduce){
+    .match-summary-sun-rays, .match-summary-rain-drop{ animation:none; }
+  }
+  /* Room for the corner badge above, since the headline can otherwise run
+     under it on a long opponent name. */
+  #matchSummaryModal .modal-card h2{ padding-right:46px; }
+  .match-summary-duration, .match-summary-swaps{
+    margin:2px 0 0; font-size:12.5px; color:var(--ink-soft);
+  }
+  .match-summary-duration{ font-variant-numeric:tabular-nums; }
+  .match-summary-swaps{ margin-bottom:14px; }
+  /* Extra breathing room above "Spilletid" specifically (not "Mål") to read
+     as a clear second section, not just another line under the goal list. */
+  .match-summary-playtime-label{ margin-top:26px; }
+
+  .match-summary-playtime-wrap{ position:relative; }
+  /* Spans the header + however many player rows render below it, without
+     any height math - top:0/bottom:0 fill exactly as much as the sibling
+     content ends up being, whether there are 3 players or 20. */
+  .match-summary-playtime-spine{
+    position:absolute; top:22px; bottom:2px; right:64px; width:1px;
+    background:#e7e9ec;
+  }
+  .match-summary-players-head, .match-summary-player{
+    display:flex; align-items:center; gap:10px;
+  }
+  .match-summary-players-head{
+    padding-bottom:6px; font-size:10.5px; font-weight:700; color:var(--ink-soft); letter-spacing:.06em;
+  }
+  .match-summary-players{
+    max-height:150px; overflow-y:auto; touch-action:pan-y; margin-bottom:4px;
+  }
+  .match-summary-player{
+    font-size:13px; color:var(--ink); padding:6px 4px; border-radius:6px;
+  }
+  .match-summary-player:nth-child(even){ background:rgba(22,32,43,.035); }
+  .match-summary-player-name{
+    flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .match-summary-player-goals{ color:var(--ink-soft); font-size:11.5px; }
+  .match-summary-player-k, .match-summary-player-t{
+    width:56px; flex:0 0 auto; text-align:center; font-variant-numeric:tabular-nums;
+  }
+  .match-summary-player-t{ width:64px; }
+  .match-summary-player .match-summary-player-k,
+  .match-summary-player .match-summary-player-t{ text-align:right; padding-right:2px; color:var(--ink-soft); }
 
   /* #opponentModal's two fields - bigger and more considered than a bare
      .name-row input (that class needed its .name-row parent for styling,
@@ -1389,6 +1513,65 @@
     transition:background .15s ease, color .15s ease;
   }
   .segmented-btn.active{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .segmented.dark{ background:rgba(255,255,255,.07); }
+  .segmented.dark .segmented-btn{ color:rgba(255,255,255,.55); flex:1; text-align:center; }
+  .segmented.dark .segmented-btn.active{ background:var(--accent); color:var(--accent-ink); box-shadow:none; }
+
+  /* ---------- "Mitt lag": register screen + Innstillinger screen ----------
+     See #registerScreen/#settingsScreen in index.html and the accompanying
+     app.js handlers - both are placeholders backed by localStorage only
+     (loadCoachDefaults/saveCoachDefaults) until a real Supabase table for
+     team accounts exists. */
+  .account-form-wrap{ flex:1 1 auto; display:flex; align-items:center; justify-content:center; }
+  .account-form-card{ width:100%; max-width:320px; border-radius:var(--radius-lg); padding:26px 22px 24px; box-shadow:var(--shadow-md); }
+  .account-form-card .text-input{ margin:0; }
+
+  .settings-screen-body{ flex:1 1 auto; overflow-y:auto; touch-action:pan-y; width:100%; max-width:380px; margin:0 auto; padding-bottom:12px; }
+  .settings-group{ margin-bottom:22px; }
+  .settings-group-title{
+    font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:rgba(255,255,255,.45); margin:0 0 8px;
+  }
+  .settings-card{
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:16px;
+    -webkit-backdrop-filter:blur(14px) saturate(150%); backdrop-filter:blur(14px) saturate(150%);
+    overflow:hidden;
+  }
+  .settings-field-row{ padding:12px 14px; }
+  .settings-field-row + .settings-field-row{ border-top:1px solid rgba(255,255,255,.08); }
+  .settings-field-label{ display:block; font-size:11px; color:rgba(255,255,255,.5); margin-bottom:5px; }
+  .settings-field-inline{ display:flex; gap:8px; }
+  .settings-field-col{ flex-direction:column; align-items:stretch !important; gap:8px; }
+  .mini-input{
+    border:1.5px solid rgba(255,255,255,.2); border-radius:9px; padding:9px 10px;
+    font-size:14px; color:#fff; background:rgba(255,255,255,.07); width:100%;
+    font-family:inherit;
+  }
+  .mini-input::placeholder{ color:rgba(255,255,255,.35); }
+  .mini-input-abbr{ max-width:74px; text-transform:uppercase; text-align:center; font-weight:700; letter-spacing:.05em; }
+  .stepper-row{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; gap:12px; }
+  .stepper-row + .stepper-row{ border-top:1px solid rgba(255,255,255,.08); }
+  .stepper-row .settings-row-label{ color:#fff; }
+  .stepper{ display:flex; align-items:center; gap:10px; }
+  .stepper-btn{
+    width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.18); color:#fff; font-size:15px; line-height:1; cursor:pointer;
+  }
+  .stepper-btn:active{ background:rgba(255,255,255,.18); }
+  .stepper-value{ font-size:14px; font-weight:700; color:#fff; min-width:56px; text-align:center; font-variant-numeric:tabular-nums; }
+  .toggle-row{ display:flex; align-items:center; justify-content:space-between; padding:13px 14px; gap:12px; }
+  .toggle-row + .toggle-row{ border-top:1px solid rgba(255,255,255,.08); }
+  .toggle-row-text{ min-width:0; }
+  .toggle-row-label{ font-size:13.5px; font-weight:600; color:#fff; margin:0 0 2px; }
+  .toggle-row-sub{ font-size:11.5px; color:rgba(255,255,255,.5); line-height:1.4; margin:0; }
+  .settings-save-btn{ width:100%; margin-top:6px; }
+  .settings-saved-note{ margin:10px 0 0; text-align:center; font-size:12.5px; font-weight:700; color:#32d74b; }
+  .settings-storage-note{
+    margin:0 0 18px; padding:10px 12px; border-radius:12px;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+    font-size:12.5px; line-height:1.5; color:rgba(255,255,255,.65);
+  }
+  .settings-logout-btn{ display:block; width:100%; text-align:center; margin-top:14px; font-size:12.5px; color:rgba(255,255,255,.4); font-weight:600; }
   .info-label-row{ display:flex; align-items:center; gap:6px; }
   /* Every #endMatchModal action (Kampslutt/Avslutt og nullstill/Forlat
      kampen/Forlat delt økt) is one .stack-btn-sized pill with its own "i"
@@ -1540,22 +1723,40 @@
     margin-top:2px; font-size:12px; font-weight:700; color:var(--ink-soft);
     text-transform:uppercase; letter-spacing:.08em;
   }
-  .toggle{ position:relative; display:inline-block; width:48px; height:28px; flex:0 0 auto; }
+  /* Global toggle switch - one component, two surface variants. Real
+     backdrop-filter glass only reads on the dark/translucent screens
+     (.toggle.dark, the new Settings screen) - blurring flat white behind
+     flat white does nothing, so the default (light, used by the three
+     toggles in the existing white #settingsModal) leans on a soft inset
+     track + the same glossy knob gradient instead, to read as the same
+     component family without a pointless blur. */
+  .toggle{ position:relative; display:inline-block; width:50px; height:29px; flex:0 0 auto; }
   .toggle input{ opacity:0; width:0; height:0; position:absolute; }
   .toggle-slider{
-    position:absolute; inset:0; cursor:pointer;
-    background:#d8dbe0; border-radius:100px;
-    transition:background .2s ease;
+    position:absolute; inset:0; cursor:pointer; border-radius:100px;
+    background:#eef0f2; border:1px solid #dde1e6;
+    box-shadow:inset 0 1px 2px rgba(15,31,54,.08);
+    transition:background .2s ease, border-color .2s ease;
   }
   .toggle-slider::before{
     content:''; position:absolute; left:3px; top:3px;
-    width:22px; height:22px; border-radius:50%;
-    background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);
-    transition:transform .2s ease;
+    width:21px; height:21px; border-radius:50%;
+    background:radial-gradient(circle at 32% 28%, #fff, #e7ebef 70%);
+    box-shadow:0 2px 5px rgba(0,0,0,.25), inset 0 -2px 3px rgba(0,0,0,.05);
+    transition:transform .2s cubic-bezier(.25,.8,.25,1);
   }
-  .toggle input:checked + .toggle-slider{ background:#32d74b; }
-  .toggle input:checked + .toggle-slider::before{ transform:translateX(20px); }
+  .toggle input:checked + .toggle-slider{ background:#32d74b; border-color:transparent; }
+  .toggle input:checked + .toggle-slider::before{ transform:translateX(21px); }
   .toggle input:disabled + .toggle-slider{ opacity:.4; cursor:not-allowed; }
+
+  /* Dark/glass variant - the new Settings screen, and anywhere else on the
+     navy background. */
+  .toggle.dark .toggle-slider{
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.22);
+    -webkit-backdrop-filter:blur(10px) saturate(160%); backdrop-filter:blur(10px) saturate(160%);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.25);
+  }
+  .toggle.dark input:checked + .toggle-slider{ background:rgba(50,215,75,.35); border-color:rgba(50,215,75,.55); }
 
   .export-link-btn{
     margin-top:16px; width:100%; padding:11px;

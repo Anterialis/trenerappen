@@ -2,5 +2,9 @@
 .netlify
 
 # Local Supabase CLI link/cache state (from `supabase link`) - no secrets,
-# just this machine's project linkage, not meant to be committed
-supabase/
+# just this machine's project linkage, not meant to be committed.
+# supabase/migrations/ is NOT covered by this - those are real schema
+# history and should be committed, so a fresh clone can rebuild the same
+# database with `supabase link` + `supabase db push`.
+supabase/.temp/
+supabase/.branches/

@@ -57,6 +57,7 @@
    * @property {string} id
    * @property {string} name
    * @property {number} ms
+   * @property {number} [totalMs] - lifetime cumulative field time (T), set only on the entry built by buildHistoryArchiveEntry() right when a match ends (see lastMatchSummary); local-only like durationMs/swapCount on HistoryMatchEntry, never persisted to Supabase
    * @property {number} goals
    *
    * @typedef {Object} HistoryGoalEntry
@@ -74,6 +75,8 @@
    * @property {HistoryPlayerEntry[]} players
    * @property {HistoryGoalEntry[]} goals
    * @property {number} [durationMs] - only set on the entry built by buildHistoryArchiveEntry() right when a match ends (see lastMatchSummary); never persisted to Supabase, so absent on anything fetched back via fetchMatchHistory()
+   * @property {number} [swapCount] - number of field<->bench swaps during this match, snapshotted the same way as durationMs (local-only, never persisted to Supabase)
+   * @property {number|null} [visibleUntil] - set by the admin (see setMatchVisibility()) to share this match with signed-in non-admin accounts until this timestamp; absent/null means admin-only, the default for every match
    *
    * @typedef {Object} AppState
    * @property {Player[]} players
@@ -90,10 +93,12 @@
    * @property {number} defaultDurationMs
    * @property {number} matchDurationMs
    * @property {boolean} rankByCumulative
+   * @property {boolean} reorgUsesLastMatch
    * @property {boolean} shareEditable
    * @property {string|null} sessionOwnerDeviceId
    * @property {Participant[]} participants
    * @property {GoalEntry[]} goalLog
+   * @property {number} swapCount - count of field<->bench swaps in the match/period in progress right now, reset alongside goalLog (see endMatchPeriod/resetMatch)
    * @property {number} lastActivityAt
    * @property {string} opponentName
    * @property {string} opponentAbbr
@@ -128,7 +133,72 @@
   /** @type {any} */
   var realtimeChannel = null;
 
+  // Reassigned by loadCoachDefaults()/the Settings screen's "Lagre" - starts
+  // out matching the scoreboard's original hardcoded "NØT"/"Nøtterøy" values
+  // for anyone who's never opened Settings, so nothing changes for them.
+  var HOME_TEAM_NAME = 'Nøtterøy';
+  var HOME_TEAM_ABBR = 'NØT';
   var STORAGE_KEY = 'spillerbytte_v4';
+  // Local-only "coach defaults" - what a new session/Ny økt starts prefilled
+  // with (home team, kamptid, byttetid, kampformat, kumulert rangering,
+  // "bytt om" sort rule), edited from the Innstillinger screen. Deliberately
+  // separate from STORAGE_KEY's synced session `state`: these are per-device
+  // preferences that should survive Ny økt/Avslutt, not match data. No
+  // Supabase table exists yet for these (see the "Mitt lag" placeholders
+  // below) - this is the promised "local cache first" layer underneath that,
+  // built to work fully standalone before any account system exists.
+  var COACH_DEFAULTS_KEY = 'spillerbytte_coach_defaults_v1';
+  /**
+   * @typedef {Object} CoachDefaults
+   * @property {string} homeTeamName
+   * @property {string} homeTeamAbbr
+   * @property {number} matchDurationMs
+   * @property {number} defaultDurationMs
+   * @property {number} fieldSize
+   * @property {boolean} rankByCumulative
+   * @property {boolean} reorgUsesLastMatch
+   */
+  /** @returns {CoachDefaults} */
+  function loadCoachDefaults(){
+    // Matches today's actual defaultState() values exactly, except
+    // matchDurationMs - explicitly asked to be 15 min instead of the old
+    // 20 min baseline, for anyone who's never touched Settings too.
+    var fallback = {
+      homeTeamName: 'Nøtterøy', homeTeamAbbr: 'NØT',
+      matchDurationMs: 900000, defaultDurationMs: 180000, fieldSize: 3,
+      rankByCumulative: false, reorgUsesLastMatch: false
+    };
+    try {
+      var raw = localStorage.getItem(COACH_DEFAULTS_KEY);
+      if (!raw) return fallback;
+      var parsed = JSON.parse(raw);
+      return {
+        homeTeamName: typeof parsed.homeTeamName === 'string' && parsed.homeTeamName ? parsed.homeTeamName : fallback.homeTeamName,
+        homeTeamAbbr: typeof parsed.homeTeamAbbr === 'string' && parsed.homeTeamAbbr ? parsed.homeTeamAbbr : fallback.homeTeamAbbr,
+        matchDurationMs: typeof parsed.matchDurationMs === 'number' && parsed.matchDurationMs > 0 ? parsed.matchDurationMs : fallback.matchDurationMs,
+        defaultDurationMs: typeof parsed.defaultDurationMs === 'number' && parsed.defaultDurationMs > 0 ? parsed.defaultDurationMs : fallback.defaultDurationMs,
+        fieldSize: typeof parsed.fieldSize === 'number' && parsed.fieldSize > 0 ? parsed.fieldSize : fallback.fieldSize,
+        rankByCumulative: !!parsed.rankByCumulative,
+        reorgUsesLastMatch: !!parsed.reorgUsesLastMatch
+      };
+    } catch(e){ return fallback; }
+  }
+  /** @param {CoachDefaults} defaults */
+  function saveCoachDefaults(defaults){
+    try { localStorage.setItem(COACH_DEFAULTS_KEY, JSON.stringify(defaults)); }
+    catch(e){ console.warn('Kunne ikke lagre standardverdier', e); }
+    applyHomeTeamName(defaults.homeTeamName, defaults.homeTeamAbbr);
+  }
+  // Updates the scoreboard's "NØT"/"Nøtterøy" and the Kampresultat popup's
+  // headline together - the two places HOME_TEAM_NAME/HOME_TEAM_ABBR feed,
+  // see their own declaration comment above.
+  /** @param {string} name @param {string} abbr */
+  function applyHomeTeamName(name, abbr){
+    HOME_TEAM_NAME = name;
+    HOME_TEAM_ABBR = abbr;
+    if (els.homeTeamLabel) els.homeTeamLabel.textContent = abbr;
+    if (els.homeScoreBtn) els.homeScoreBtn.setAttribute('aria-label', 'Registrer mål for ' + name);
+  }
   var ROSTER_KEY = 'spillerbytte_roster_v1';
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
   var LAST_ALIVE_KEY = 'spillerbytte_last_alive'; // plain heartbeat, not synced state - see checkIdleAutoPause()
@@ -153,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.7';
+  var APP_VERSION = '2.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -161,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1', text: 'Nytt Kampresultat-vindu med seier/tap-symboler. «Mitt lag»-innlogging og Innstillinger for lagets standardverdier. Historikk kan nå deles med innloggede brukere.' },
     { version: '2.0.7', text: 'Målene i Historikk viser nå tidspunkt for hver scoring. Ny "Kampen er ferdig"-oppsummering vises rett etter Kampslutt/Avslutt.' },
     { version: '2.0.6', text: 'Sikret delt økt mot at en inaktiv enhet kan overskrive en aktiv kamp med gamle data. Innlogging til Historikk kan nå også skje med brukernavn.' },
     { version: '2.0.5', text: 'Fikset blått felt nederst ved første åpning i portrettmodus (iOS-kaldstart målte skjermhøyden litt for lavt før den rettet seg selv ved rotasjon).' },
@@ -239,6 +310,11 @@
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
   var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
+  // Draft values for the new Innstillinger screen's steppers - only written
+  // to COACH_DEFAULTS_KEY when "Lagre" is pressed (see saveSettingsScreen()).
+  var settingsDraftMatchDurationMin = 15;
+  var settingsDraftSwapDurationMin = 3;
+  var settingsDraftFieldSize = 3;
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
   var multiMode = false; // bulk "send several bench players to field" mode
@@ -399,6 +475,10 @@
 
   /** @returns {AppState} */
   function defaultState(){
+    // Read fresh every time (not cached in a module-level var) so a coach
+    // who edits Innstillinger mid-day sees it reflected in the very next
+    // Ny økt/Avslutt, not just after a reload.
+    var coachDefaults = loadCoachDefaults();
     return {
       players: [],
       onField: [],
@@ -409,15 +489,17 @@
       periodStartCumulative: {},
       matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
       wakeLockEnabled: true,
-      fieldSize: 3,
+      fieldSize: coachDefaults.fieldSize,
       globalRunning: false,
-      defaultDurationMs: 180000,
-      matchDurationMs: 1200000,
-      rankByCumulative: false,
+      defaultDurationMs: coachDefaults.defaultDurationMs,
+      matchDurationMs: coachDefaults.matchDurationMs,
+      rankByCumulative: coachDefaults.rankByCumulative,
+      reorgUsesLastMatch: coachDefaults.reorgUsesLastMatch,
       shareEditable: true,
       sessionOwnerDeviceId: null,
       participants: [],
       goalLog: [],
+      swapCount: 0,
       lastActivityAt: Date.now(),
       opponentName: '',
       opponentAbbr: '',
@@ -454,10 +536,12 @@
     if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 1200000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
+    if (raw.reorgUsesLastMatch === undefined) raw.reorgUsesLastMatch = false;
     if (raw.shareEditable === undefined) raw.shareEditable = true;
     if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
     if (!Array.isArray(raw.participants)) raw.participants = [];
     if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
+    if (typeof raw.swapCount !== 'number') raw.swapCount = 0;
     if (typeof raw.lastActivityAt !== 'number') raw.lastActivityAt = Date.now();
     if (typeof raw.opponentName !== 'string') raw.opponentName = '';
     if (typeof raw.opponentAbbr !== 'string') raw.opponentAbbr = '';
@@ -825,6 +909,53 @@
     });
   }
 
+  // ---------------- "Mitt lag" team_settings sync ----------------
+  // Column names/defaults mirror CoachDefaults 1:1 (see loadCoachDefaults())
+  // so converting either direction is a flat rename, no reshaping.
+  /** @param {CoachDefaults} d @returns {Object<string, any>} */
+  function coachDefaultsToRow(d){
+    return {
+      home_team_name: d.homeTeamName,
+      home_team_abbr: d.homeTeamAbbr,
+      match_duration_ms: d.matchDurationMs,
+      default_duration_ms: d.defaultDurationMs,
+      field_size: d.fieldSize,
+      rank_by_cumulative: d.rankByCumulative,
+      reorg_uses_last_match: d.reorgUsesLastMatch
+    };
+  }
+  /** @param {any} row @returns {CoachDefaults} */
+  function rowToCoachDefaults(row){
+    return {
+      homeTeamName: row.home_team_name,
+      homeTeamAbbr: row.home_team_abbr,
+      matchDurationMs: row.match_duration_ms,
+      defaultDurationMs: row.default_duration_ms,
+      fieldSize: row.field_size,
+      rankByCumulative: !!row.rank_by_cumulative,
+      reorgUsesLastMatch: !!row.reorg_uses_last_match
+    };
+  }
+  /** @param {string} userId @returns {Promise<CoachDefaults|null>} */
+  function fetchTeamSettings(userId){
+    if (!sb) return Promise.resolve(null);
+    return sb.from('team_settings').select('*').eq('user_id', userId).maybeSingle().then(function(res){
+      if (res.error){ console.warn('Kunne ikke hente lagets innstillinger', res.error); return null; }
+      return res.data ? rowToCoachDefaults(res.data) : null;
+    });
+  }
+  /** @param {string} userId @param {CoachDefaults} defaults @returns {Promise<boolean>} */
+  function upsertTeamSettings(userId, defaults){
+    if (!sb) return Promise.resolve(false);
+    var row = coachDefaultsToRow(defaults);
+    row.user_id = userId;
+    row.updated_at = new Date().toISOString();
+    return sb.from('team_settings').upsert(row).then(function(res){
+      if (res.error){ console.warn('Kunne ikke lagre lagets innstillinger', res.error); return false; }
+      return true;
+    });
+  }
+
   /** @returns {Promise<HistoryMatchEntry[]>} */
   function fetchMatchHistory(){
     if (!sb) return Promise.resolve([]);
@@ -839,9 +970,24 @@
           homeScore: row.home_score || 0,
           awayScore: row.away_score || 0,
           players: row.players || [],
-          goals: row.goals || []
+          goals: row.goals || [],
+          // null/absent for anything not currently flagged visible - RLS
+          // (see the migration) already means a non-admin viewer only ever
+          // gets rows where this is set and still in the future, so its
+          // mere presence isn't itself sensitive to read back.
+          visibleUntil: row.visible_until ? new Date(row.visible_until).getTime() : null
         };
       });
+    });
+  }
+
+  /** @param {string} id @param {number|null} days - null clears visibility (hides it again); a number sets it visible for that many days from now */
+  function setMatchVisibility(id, days){
+    if (!sb) return Promise.resolve(false);
+    var visibleUntil = typeof days === 'number' ? new Date(Date.now() + days * 86400000).toISOString() : null;
+    return sb.from('match_history').update({ visible_until: visibleUntil }).eq('id', id).then(function(res){
+      if (res.error){ console.warn('Kunne ikke endre synlighet', res.error); return false; }
+      return true;
     });
   }
 
@@ -867,35 +1013,52 @@
   // (isHistoryAdmin()) without awaiting getSession() everywhere it's read.
   /** @type {any} */
   var adminUser = null;
-  function isHistoryAdmin(){ return !!adminUser; }
+  // "Mitt lag" (see initAccountAndSettings) and Historikk-login share the
+  // exact same sb.auth session - there's only one Supabase Auth per project,
+  // so any signed-in team account IS, technically, a session here too.
+  // isHistoryAdmin() below gates the extra, separate Historikk admin
+  // capability (viewing everyone's matches, deleting, flagging visibility)
+  // on real membership in the "admins" table - the same table the
+  // database's own RLS policies already check - not just "is signed in".
+  // Without this, every self-registered "Mitt lag" account would silently
+  // also become a Historikk admin the moment self-service registration
+  // shipped. Resolved async (see refreshAdminStatus()) since it's a real
+  // query - isHistoryAdmin() just reads whatever that last resolved to, the
+  // same "may be a beat stale right after a session change" tradeoff
+  // adminUser itself already has (see onAuthStateChange's own comments).
+  var dbAdminConfirmed = false;
+  function isHistoryAdmin(){ return !!adminUser && dbAdminConfirmed; }
+  /** @returns {Promise<void>} */
+  function refreshAdminStatus(){
+    if (!sb || !adminUser){ dbAdminConfirmed = false; return Promise.resolve(); }
+    return sb.from('admins').select('user_id').eq('user_id', adminUser.id).maybeSingle().then(function(res){
+      dbAdminConfirmed = !res.error && !!res.data;
+    });
+  }
+  // Any signed-in session at all counts as "a team account" - unlike
+  // isHistoryAdmin() above, there's no allowlist here, self-registration is
+  // the whole point of "Mitt lag".
+  function isTeamAccountSignedIn(){ return !!adminUser; }
 
-  // Always-visible lock/unlock badge on the launcher's Historikk tile (see
-  // .history-tile-badge) - not gated on the Historikk screen being open,
-  // unlike the list refresh below, so it reflects login state the moment
-  // the app loads (a returning admin's session restores on its own).
-  function renderHistoryBadge(){
-    // onAuthStateChange (registered below, at module load) fires with the
-    // restored session almost immediately - often before init() has run
-    // and populated els.* at all. Safe to no-op then: initCoinFlip() calls
-    // this again once els exists, by which point adminUser already holds
-    // whatever this early firing set it to.
-    if (!els.historyBadgeLocked) return;
-    var admin = isHistoryAdmin();
-    // Plain .hidden = ... silently no-ops here: these are <svg> elements
-    // (SVGSVGElement), which - unlike HTMLElement - has no "hidden" IDL
-    // property to reflect onto the attribute, so the assignment just sets
-    // an inert JS expando instead of ever touching the DOM. set/removeAttribute
-    // bypasses that and actually toggles the content attribute [hidden]
-    // selects on.
-    if (admin) els.historyBadgeLocked.setAttribute('hidden', ''); else els.historyBadgeLocked.removeAttribute('hidden');
-    if (admin) els.historyBadgeOpen.removeAttribute('hidden'); else els.historyBadgeOpen.setAttribute('hidden', '');
+  // Historikk tile is only in the DOM at all for a signed-in "Mitt lag"
+  // account now - no lock/unlock badge needed to distinguish admin vs
+  // visitor state on it any more (that badge's markup is gone from
+  // index.html; #lockClosedSymbol/#lockOpenSymbol themselves are still
+  // there and still used by the login popup's own icon, just not this).
+  function updateHistoryTileVisibility(){
+    if (!els.historyTile) return;
+    els.historyTile.hidden = !isTeamAccountSignedIn();
   }
 
   if (sb){
     sb.auth.onAuthStateChange(function(_event, session){
       var wasAdmin = isHistoryAdmin();
+      var wasTeamAccount = isTeamAccountSignedIn();
       adminUser = (session && session.user) || null;
-      renderHistoryBadge();
+      // Re-derived below (refreshAdminStatus) - reset first so a switch
+      // from one account to another never reads as still-admin in between.
+      dbAdminConfirmed = false;
+      updateHistoryTileVisibility();
       // A logout while the (admin-only) Historikk screen is open would
       // otherwise leave it sitting open with no way to show its now-
       // unauthorized list - there's no non-admin view left inside it to
@@ -903,6 +1066,31 @@
       // from the launcher instead of living inside this screen).
       if (wasAdmin && !isHistoryAdmin() && els.historyScreen && els.historyScreen.classList.contains('open')){
         els.historyScreen.classList.remove('open');
+      }
+      if (adminUser){
+        refreshAdminStatus().then(function(){
+          // Only matters if it flips isHistoryAdmin() - re-render whatever
+          // that affects, now that the real answer is in.
+          if (els.historyScreen && els.historyScreen.classList.contains('open')) renderHistoryList();
+        });
+      }
+      // Pulls the account's own team_settings row down into the local
+      // cache the moment a sign-in is detected (a fresh login, or a
+      // session restoring on page load) - covers both without duplicating
+      // this in two places. Only on the actual signed-out -> signed-in
+      // transition, not every token refresh in between.
+      if (!wasTeamAccount && isTeamAccountSignedIn()){
+        fetchTeamSettings(adminUser.id).then(function(remote){
+          if (remote) saveCoachDefaults(remote);
+          // No row yet (a Historikk-admin-only login, or an account that
+          // predates this feature) - leave the local cache as the seed and
+          // push it up, so the account has something from here on.
+          else upsertTeamSettings(adminUser.id, loadCoachDefaults());
+          if (els.settingsScreen && els.settingsScreen.classList.contains('open')) openSettingsScreen();
+          else if (els.settingsStorageNote) updateSettingsStorageNote();
+        });
+      } else if (wasTeamAccount && !isTeamAccountSignedIn() && els.settingsStorageNote){
+        updateSettingsStorageNote();
       }
     });
   }
@@ -1106,7 +1294,10 @@
       els.historySelectBar.hidden = true;
       return;
     }
-    els.historyEmpty.textContent = 'Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".';
+    var admin = isHistoryAdmin();
+    els.historyEmpty.textContent = admin
+      ? 'Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".'
+      : 'Ingen kamper er delt med deg ennå.';
     els.historyEmpty.hidden = list.length > 0;
     if (list.length === 0){
       els.historyList.innerHTML = '';
@@ -1117,6 +1308,7 @@
       var selected = !!historySelected[m.id];
       var expanded = historyExpandedId === m.id;
       var armed = historyDeleteArmedId === m.id;
+      var visible = !!(m.visibleUntil && m.visibleUntil > Date.now());
       var opponent = m.opponentName || (m.opponentAbbr ? m.opponentAbbr : 'Ukjent motstander');
       var players = (m.players || []).slice().sort(function(a,b){ return b.ms - a.ms; });
       var playerRows = players.map(function(p){
@@ -1134,6 +1326,20 @@
       var goalsBlock = goalRows
         ? '<div class="history-row-goals-title">Mål</div><div class="history-row-goals">' + goalRows + '</div>'
         : '';
+      var daysLeft = visible ? Math.max(1, Math.ceil((m.visibleUntil - Date.now()) / 86400000)) : 0;
+      // Only ever rendered for isHistoryAdmin() - a non-admin signed-in
+      // viewer only ever sees matches the admin already chose to share
+      // (see the RLS policy in the visibility migration), with no controls
+      // of their own to change that.
+      var visibilityBtn = admin ?
+        '<button type="button" class="history-row-visibility' + (visible ? ' visible' : '') + '" aria-label="' +
+          (visible ? 'Skjul for innloggede brukere' : 'Vis for innloggede brukere') + '" title="' +
+          (visible ? daysLeft + ' dag' + (daysLeft === 1 ? '' : 'er') + ' igjen - trykk for å skjule' : 'Ikke synlig for andre - trykk for å dele') + '">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+            '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="' + (visible ? '#32d74b' : 'rgba(255,255,255,.6)') + '" stroke-width="1.6"/>' +
+            '<circle cx="12" cy="12" r="3.2" fill="' + (visible ? '#32d74b' : 'none') + '" stroke="' + (visible ? '#32d74b' : 'rgba(255,255,255,.6)') + '" stroke-width="1.6"/>' +
+          '</svg>' +
+        '</button>' : '';
       return '<div class="history-row' + (expanded ? ' expanded' : '') + '" data-id="' + m.id + '">' +
         '<div class="history-row-main">' +
           (historySelectMode ? '<input type="checkbox" class="history-row-check"' + (selected ? ' checked' : '') + '>' : '') +
@@ -1145,7 +1351,8 @@
             '<div class="history-row-date">' + formatHistoryDate(m.endedAt) + '</div>' +
           '</div>' +
           (historySelectMode ? '' :
-            '<button type="button" class="history-row-delete' + (armed ? ' armed' : '') + '" aria-label="Slett kamp">🗑</button>' +
+            visibilityBtn +
+            (admin ? '<button type="button" class="history-row-delete' + (armed ? ' armed' : '') + '" aria-label="Slett kamp">🗑</button>' : '') +
             '<span class="history-row-chevron" aria-hidden="true">⌄</span>') +
         '</div>' +
         (historySelectMode ? '' : '<div class="history-row-detail"' + (expanded ? '' : ' hidden') + '>' + playerRows + goalsBlock + '</div>') +
@@ -1163,6 +1370,32 @@
         historyExpandedId = (historyExpandedId === id) ? null : id;
         renderHistoryList();
       });
+      var visBtn = row.querySelector('.history-row-visibility');
+      if (visBtn){
+        visBtn.addEventListener('click', function(e){
+          e.stopPropagation();
+          var m = historyListCache.filter(function(x){ return x.id === id; })[0];
+          if (!m) return;
+          var currentlyVisible = !!(m.visibleUntil && m.visibleUntil > Date.now());
+          if (currentlyVisible){
+            setMatchVisibility(id, null).then(function(ok){
+              if (ok){ m.visibleUntil = null; renderHistoryList(); }
+            });
+            return;
+          }
+          // A plain prompt() rather than a custom modal - this is an
+          // admin-only, occasional-use control, not a flow other coaches
+          // ever see, so the extra UI weight of a bespoke input didn't seem
+          // worth it. Easy to swap out later if that changes.
+          var input = window.prompt('Synlig for innloggede brukere i hvor mange dager?', '7');
+          if (input === null) return;
+          var days = parseInt(input, 10);
+          if (!days || days <= 0) return;
+          setMatchVisibility(id, days).then(function(ok){
+            if (ok){ m.visibleUntil = Date.now() + days * 86400000; renderHistoryList(); }
+          });
+        });
+      }
       var delBtn = row.querySelector('.history-row-delete');
       if (delBtn){
         delBtn.addEventListener('click', function(e){
@@ -1204,6 +1437,10 @@
     historyDeleteArmedId = null;
     els.historySelectModeBtn.textContent = 'Velg flere';
     els.historySelectModeBtn.classList.remove('active');
+    // "Velg flere" only exists to delete matches - nothing for a non-admin
+    // signed-in visitor to do with it, since they only ever see admin-
+    // shared, read-only rows (see renderHistoryList()'s own admin gating).
+    els.historySelectModeBtn.hidden = !isHistoryAdmin();
     fetchAndRenderHistoryList();
     els.historyScreen.classList.add('open');
   }
@@ -1393,10 +1630,12 @@
       fieldSize: state.fieldSize,
       wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative,
+      reorgUsesLastMatch: !!state.reorgUsesLastMatch,
       shareEditable: !!state.shareEditable,
       sessionOwnerDeviceId: state.sessionOwnerDeviceId,
       participants: cloneStateValue(state.participants || []),
       goalLog: cloneStateValue(state.goalLog || []),
+      swapCount: typeof state.swapCount === 'number' ? state.swapCount : 0,
       lastActivityAt: state.lastActivityAt,
       opponentName: state.opponentName || '',
       opponentAbbr: state.opponentAbbr || '',
@@ -1422,10 +1661,12 @@
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
+    state.reorgUsesLastMatch = snap.reorgUsesLastMatch !== undefined ? !!snap.reorgUsesLastMatch : state.reorgUsesLastMatch;
     state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
     state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
     state.participants = cloneStateValue(snap.participants || state.participants || []);
     state.goalLog = cloneStateValue(snap.goalLog || []);
+    state.swapCount = typeof snap.swapCount === 'number' ? snap.swapCount : state.swapCount;
     state.lastActivityAt = typeof snap.lastActivityAt === 'number' ? snap.lastActivityAt : state.lastActivityAt;
     state.opponentName = snap.opponentName !== undefined ? snap.opponentName : state.opponentName;
     state.opponentAbbr = snap.opponentAbbr !== undefined ? snap.opponentAbbr : state.opponentAbbr;
@@ -2348,6 +2589,7 @@
     var now = Date.now();
     commitFieldStint(fieldId, now);
     commitBenchStint(benchId, now);
+    state.swapCount = (state.swapCount || 0) + 1;
 
     state.onField = state.onField.filter(function(x){ return x !== fieldId; });
     state.onField.push(benchId);
@@ -3167,6 +3409,225 @@
     });
   }
 
+  // ---------------- "Mitt lag" (account) + Innstillinger ----------------
+  // Shares the exact same sb.auth session as Historikk-login (see
+  // isHistoryAdmin's comment above) - logging in here really does
+  // authenticate against Supabase now, backed by the team_settings table.
+  // Local cache (loadCoachDefaults/saveCoachDefaults) stays the source of
+  // truth while signed out, and is what an account's own values get mirrored
+  // into on login, so the rest of the app never has to care which mode it's
+  // reading from.
+  function updateSettingsStorageNote(){
+    if (!els.settingsStorageNote) return;
+    els.settingsStorageNote.textContent = isTeamAccountSignedIn()
+      ? 'Lagres på kontoen din, og er der igjen neste gang du logger inn - på denne eller en annen enhet.'
+      : 'Lagres på denne enheten. Logg inn med «Mitt lag» for å ta innstillingene med deg overalt.';
+    els.settingsLogoutBtn.hidden = !isTeamAccountSignedIn();
+  }
+  function openAccountLoginModal(){
+    els.accountLoginEmail.value = '';
+    els.accountLoginPassword.value = '';
+    els.accountLoginNote.style.display = 'none';
+    els.accountLoginModal.classList.add('open');
+  }
+  function closeAccountLoginModal(){
+    els.accountLoginModal.classList.remove('open');
+  }
+  function openRegisterScreen(){
+    els.registerTeamName.value = '';
+    els.registerEmail.value = '';
+    els.registerPassword.value = '';
+    els.registerPasswordRepeat.value = '';
+    els.registerNote.style.display = 'none';
+    els.registerScreen.classList.add('open');
+  }
+  function closeRegisterScreen(){
+    els.registerScreen.classList.remove('open');
+  }
+
+  function updateSettingsStepperUI(){
+    els.settingsMatchDurationValue.textContent = settingsDraftMatchDurationMin + ' min';
+    els.settingsSwapDurationValue.textContent = settingsDraftSwapDurationMin + ' min';
+    Array.prototype.forEach.call(els.settingsFieldFormat.children, function(btn){
+      btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === settingsDraftFieldSize);
+    });
+  }
+  /** @param {string} [prefillTeamName] */
+  function openSettingsScreen(prefillTeamName){
+    var d = loadCoachDefaults();
+    els.settingsHomeName.value = prefillTeamName || d.homeTeamName;
+    els.settingsHomeAbbr.value = d.homeTeamAbbr;
+    settingsDraftMatchDurationMin = Math.max(1, Math.round(d.matchDurationMs / 60000));
+    settingsDraftSwapDurationMin = Math.max(1, Math.round(d.defaultDurationMs / 60000));
+    // Kampformat is a coarse 4-option preset (see .settings-field-col in
+    // index.html) - the real fieldSize can be any 1-11 via the in-app
+    // innstillingsvindu's own number input, so an odd saved value (e.g. 4)
+    // just lands on the nearest preset here rather than matching none.
+    var presets = [3, 5, 7, 11];
+    settingsDraftFieldSize = presets.indexOf(d.fieldSize) !== -1 ? d.fieldSize : presets.reduce(function(a,b){
+      return Math.abs(b - d.fieldSize) < Math.abs(a - d.fieldSize) ? b : a;
+    });
+    updateSettingsStepperUI();
+    els.settingsDefaultRankCumulative.checked = d.rankByCumulative;
+    els.settingsDefaultReorgLastMatch.checked = d.reorgUsesLastMatch;
+    els.settingsSavedNote.hidden = true;
+    updateSettingsStorageNote();
+    els.settingsScreen.classList.add('open');
+  }
+  function closeSettingsScreen(){
+    els.settingsScreen.classList.remove('open');
+  }
+  function saveSettingsScreen(){
+    var name = els.settingsHomeName.value.trim() || 'Nøtterøy';
+    var abbr = (els.settingsHomeAbbr.value.trim() || 'NØT').toUpperCase();
+    /** @type {CoachDefaults} */
+    var defaults = {
+      homeTeamName: name,
+      homeTeamAbbr: abbr,
+      matchDurationMs: settingsDraftMatchDurationMin * 60000,
+      defaultDurationMs: settingsDraftSwapDurationMin * 60000,
+      fieldSize: settingsDraftFieldSize,
+      rankByCumulative: els.settingsDefaultRankCumulative.checked,
+      reorgUsesLastMatch: els.settingsDefaultReorgLastMatch.checked
+    };
+    // Local cache always gets written, signed in or not - see this
+    // function's own doc comment above initAccountAndSettings.
+    saveCoachDefaults(defaults);
+    els.settingsSavedNote.hidden = false;
+    if (isTeamAccountSignedIn()){
+      upsertTeamSettings(adminUser.id, defaults).then(function(ok){
+        if (!ok) els.settingsSavedNote.textContent = 'Lagret lokalt, men kontoen kunne ikke oppdateres akkurat nå.';
+        else els.settingsSavedNote.textContent = 'Lagret ✓';
+      });
+    }
+  }
+
+  function initAccountAndSettings(){
+    var startupDefaults = loadCoachDefaults();
+    applyHomeTeamName(startupDefaults.homeTeamName, startupDefaults.homeTeamAbbr);
+
+    els.accountBtn.addEventListener('click', openAccountLoginModal);
+    els.accountLoginCloseBtn.addEventListener('click', closeAccountLoginModal);
+    els.accountGoRegisterLink.addEventListener('click', function(){
+      closeAccountLoginModal();
+      openRegisterScreen();
+    });
+    els.accountLoginBtn.addEventListener('click', function(){
+      var email = els.accountLoginEmail.value.trim();
+      var password = els.accountLoginPassword.value;
+      if (!email || !password){
+        els.accountLoginNote.textContent = 'Fyll ut e-post og passord.';
+        els.accountLoginNote.style.display = '';
+        return;
+      }
+      if (!sb){
+        els.accountLoginNote.textContent = 'Ingen tilkobling til databasen akkurat nå.';
+        els.accountLoginNote.style.display = '';
+        return;
+      }
+      els.accountLoginBtn.disabled = true;
+      sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
+        els.accountLoginBtn.disabled = false;
+        if (res.error){
+          els.accountLoginNote.textContent = 'Feil e-post eller passord.';
+          els.accountLoginNote.style.display = '';
+          return;
+        }
+        // onAuthStateChange (below) sets adminUser and pulls team_settings -
+        // just wait for that same event rather than duplicating the fetch.
+        closeAccountLoginModal();
+      });
+    });
+
+    els.registerCloseBtn.addEventListener('click', closeRegisterScreen);
+    els.registerGoLoginLink.addEventListener('click', function(){
+      closeRegisterScreen();
+      openAccountLoginModal();
+    });
+    els.registerSubmitBtn.addEventListener('click', function(){
+      var teamName = els.registerTeamName.value.trim();
+      var email = els.registerEmail.value.trim();
+      var password = els.registerPassword.value;
+      var repeat = els.registerPasswordRepeat.value;
+      if (!teamName || !email || !password){
+        els.registerNote.textContent = 'Fyll ut lagnavn, e-post og passord.';
+        els.registerNote.style.display = '';
+        return;
+      }
+      if (password !== repeat){
+        els.registerNote.textContent = 'Passordene er ikke like.';
+        els.registerNote.style.display = '';
+        return;
+      }
+      if (!sb){
+        els.registerNote.textContent = 'Ingen tilkobling til databasen akkurat nå.';
+        els.registerNote.style.display = '';
+        return;
+      }
+      els.registerSubmitBtn.disabled = true;
+      sb.auth.signUp({ email: email, password: password }).then(function(res){
+        els.registerSubmitBtn.disabled = false;
+        if (res.error){
+          els.registerNote.textContent = res.error.message === 'User already registered'
+            ? 'Det finnes allerede en konto med denne e-posten.'
+            : 'Kunne ikke opprette bruker akkurat nå.';
+          els.registerNote.style.display = '';
+          return;
+        }
+        var user = res.data && res.data.user;
+        var session = res.data && res.data.session;
+        // No session back means the project requires e-post-bekreftelse
+        // first (a Supabase project setting, not something this app
+        // controls) - can't create the team_settings row yet since RLS
+        // requires auth.uid(), so this waits for a real login afterwards.
+        if (!session || !user){
+          els.registerNote.textContent = 'Sjekk e-posten din for å bekrefte kontoen, og logg inn etterpå.';
+          els.registerNote.style.display = '';
+          return;
+        }
+        var defaults = loadCoachDefaults();
+        defaults.homeTeamName = teamName;
+        upsertTeamSettings(user.id, defaults).then(function(){
+          saveCoachDefaults(defaults);
+          closeRegisterScreen();
+          openSettingsScreen();
+        });
+      });
+    });
+
+    els.settingsTile.addEventListener('click', function(){ openSettingsScreen(); });
+    els.settingsScreenCloseBtn.addEventListener('click', closeSettingsScreen);
+    els.settingsSaveBtn.addEventListener('click', saveSettingsScreen);
+    els.settingsLogoutBtn.addEventListener('click', function(){
+      if (sb) sb.auth.signOut();
+      // adminUser/local defaults stay as-is until onAuthStateChange fires -
+      // signing out doesn't erase the local cache, it just stops updating it.
+      updateSettingsStorageNote();
+    });
+    els.settingsMatchDurationMinus.addEventListener('click', function(){
+      settingsDraftMatchDurationMin = Math.max(1, settingsDraftMatchDurationMin - 1);
+      updateSettingsStepperUI();
+    });
+    els.settingsMatchDurationPlus.addEventListener('click', function(){
+      settingsDraftMatchDurationMin = Math.min(180, settingsDraftMatchDurationMin + 1);
+      updateSettingsStepperUI();
+    });
+    els.settingsSwapDurationMinus.addEventListener('click', function(){
+      settingsDraftSwapDurationMin = Math.max(1, settingsDraftSwapDurationMin - 1);
+      updateSettingsStepperUI();
+    });
+    els.settingsSwapDurationPlus.addEventListener('click', function(){
+      settingsDraftSwapDurationMin = Math.min(30, settingsDraftSwapDurationMin + 1);
+      updateSettingsStepperUI();
+    });
+    Array.prototype.forEach.call(els.settingsFieldFormat.children, function(btn){
+      btn.addEventListener('click', function(){
+        settingsDraftFieldSize = parseInt(btn.dataset.size, 10);
+        updateSettingsStepperUI();
+      });
+    });
+  }
+
   function openCoinFlip(){
     loadCoinFlipColors();
     refreshCoinColorGrids();
@@ -3241,12 +3702,17 @@
     buildCoinColorGrid(els.coinAwayColorGrid, 'away');
     loadCoinFlipColors();
     refreshCoinColorGrids();
-    renderHistoryBadge(); // reflects whatever onAuthStateChange has restored by now, or the locked default before it fires
+    updateHistoryTileVisibility(); // reflects whatever onAuthStateChange has restored by now, or hidden by default before it fires
 
     els.coinTile.addEventListener('click', openCoinFlip);
     els.coinFlipCloseBtn.addEventListener('click', closeCoinFlip);
+    // The tile itself only exists in the DOM for a signed-in account now
+    // (see updateHistoryTileVisibility()) - openHistoryScreen() adapts its
+    // own rendering for admin vs. a regular signed-in visitor, so there's
+    // nothing left to branch on here. openHistoryLoginModal() stays as a
+    // defensive fallback only - practically unreachable through this tile.
     els.historyTile.addEventListener('click', function(){
-      if (isHistoryAdmin()) openHistoryScreen();
+      if (isTeamAccountSignedIn()) openHistoryScreen();
       else openHistoryLoginModal();
     });
     els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
@@ -3558,6 +4024,10 @@
           id: p.id,
           name: p.name,
           ms: calc.playerMs[p.id] || 0,
+          // Lifetime total (T), alongside ms above (K) - local-only like
+          // swapCount/durationMs below, only for the "Kampresultat" popup's
+          // own K/T columns, never sent to Supabase.
+          totalMs: cumulativeFieldMs(p.id, now),
           goals: state.goalLog.filter(function(g){ return g.team === 'home' && g.playerId === p.id; }).length
         };
       }),
@@ -3572,7 +4042,11 @@
           scorerName: g.team === 'home' ? (nameById[g.playerId || ''] || '(fjernet spiller)') : opponentLabel,
           matchMs: g.matchMs
         };
-      })
+      }),
+      // Local-only, like durationMs above (see its comment) - never sent to
+      // Supabase, only read back off this same entry for the "Kampen er
+      // ferdig" popup.
+      swapCount: state.swapCount || 0
     };
   }
 
@@ -3611,8 +4085,16 @@
     matchSummaryNextFn = next || null;
     var opponent = entry.opponentName || (entry.opponentAbbr ? entry.opponentAbbr : 'Ukjent motstander');
     els.matchSummaryHeadline.textContent =
-      'vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore +
-      ' · ' + formatMs(entry.durationMs || 0) + ' spilt';
+      HOME_TEAM_NAME + ' vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore;
+    els.matchSummaryDuration.textContent = formatMs(entry.durationMs || 0) + ' spilt';
+    var swapCount = entry.swapCount || 0;
+    els.matchSummarySwaps.textContent = swapCount + (swapCount === 1 ? ' bytte' : ' bytter');
+    // No symbol at all for a draw - deliberate for now, nothing's been agreed
+    // on for that case yet, and the plain score line reads fine on its own.
+    var isWin = entry.homeScore > entry.awayScore;
+    var isLoss = entry.homeScore < entry.awayScore;
+    els.matchSummaryWeatherWin.hidden = !isWin;
+    els.matchSummaryWeatherLoss.hidden = !isLoss;
     var goals = entry.goals || [];
     els.matchSummaryGoalsTitle.hidden = goals.length === 0;
     els.matchSummaryGoals.innerHTML = goals.map(function(g){
@@ -3625,7 +4107,8 @@
     els.matchSummaryPlayers.innerHTML = players.map(function(p){
       return '<div class="match-summary-player">' +
         '<span class="match-summary-player-name">' + escapeHtml(p.name) + (p.goals > 0 ? ' (' + p.goals + ' mål)' : '') + '</span>' +
-        '<span class="match-summary-player-time">' + formatMs(p.ms) + '</span>' +
+        '<span class="match-summary-player-k">' + formatMs(p.ms) + '</span>' +
+        '<span class="match-summary-player-t">' + formatCumulative(p.totalMs || 0) + '</span>' +
       '</div>';
     }).join('') || '<div class="match-summary-empty">Ingen spillerdata registrert.</div>';
     els.matchSummaryModal.classList.add('open');
@@ -3697,6 +4180,7 @@
       saveMatchToHistory(summaryEntry);
     }
     state.goalLog = [];
+    state.swapCount = 0;
     // Next match likely means a next opponent (cup format) - clearing this
     // brings the "?" back on the scoreboard and re-arms the opponent prompt
     // (see openOpponentModal's call sites) rather than silently keeping the
@@ -3705,8 +4189,17 @@
     state.opponentAbbr = '';
 
     if (reorganize){
+      // Default (false): total cumulative time, same as always. The
+      // Innstillinger screen's "Bytt om bruker siste kamp" toggle switches
+      // this to `playerMs` instead - each player's time in the match that
+      // just ended alone (see computeMatchScoreAndPlayerMs above), so a
+      // player who's played a lot overall but sat out the last match still
+      // gets set up first next time.
       var all = state.players.map(function(p){
-        return { id: p.id, ms: (state.cumulative[p.id] && state.cumulative[p.id].fieldMs) || 0 };
+        var ms = state.reorgUsesLastMatch
+          ? (playerMs[p.id] || 0)
+          : (state.cumulative[p.id] && state.cumulative[p.id].fieldMs) || 0;
+        return { id: p.id, ms: ms };
       });
       all.sort(function(a,b){ return a.ms - b.ms; }); // ascending: least played first
       var fieldSize = Math.max(1, Math.min(state.fieldSize || 3, all.length));
@@ -3874,6 +4367,41 @@
     els.launcherJoinEnterBtn = qs('launcherJoinEnterBtn');
     els.coinTile = qs('coinTile');
     els.coinTileArt = qs('coinTileArt');
+    els.settingsTile = qs('settingsTile');
+    els.accountBtn = qs('accountBtn');
+    els.accountLoginModal = qs('accountLoginModal');
+    els.accountLoginCloseBtn = qs('accountLoginCloseBtn');
+    els.accountLoginEmail = qs('accountLoginEmail');
+    els.accountLoginPassword = qs('accountLoginPassword');
+    els.accountLoginNote = qs('accountLoginNote');
+    els.accountLoginBtn = qs('accountLoginBtn');
+    els.accountGoRegisterLink = qs('accountGoRegisterLink');
+    els.registerScreen = qs('registerScreen');
+    els.registerCloseBtn = qs('registerCloseBtn');
+    els.registerTeamName = qs('registerTeamName');
+    els.registerEmail = qs('registerEmail');
+    els.registerPassword = qs('registerPassword');
+    els.registerPasswordRepeat = qs('registerPasswordRepeat');
+    els.registerNote = qs('registerNote');
+    els.registerSubmitBtn = qs('registerSubmitBtn');
+    els.registerGoLoginLink = qs('registerGoLoginLink');
+    els.settingsScreen = qs('settingsScreen');
+    els.settingsScreenCloseBtn = qs('settingsScreenCloseBtn');
+    els.settingsHomeName = qs('settingsHomeName');
+    els.settingsHomeAbbr = qs('settingsHomeAbbr');
+    els.settingsMatchDurationValue = qs('settingsMatchDurationValue');
+    els.settingsMatchDurationMinus = qs('settingsMatchDurationMinus');
+    els.settingsMatchDurationPlus = qs('settingsMatchDurationPlus');
+    els.settingsSwapDurationValue = qs('settingsSwapDurationValue');
+    els.settingsSwapDurationMinus = qs('settingsSwapDurationMinus');
+    els.settingsSwapDurationPlus = qs('settingsSwapDurationPlus');
+    els.settingsFieldFormat = qs('settingsFieldFormat');
+    els.settingsDefaultRankCumulative = qs('settingsDefaultRankCumulative');
+    els.settingsDefaultReorgLastMatch = qs('settingsDefaultReorgLastMatch');
+    els.settingsSaveBtn = qs('settingsSaveBtn');
+    els.settingsSavedNote = qs('settingsSavedNote');
+    els.settingsStorageNote = qs('settingsStorageNote');
+    els.settingsLogoutBtn = qs('settingsLogoutBtn');
     els.coinFlipScreen = qs('coinFlipScreen');
     els.coinFlipCloseBtn = qs('coinFlipCloseBtn');
     els.coinPanelPick = qs('coinPanelPick');
@@ -3892,8 +4420,6 @@
     els.coinFlipAgainBtn = qs('coinFlipAgainBtn');
     els.coinFlipDoneBtn = qs('coinFlipDoneBtn');
     els.historyTile = qs('historyTile');
-    els.historyBadgeLocked = qs('historyBadgeLocked');
-    els.historyBadgeOpen = qs('historyBadgeOpen');
     els.historyScreen = qs('historyScreen');
     els.historyCloseBtn = qs('historyCloseBtn');
     els.historySelectModeBtn = qs('historySelectModeBtn');
@@ -3970,7 +4496,11 @@
     els.saveHistoryYesBtn = qs('saveHistoryYesBtn');
     els.saveHistoryNoBtn = qs('saveHistoryNoBtn');
     els.matchSummaryModal = qs('matchSummaryModal');
+    els.matchSummaryWeatherWin = qs('matchSummaryWeatherWin');
+    els.matchSummaryWeatherLoss = qs('matchSummaryWeatherLoss');
     els.matchSummaryHeadline = qs('matchSummaryHeadline');
+    els.matchSummaryDuration = qs('matchSummaryDuration');
+    els.matchSummarySwaps = qs('matchSummarySwaps');
     els.matchSummaryGoalsTitle = qs('matchSummaryGoalsTitle');
     els.matchSummaryGoals = qs('matchSummaryGoals');
     els.matchSummaryPlayers = qs('matchSummaryPlayers');
@@ -3982,6 +4512,7 @@
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
     els.homeScoreBtn = qs('homeScoreBtn');
+    els.homeTeamLabel = qs('homeTeamLabel');
     els.awayScoreBtn = qs('awayScoreBtn');
     els.awayTeamLabel = qs('awayTeamLabel');
     els.opponentModal = qs('opponentModal');
@@ -4801,6 +5332,7 @@
     els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
 
     initCoinFlip();
+    initAccountAndSettings();
 
     updateFrameFit();
     applyRealViewportHeight();
