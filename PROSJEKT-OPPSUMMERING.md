@@ -45,6 +45,39 @@ respektere om dere fortsetter å bygge videre:
   Max (440×956pt). Fyller skjermen kant-til-kant på faktiske iPhoner; på andre
   skjermformer (Mac-nettleser) vises en avrundet, "letterboxed" ramme i stedet for å
   strekke innholdet ut av form.
+- **Siden skal helst ikke kunne scrolles** (verken vertikalt eller horisontalt),
+  selv om `html`/`body` fortsatt bruker vanlig dokumentflyt og ikke
+  `position:fixed`+`overflow:hidden` (se "hvorfor ikke `position:fixed`" nederst
+  i dette punktet).
+  - `touch-action:none` på `html,body` i `style.css`, med `touch-action:pan-y`
+    eksplisitt satt tilbake på hvert reelt scrollbart element (`#field`, `#bench`,
+    `.modal-card`, `.suggest-list`, `.history-list`, `.version-history-list`,
+    `.goal-player-list`, `.end-match-summary`) - stopper nettleserens *standard*
+    panorerings-/zoom-håndtering av touch. Denne står fast.
+  - **Forsøkt, men for nå fjernet igjen (2026-09-20):** en `touchmove`-listener
+    på `document` som selv kalte `preventDefault()` (med mindre trykket startet
+    inni et reelt scrollbart element). Den stoppet iOS sin elastiske
+    "rubber-band"-bounce fullstendig - `touch-action:none` alene lot header
+    midlertidig gli opp under iPhone sin halvtransparente statuslinje-overlay
+    under selve draget (leste som "diffuse ikoner" helt øverst - ikke noe
+    tegnet av oss, det var iOS sin egen live status-bar-dimming som traff
+    header mens den var i bevegelse). André ønsket å prøve uten den først -
+    en kort, elastisk bounce som alltid spretter tilbake til utgangsposisjonen
+    er greit for ham; det som ikke er greit er om siden blir værende forskjøvet.
+    Om `touch-action:none` alene viser seg IKKE å sprette tilbake pålitelig
+    (bekreftet tidligere med skjermbilder av et vedvarende ~20px offset), er
+    denne listeneren (se git-historikk rundt "JS touchmove-sperre mot
+    rubber-band-bounce") den neste tingen å legge til igjen.
+  - **Hvorfor ikke `position:fixed` på `#app`/`html`/`body` i stedet** (ville
+    løst scroll-problemet mer direkte): `#app`/`#viewport-frame` sin høyde er
+    `100dvh`, og på iOS i standalone-PWA-modus har det ved kaldstart forekommet
+    at `100dvh` måles feil et lite øyeblikk før layouten regnes om - kombinert
+    med `position:fixed`+`overflow:hidden` ville et slikt øyeblikk usynlig
+    *kuttet av bunnen av appen* ("black bar"-bugen) i stedet for at det bare
+    ble en kort, ufarlig scroll-mulighet. Se kommentaren over `#viewport-frame`
+    i `style.css` for den fulle begrunnelsen. Scroll-låsen (touch-action +
+    touchmove-sperre) løser selve scroll-opplevelsen uten å røre ved den
+    avveiningen.
 
 ---
 
