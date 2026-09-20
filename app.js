@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0';
+  var APP_VERSION = '2.0.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0.1', text: 'Mer klaring mellom header-knappene og iPhone sin statuslinje (var diffuse i toppen). Fikset at valg fra spillernavn-listen fortsatt kunne hoppe til feil navnefelt.' },
     { version: '2.0', text: 'Full gjennomgang av Symbolforklaring og om appen - alle ikoner (mål, "i", Bytt) er nå forklart. Presisert at "Kumulert rangering" kun styrer trekant-symbolene, ikke selve tidsberegningen.' },
     { version: '1.9.13', text: 'Spillerboblen viser nå både total og kamp-tid (T/K), med forklaring via "i". Nytt "Bytt"-symbol viser hvordan man bytter valgt spiller med en annen.' },
     { version: '1.9.12', text: 'Nytt målsymbol (fotballmål) i stedet for fotballen. Fikset at spillernavn-listen kunne hoppe over navnefelt ved valg fra forslagslisten.' },
@@ -2915,28 +2916,33 @@
     input.addEventListener('blur', function(){
       setTimeout(function(){ list.classList.add('hidden'); }, 150);
     });
+    // preventDefault on pointerdown only - so tapping an item doesn't blur
+    // (and thus close) the input - and do the actual selection on 'click'
+    // instead of here. An earlier version did both in pointerdown, hiding
+    // the list synchronously; that still left a window for the browser's
+    // own trailing click (preventDefault on pointerdown doesn't reliably
+    // suppress it) to land on whatever was underneath once the list -
+    // which can be tall enough to overlap the next couple of name rows -
+    // disappeared, silently stealing focus into the wrong field. Deferring
+    // the hide by a tick narrowed that window but didn't close it. Moving
+    // the actual work into 'click' closes it for good: the DOM is
+    // untouched between pointerdown and click, so click always resolves
+    // against the same item that was actually tapped, no race possible.
     list.addEventListener('pointerdown', function(e){
       var item = /** @type {HTMLElement} */ (e.target).closest('.suggest-item');
       if (!item) return;
       e.preventDefault();
+    });
+    list.addEventListener('click', function(e){
+      var item = /** @type {HTMLElement} */ (e.target).closest('.suggest-item');
+      if (!item) return;
       input.value = item.textContent;
       // Setting .value directly doesn't fire 'input', so the row's own
       // listener (clearing the invalid badge, showing the "x") never runs
       // for a name picked from this list - dispatch it so picking a
       // suggestion behaves exactly like typing the same name would.
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      // Hiding the list right here, synchronously, used to cause a stray
-      // focus jump: this list can be tall enough to overlap the next
-      // couple of name rows below it, and preventDefault() on pointerdown
-      // doesn't reliably suppress the trailing click some browsers still
-      // fire after it. That click gets hit-tested against whatever is on
-      // screen *when it fires* - if the list has already collapsed by
-      // then, a row that slid up into this exact spot silently eats the
-      // click and steals focus (which row, and how far away, depended on
-      // how tall the list happened to be). Deferring the hide by a tick
-      // means any such trailing click still lands on the (still visible)
-      // list instead, same as the tap that picked the name.
-      setTimeout(function(){ list.classList.add('hidden'); }, 0);
+      list.classList.add('hidden');
     });
   }
 
