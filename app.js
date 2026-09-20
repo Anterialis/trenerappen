@@ -91,6 +91,7 @@
    * @property {string} opponentName
    * @property {string} opponentAbbr
    * @property {MatchHistoryEntry[]} matchHistory
+   * @property {number} rev
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -404,7 +405,13 @@
       lastActivityAt: Date.now(),
       opponentName: '',
       opponentAbbr: '',
-      matchHistory: []
+      matchHistory: [],
+      // Bumped by 1 on every pushRemoteState() call (see there) - lets a
+      // receiving device tell a genuinely newer shared update apart from a
+      // stale one arriving late (e.g. a read-only viewer's phone whose tab
+      // sat suspended for an hour reconnecting and re-sending the state it
+      // still had in memory from back then). See isNewerRevision().
+      rev: 0
     };
   }
 
@@ -439,6 +446,7 @@
     if (typeof raw.opponentName !== 'string') raw.opponentName = '';
     if (typeof raw.opponentAbbr !== 'string') raw.opponentAbbr = '';
     if (!Array.isArray(raw.matchHistory)) raw.matchHistory = [];
+    if (typeof raw.rev !== 'number') raw.rev = 0;
     return raw;
   }
 
@@ -493,17 +501,50 @@
   // clock checkLongIdleSuggestion() relies on would never actually advance.
   function flushState(){
     saveStateLocally();
-    pushRemoteState();
+    // canEdit() gate - a read-only viewer's device runs this same code path
+    // (backgrounding the tab, or the idle-auto-pause correction below) and
+    // has no business writing to the shared session at all, regardless of
+    // whether its in-memory `state` happens to be stale at that moment or
+    // not. (isNewerRevision() on the receiving end would also catch a
+    // genuinely stale write, but "read-only" should mean no writes, full
+    // stop, not just "no writes that happen to be old".)
+    if (canEdit()) pushRemoteState();
   }
 
   function pushRemoteState(){
     if (!sessionCode || !sb) return;
+    state.rev = (typeof state.rev === 'number' ? state.rev : 0) + 1;
     sb.from('sessions')
       .update({ data: state, origin: deviceOrigin, updated_at: new Date().toISOString() })
       .eq('code', sessionCode)
       .then(function(res){
         if (res && res.error) console.warn('Kunne ikke synkronisere', res.error);
       });
+  }
+
+  // True if `incoming` is safe to adopt as this device's new state - i.e.
+  // it isn't an OLDER snapshot than what this device already has. Guards
+  // against exactly what caused a real incident: a read-only viewer's phone
+  // whose tab sat suspended for an hour (with a shared session open) woke
+  // back up, reconnected, and re-sent the state it still had in memory from
+  // back then - silently overwriting an actively-running match with a
+  // stale one. state.rev (bumped on every pushRemoteState() call) is a
+  // simple, clock-skew-proof "how many pushes has this session line seen"
+  // counter.
+  //
+  // Deliberately >= , not > : two editors both pushing right after the
+  // same starting rev (a genuine, if rare, simultaneous-edit collision)
+  // would land on equal rev numbers - rejecting an equal rev on BOTH
+  // devices would make each stubbornly keep its own edit and reject the
+  // other's forever, leaving them silently diverged. Accepting it instead
+  // just means the later-arriving of the two wins, same as today's
+  // behavior for that narrow case - still converges both devices to the
+  // same state, which a dormant device's push (whose rev is far behind,
+  // never merely equal) was never going to do anyway.
+  /** @param {AppState} incoming @returns {boolean} */
+  function isNewerRevision(incoming){
+    if (!state || typeof state.rev !== 'number') return true;
+    return typeof incoming.rev === 'number' && incoming.rev >= state.rev;
   }
 
   // True only while both the browser reports a network connection AND the
@@ -616,9 +657,10 @@
         { event: 'UPDATE', schema: 'public', table: 'sessions', filter: 'code=eq.' + code },
         function(payload){
           if (!payload.new || payload.new.origin === deviceOrigin) return;
-          var wasMaster = isMaster();
           var normalized = normalizeState(payload.new.data);
           if (!normalized){ console.warn('Mottok ugyldig delt tilstand fra økt, ignorerer'); return; }
+          if (!isNewerRevision(normalized)){ console.warn('Ignorerte en foreldet delt tilstand (rev ' + normalized.rev + ' < ' + state.rev + ')'); return; }
+          var wasMaster = isMaster();
           state = normalized;
           saveStateLocally();
           resyncTimeUpNotified();
@@ -629,7 +671,14 @@
       .subscribe(function(status){
         realtimeSubscribed = (status === 'SUBSCRIBED');
         updateSessionCodeUI();
-        if (realtimeSubscribed) pushRemoteState(); // catch up on anything queued while disconnected
+        // Only an editor's own reconnect should ever re-push its in-memory
+        // state - a read-only viewer has no business writing at all (this
+        // used to run unconditionally, which was exactly how a dormant
+        // read-only phone once clobbered an active match - see
+        // isNewerRevision's comment). canEdit() alone isn't quite enough on
+        // its own though (an editor's phone can go just as stale), which is
+        // why isNewerRevision() above is the real backstop.
+        if (realtimeSubscribed && canEdit()) pushRemoteState(); // catch up on anything queued while disconnected
       });
   }
 
@@ -1309,7 +1358,8 @@
       lastActivityAt: state.lastActivityAt,
       opponentName: state.opponentName || '',
       opponentAbbr: state.opponentAbbr || '',
-      matchHistory: cloneStateValue(state.matchHistory || [])
+      matchHistory: cloneStateValue(state.matchHistory || []),
+      rev: typeof state.rev === 'number' ? state.rev : 0
     };
   }
 
@@ -3906,7 +3956,9 @@
     window.addEventListener('online', function(){
       networkOnline = true;
       updateSessionCodeUI();
-      if (sessionCode) pushRemoteState(); // push whatever changed while offline right away
+      // canEdit() gate - see the matching comment on the realtime reconnect
+      // push in subscribeToSession, same reasoning applies here.
+      if (sessionCode && canEdit()) pushRemoteState(); // push whatever changed while offline right away
     });
     window.addEventListener('offline', function(){
       networkOnline = false;
@@ -4689,14 +4741,21 @@
         if (res && !res.error && res.data){
           var wasMaster = isMaster();
           var normalized = normalizeState(res.data.data);
-          if (normalized){
+          if (!normalized){
+            console.warn('Lagret økt inneholdt ugyldig data, fortsetter med lokal tilstand');
+          } else if (!isNewerRevision(normalized)){
+            // This device's own local copy (from localStorage, e.g. an edit
+            // made just before the app closed) is already at least as new
+            // as what the server has - keep it rather than regressing to
+            // the server's older row. subscribeToSession()'s reconnect
+            // catch-up push just below will bring the server up to date.
+            console.warn('Beholder lokal tilstand, server-kopien var ikke nyere (rev ' + normalized.rev + ' < ' + state.rev + ')');
+          } else {
             state = normalized;
             if (ensureParticipant()) pushRemoteState();
             if (!wasMaster && isMaster()) showOwnerTransferredNotice();
             saveStateLocally();
             resyncTimeUpNotified();
-          } else {
-            console.warn('Lagret økt inneholdt ugyldig data, fortsetter med lokal tilstand');
           }
           subscribeToSession(sessionCode);
         } else if (res && !res.error && !res.data){

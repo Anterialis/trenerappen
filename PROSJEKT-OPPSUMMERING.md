@@ -315,7 +315,24 @@ blokkert av RLS (tomt resultat, ingen rader slettet).
 
 ## Kjente begrensninger / ting å huske på videre
 
-- **Ingen ekte konflikthåndtering** i delt økt — siste skriving vinner.
+- **Ingen ekte felt-for-felt konflikthåndtering** i delt økt fortsatt - to
+  ekte, samtidige redigeringer (to medtrenere som begge gjør et bytte i
+  samme sekund) avgjøres fortsatt av hvem sin skriving ankommer sist, ikke
+  en smart sammenslåing. Det som **er** fikset (2026-09-20, se `state.rev`
+  og `isNewerRevision()` i `app.js`): en *foreldet* skriving fra en enhet
+  som har ligget lenge inaktiv (f.eks. en leser-enhets nettleserfane som lå
+  suspendert i timevis, våknet, og gjenoppfrisket tilkoblingen) kan ikke
+  lenger overskrive en aktivt pågående kamp - dette var årsaken til en reell
+  hendelse der en leser-enhet (som aldri skulle kunne skrive i det hele tatt)
+  plutselig erstattet fjerde kamps korrekte, ferske spilletider med en
+  "spøkelses"-tilstand fra kamp 2, flere titalls minutter for gammel. To lag
+  beskyttelse nå: (1) leser-enheter (`!canEdit()`) hindres fra å skrive i det
+  hele tatt ved gjentilkobling/bakgrunnslegging (`flushState()`,
+  `subscribeToSession()`s reconnect, `online`-eventet), og (2) et stigende
+  `state.rev`-tall (økes ved hver faktiske skriving) gjør at *enhver* enhet
+  kan avvise en innkommende tilstand som er eldre enn den de allerede har -
+  fungerer uavhengig av rettigheter, så selv en skrive-enhet som selv har
+  ligget inaktiv lenge nok blir fanget opp.
 - **Ingen splash-screens** for PWA-oppstart (kun ikon + manifest, ikke egne
   oppstartsbilder per skjermstørrelse) — vurdert, men nedprioritert som lav verdi
   for innsatsen.
