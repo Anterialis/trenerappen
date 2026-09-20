@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.2';
+  var APP_VERSION = '2.0.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,7 +153,6 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
-    { version: '2.0.2', text: 'Litt mer klaring på header-knappene mot iPhone-statuslinjen. Blokkert horisontal sidescrolling.' },
     { version: '2.0.1', text: 'Mer klaring mellom header-knappene og iPhone sin statuslinje (var diffuse i toppen). Fikset at valg fra spillernavn-listen fortsatt kunne hoppe til feil navnefelt.' },
     { version: '2.0', text: 'Full gjennomgang av Symbolforklaring og om appen - alle ikoner (mål, "i", Bytt) er nå forklart. Presisert at "Kumulert rangering" kun styrer trekant-symbolene, ikke selve tidsberegningen.' },
     { version: '1.9.13', text: 'Spillerboblen viser nå både total og kamp-tid (T/K), med forklaring via "i". Nytt "Bytt"-symbol viser hvordan man bytter valgt spiller med en annen.' },

@@ -26,6 +26,18 @@
     min-height:100%; margin:0; padding:0;
     overscroll-behavior:none;
     overflow-x:hidden; /* horizontal scroll has no legitimate use here (unlike the small vertical safety-valve above/below) - html needed this too, not just body, since either can end up the actual horizontally-scrolling element depending on content. */
+    /* Stops iOS's rubber-band bounce: without this, dragging past the top
+       edge (even with nothing to actually scroll) still elastically slides
+       the whole page - including header - down/up, which is what let the
+       header slide directly under the status bar's own translucent overlay
+       and read as "diffuse" (see header's padding-top above). touch-action
+       only blocks the browser's own default panning/zooming gesture, not
+       tap/click dispatch, so buttons everywhere are unaffected - but it
+       also blocks the browser's default SCROLLING gesture wherever it
+       isn't explicitly re-enabled, so every genuinely scrollable region
+       (#field, #bench, .modal-card, .suggest-list, etc.) re-enables
+       touch-action:pan-y itself below. */
+    touch-action:none;
     background:var(--navy);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
@@ -394,7 +406,7 @@
   }
   .history-select-mode-btn.active{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
   .history-info-note{ margin:8px 0 14px; color:rgba(255,255,255,.55); font-size:12px; line-height:1.5; }
-  .history-list{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-bottom:4px; }
+  .history-list{ flex:1 1 auto; min-height:0; overflow-y:auto; touch-action:pan-y; display:flex; flex-direction:column; gap:10px; padding-bottom:4px; }
   .history-empty{ color:rgba(255,255,255,.55); font-size:13.5px; text-align:center; margin-top:40px; line-height:1.6; }
 
   .history-row{
@@ -651,7 +663,7 @@
     align-items:center;
     gap:24px 18px;
     padding:22px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
-    overflow-y:auto;
+    overflow-y:auto; touch-action:pan-y;
   }
 
   #bench-wrap{
@@ -779,7 +791,7 @@
   .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
   .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }
   #bench{
-    flex:1; min-height:0; overflow-y:auto;
+    flex:1; min-height:0; overflow-y:auto; touch-action:pan-y;
     display:flex; flex-wrap:wrap; align-content:flex-start;
     gap:14px;
     padding:8px calc(16px + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 14px) calc(16px + env(safe-area-inset-left));
@@ -1097,7 +1109,7 @@
     background:var(--card);
     border-radius:var(--radius-lg);
     padding:20px;
-    max-height:88%; overflow-y:auto;
+    max-height:88%; overflow-y:auto; touch-action:pan-y;
     box-shadow:var(--shadow-md);
     transform:translateY(100%);
     transition:transform .35s cubic-bezier(.25,.8,.25,1);
@@ -1280,7 +1292,7 @@
     position:absolute; left:0; right:0; top:calc(100% + 4px);
     background:#fff; border:1px solid #e1e4e9; border-radius:var(--radius-sm);
     box-shadow:var(--shadow-md);
-    max-height:190px; overflow-y:auto;
+    max-height:190px; overflow-y:auto; touch-action:pan-y;
     z-index:50;
   }
   .suggest-list.hidden{ display:none; }
@@ -1452,7 +1464,7 @@
   .settings-home-btn{ right:54px; font-size:19px; }
   #infoPopupText{ margin:0; }
   .version-history-list{
-    max-height:50vh; overflow-y:auto;
+    max-height:50vh; overflow-y:auto; touch-action:pan-y;
     display:flex; flex-direction:column; gap:14px;
   }
   .version-history-entry{
@@ -1577,7 +1589,7 @@
   /* Shared by the "hvem scoret / fjern mål / målskårere" player list
      (goalPlayerModal, three modes - see openGoalPlayerModal) - a plain
      minimalist tap-list, one row per player. */
-  .goal-player-list{ display:flex; flex-direction:column; gap:6px; margin:14px 0; max-height:52vh; overflow-y:auto; }
+  .goal-player-list{ display:flex; flex-direction:column; gap:6px; margin:14px 0; max-height:52vh; overflow-y:auto; touch-action:pan-y; }
   .goal-player-row{
     display:flex; align-items:center; gap:12px; width:100%;
     padding:10px 12px; border:none; border-radius:var(--radius-sm);
@@ -1703,7 +1715,7 @@
   .shake-btn{ animation:shake .3s; }
   .stack-btn.secondary{ background:#f0f1f3; color:var(--ink); }
   .end-match-summary{
-    margin:14px 0; max-height:230px; overflow-y:auto;
+    margin:14px 0; max-height:230px; overflow-y:auto; touch-action:pan-y;
     border-top:1px solid #eef0f2; border-bottom:1px solid #eef0f2;
   }
   /* Tidligere kamper denne økten (se state.matchHistory / endMatchPeriod) -
