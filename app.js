@@ -146,7 +146,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.5';
+  var APP_VERSION = '2.0.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -154,6 +154,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0.6', text: 'Sikret delt økt mot at en inaktiv enhet kan overskrive en aktiv kamp med gamle data. Innlogging til Historikk kan nå også skje med brukernavn.' },
     { version: '2.0.5', text: 'Fikset blått felt nederst ved første åpning i portrettmodus (iOS-kaldstart målte skjermhøyden litt for lavt før den rettet seg selv ved rotasjon).' },
     { version: '2.0.4', text: 'Lagt touchmove-sperren mot rubber-band-scroll tilbake - touch-action alene holdt ikke siden fikset.' },
     { version: '2.0.3', text: 'Forsøk: fjernet touchmove-sperren igjen (beholder kun touch-action-CSS-en) for å se om den alene holder siden fra å scrolle.' },
@@ -961,6 +962,21 @@
     }
   }
 
+  // Supabase Auth only knows email/password - there's no real "username"
+  // concept server-side. This is a purely client-side alias table so André
+  // can type "Anterialis" instead of his email; resolved to the real email
+  // before ever calling signInWithPassword. Fine at this scale (a single
+  // admin) - would need a real username->email lookup (e.g. a small public
+  // table) if there were ever more than a couple of admins to remember.
+  var HISTORY_LOGIN_USERNAME_ALIASES = {
+    'anterialis': 'andre.nanbjor@gmail.com'
+  };
+
+  function resolveHistoryLoginEmail(input){
+    var alias = HISTORY_LOGIN_USERNAME_ALIASES[input.toLowerCase()];
+    return alias || input;
+  }
+
   function closeHistoryLoginModal(){
     els.historyLoginModal.classList.remove('open');
     clearInterval(historyLoginCountdownTimer);
@@ -993,7 +1009,7 @@
 
   function attemptHistoryLogin(){
     if (historyLoginLockRemainingMs() > 0){ updateHistoryLoginLockUI(); return; }
-    var email = els.historyLoginEmail.value.trim();
+    var email = resolveHistoryLoginEmail(els.historyLoginEmail.value.trim());
     var password = els.historyLoginPassword.value;
     els.historyLoginError.style.display = 'none';
     clearFieldInvalid(els.historyLoginEmailWrap);
