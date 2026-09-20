@@ -347,8 +347,8 @@
 
     <div class="settings-row" id="rankCumulativeRow">
       <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Kumulert tidsberegning</span>
-        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert tidsberegning">i</button>
+        <span class="settings-row-label">Kumulert rangering (trekanter)</span>
+        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert rangering">i</button>
       </span>
       <label class="toggle">
         <input type="checkbox" id="rankByCumulativeToggle">
@@ -504,6 +504,10 @@
         <p class="func-title">Myntkast</p>
         <p class="func-text">Fra startsiden: velg lagfarger, kast en mynt for å avgjøre hvem som starter med ballen.</p>
       </div>
+      <div class="func-item">
+        <p class="func-title">Målskårere</p>
+        <p class="func-text">Målikonet øverst viser og lar deg redigere hvem som har scoret så langt.</p>
+      </div>
     </div>
     <hr class="legend-divider">
     <p class="legend-section-title">Symboler</p>
@@ -520,6 +524,29 @@
       <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄<span class="legend-badge">?</span></span><span class="legend-text">Bytteforslag - foreslår å bytte ut spilleren med mest spilletid (som har passert byttetiden) mot innbytteren som har ventet lengst. Trykk for å markere, trykk spilleren for å bekrefte.</span></div>
       <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅<span class="legend-badge">×2</span></span><span class="legend-text">multiBytte - velg flere ute- og innbyttere, og bytt dem alle samtidig.</span></div>
       <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="background:var(--danger);">×</span><span class="legend-text">Avbryt multiBytte - fjerner markeringene. Vises kun mens multiBytte er aktivert.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">
+        <svg class="goal-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <line x1="14.9" y1="13" x2="14.9" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="18.3" y1="13" x2="18.3" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="21.7" y1="13" x2="21.7" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="25.1" y1="13" x2="25.1" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="11.5" y1="16.5" x2="28.5" y2="16.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="11.5" y1="20" x2="28.5" y2="20" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="11.5" y1="23.5" x2="28.5" y2="23.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <line x1="11.5" y1="27" x2="28.5" y2="27" stroke="#fff" stroke-width="0.85" opacity=".45"/>
+          <path d="M11,13 Q20,16.5 29,13" fill="none" stroke="#fff" stroke-width="0.8" opacity=".55"/>
+          <rect x="7.5" y="8.5" width="25" height="3.2" fill="#fff"/>
+          <rect x="7.5" y="8.5" width="3.2" height="23" fill="#fff"/>
+          <rect x="29.3" y="8.5" width="3.2" height="23" fill="#fff"/>
+        </svg>
+      </span><span class="legend-text">Målskårere - vis/rediger hvem som har scoret.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="font-style:italic; font-weight:700;">i</span><span class="legend-text">I spillerboblen (trykk en spiller) - forklarer T (totaltid gjennom alle kamper) og K (kamptid, kun denne kampen).</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M8 17V5M8 5L4.7 8.3M8 5L11.3 8.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M16 7v12M16 19l-3.3-3.3M16 19l3.3-3.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span><span class="legend-text">I spillerboblen - forklarer at du kan bytte den valgte spilleren ved å trykke en annen.</span></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>

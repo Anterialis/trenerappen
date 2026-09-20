@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.13';
+  var APP_VERSION = '2.0';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0', text: 'Full gjennomgang av Symbolforklaring og om appen - alle ikoner (mål, "i", Bytt) er nå forklart. Presisert at "Kumulert rangering" kun styrer trekant-symbolene, ikke selve tidsberegningen.' },
     { version: '1.9.13', text: 'Spillerboblen viser nå både total og kamp-tid (T/K), med forklaring via "i". Nytt "Bytt"-symbol viser hvordan man bytter valgt spiller med en annen.' },
     { version: '1.9.12', text: 'Nytt målsymbol (fotballmål) i stedet for fotballen. Fikset at spillernavn-listen kunne hoppe over navnefelt ved valg fra forslagslisten.' },
     { version: '1.9.11', text: 'Innlogging til Historikk er nå en egen popup med lås-ikon og begrenset antall forsøk. Ny lås/åpen-badge på Historikk-fliken.' },
@@ -250,8 +251,8 @@
       text: 'Slår på sanntidsdeling med en tresifret kode. Du velger om andre får redigeringsrettighet (standard) - alle i økten kan gjøre byttinger og styre kampen - eller kun "les", hvor andre kun kan se hovedskjermen (kampen) live, uten å kunne gjøre endringer selv.'
     },
     rankCumulative: {
-      title: 'Kumulert tidsberegning',
-      text: 'AV: Trekantene som viser mest/minst spilletid tar kun hensyn til inneværende kamp. PÅ: trekantene tar hensyn til kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
+      title: 'Kumulert rangering (trekanter)',
+      text: 'Gjelder kun trekant-symbolene som viser mest/minst spilletid - selve tidene kumuleres alltid uansett, se «i» i spillerboblen. AV: trekantene ser kun på inneværende kamp. PÅ: trekantene ser på kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
     },
     endPeriod: {
       title: 'Kampslutt, ny kamp',
