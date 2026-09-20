@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.12';
+  var APP_VERSION = '1.9.13';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.13', text: 'Spillerboblen viser nå både total og kamp-tid (T/K), med forklaring via "i". Nytt "Bytt"-symbol viser hvordan man bytter valgt spiller med en annen.' },
     { version: '1.9.12', text: 'Nytt målsymbol (fotballmål) i stedet for fotballen. Fikset at spillernavn-listen kunne hoppe over navnefelt ved valg fra forslagslisten.' },
     { version: '1.9.11', text: 'Innlogging til Historikk er nå en egen popup med lås-ikon og begrenset antall forsøk. Ny lås/åpen-badge på Historikk-fliken.' },
     { version: '1.9.10', text: 'Historikk er nå delt i skyen (ikke bare denne enheten) - alle kan lagre en kamp, men kun admin kan logge inn for å se eller slette.' },
@@ -232,6 +233,10 @@
   // Explanations shown by the small "i" info buttons in settings, keyed by
   // their data-info attribute.
   var INFO_TEXTS = {
+    playerTime: {
+      title: 'Spillertid',
+      text: 'K = kamptid, tid kun for denne kampen. T = totaltid gjennom alle kamper (kumulativ).'
+    },
     byttetid: {
       title: 'Standard byttetid',
       text: 'Tiden en utespiller skal spille før et oransje byttemerke (⇅) varsler at byttetiden er nådd. Spiller vedkommende 50 % lenger enn byttetiden, begynner merket å pulsere forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
@@ -1222,6 +1227,13 @@
     return Math.max(0, cumulativeFieldMs(id, now) - baseline);
   }
 
+  // Same as currentPeriodFieldMs, but for time on the bench.
+  /** @param {string} id @param {number} now @returns {number} */
+  function currentPeriodBenchMs(id, now){
+    var baseline = (state.periodStartCumulative[id] && state.periodStartCumulative[id].benchMs) || 0;
+    return Math.max(0, cumulativeBenchMs(id, now) - baseline);
+  }
+
   // Returns {playerId: 'most'|'most2'|'least2'|'least'} across the whole squad
   // (both zones), so it's easy to see who to start next match with. Basis is
   // either the current period only (default) or the full cross-match
@@ -1950,24 +1962,64 @@
     updateSelectionInfo();
   }
 
+  // Which player's markup is currently built into #selectionInfo, so
+  // updateSelectionInfo (called every 250ms from updateTimersOnly - see
+  // the setInterval near init()) only rebuilds the DOM (including the
+  // .si-info-btn) when the selection actually changes, not on every tick.
+  // Rebuilding via innerHTML every 250ms regardless was tearing down and
+  // recreating the "i" button 4x/second, which could delete it out from
+  // under an in-progress tap (touchstart on the old node, then the tick
+  // fires before touchend/click) and made it feel unreliable to hit -
+  // this was the real bug behind that, not just the hit-area size (which
+  // also got bigger, see .si-info-btn::before in style.css).
+  /** @type {string|null} */
+  var selectionInfoRenderedId = null;
+
   function updateSelectionInfo(){
     if (!selected){
       els.selectionInfo.classList.remove('visible');
+      selectionInfoRenderedId = null;
       return;
     }
     var p = playerById(selected.id);
     if (!p){
       els.selectionInfo.classList.remove('visible');
+      selectionInfoRenderedId = null;
       return;
     }
+    if (selected.id !== selectionInfoRenderedId){
+      els.selectionInfo.innerHTML =
+        '<div class="si-name"></div>' +
+        '<button type="button" class="si-info-btn" data-info="playerTime" aria-label="Forklaring">i</button>' +
+        '<div class="si-stats-grid">' +
+          '<span class="si-label">Spillertid:</span>' +
+          '<div class="si-divider"></div>' +
+          '<span>T:</span><span class="si-field-total"></span>' +
+          '<span class="si-sep">·</span>' +
+          '<span>K:</span><span class="si-field-period"></span>' +
+          '<span class="si-label">Innbyttertid:</span>' +
+          '<div class="si-divider"></div>' +
+          '<span>T:</span><span class="si-bench-total"></span>' +
+          '<span class="si-sep">·</span>' +
+          '<span>K:</span><span class="si-bench-period"></span>' +
+        '</div>' +
+        '<div class="si-swap-row">' +
+          '<button type="button" class="si-swap-btn" aria-label="Bytt">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+              '<path d="M8 17V5M8 5L4.7 8.3M8 5L11.3 8.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+              '<path d="M16 7v12M16 19l-3.3-3.3M16 19l3.3-3.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg>' +
+            '<span class="si-swap-label">Bytt</span>' +
+          '</button>' +
+        '</div>';
+      selectionInfoRenderedId = selected.id;
+    }
     var now = Date.now();
-    var fieldMs = cumulativeFieldMs(selected.id, now);
-    var benchMs = cumulativeBenchMs(selected.id, now);
-    els.selectionInfo.innerHTML =
-      '<div class="si-name">' + escapeHtml(p.name) + '</div>' +
-      '<div class="si-stats">Spillertid ' + formatCumulative(fieldMs) +
-        '<span class="si-sep">·</span>Innbyttertid ' + formatCumulative(benchMs) +
-      '</div>';
+    els.selectionInfo.querySelector('.si-name').textContent = p.name;
+    els.selectionInfo.querySelector('.si-field-total').textContent = formatCumulative(cumulativeFieldMs(selected.id, now));
+    els.selectionInfo.querySelector('.si-field-period').textContent = formatCumulative(currentPeriodFieldMs(selected.id, now));
+    els.selectionInfo.querySelector('.si-bench-total').textContent = formatCumulative(cumulativeBenchMs(selected.id, now));
+    els.selectionInfo.querySelector('.si-bench-period').textContent = formatCumulative(currentPeriodBenchMs(selected.id, now));
     els.selectionInfo.classList.add('visible');
   }
 
@@ -4105,6 +4157,31 @@
       });
     });
     els.infoPopupCloseBtn.addEventListener('click', function(){ els.infoPopupModal.classList.remove('open'); });
+    // #selectionInfo's .si-info-btn/.si-swap-btn aren't in the DOM at
+    // page-init time - they're only built the first time updateSelectionInfo()
+    // renders a given selection (see selectionInfoRenderedId there), so they
+    // can't be bound the same way as the static .info-btns above. Delegate
+    // from the container instead, which persists across those rebuilds.
+    els.selectionInfo.addEventListener('click', function(e){
+      var target = /** @type {HTMLElement} */ (e.target);
+      var infoBtn = /** @type {HTMLElement|null} */ (target.closest('.si-info-btn'));
+      if (infoBtn){
+        var info = INFO_TEXTS[infoBtn.dataset.info || ''];
+        if (!info) return;
+        els.infoPopupTitle.textContent = info.title;
+        els.infoPopupText.textContent = info.text;
+        els.infoPopupModal.classList.add('open');
+        return;
+      }
+      var swapBtn = target.closest('.si-swap-btn');
+      if (swapBtn && selected){
+        els.infoPopupTitle.textContent = 'Bytt spiller';
+        els.infoPopupText.textContent = selected.zone === 'bench'
+          ? 'Trykk på en utespiller for å bytte spillerne med hverandre.'
+          : 'Trykk på en innbytter for å bytte spillerne med hverandre.';
+        els.infoPopupModal.classList.add('open');
+      }
+    });
     els.matchClock.addEventListener('click', openDurationPicker);
     bindScoreButton(els.homeScoreBtn,
       function(){ if (!canEdit()) return; openGoalPlayerModal('add'); },
