@@ -54,20 +54,17 @@ respektere om dere fortsetter å bygge videre:
     `.modal-card`, `.suggest-list`, `.history-list`, `.version-history-list`,
     `.goal-player-list`, `.end-match-summary`) - stopper nettleserens *standard*
     panorerings-/zoom-håndtering av touch. Denne står fast.
-  - **Forsøkt, men for nå fjernet igjen (2026-09-20):** en `touchmove`-listener
-    på `document` som selv kalte `preventDefault()` (med mindre trykket startet
-    inni et reelt scrollbart element). Den stoppet iOS sin elastiske
-    "rubber-band"-bounce fullstendig - `touch-action:none` alene lot header
-    midlertidig gli opp under iPhone sin halvtransparente statuslinje-overlay
-    under selve draget (leste som "diffuse ikoner" helt øverst - ikke noe
-    tegnet av oss, det var iOS sin egen live status-bar-dimming som traff
-    header mens den var i bevegelse). André ønsket å prøve uten den først -
-    en kort, elastisk bounce som alltid spretter tilbake til utgangsposisjonen
-    er greit for ham; det som ikke er greit er om siden blir værende forskjøvet.
-    Om `touch-action:none` alene viser seg IKKE å sprette tilbake pålitelig
-    (bekreftet tidligere med skjermbilder av et vedvarende ~20px offset), er
-    denne listeneren (se git-historikk rundt "JS touchmove-sperre mot
-    rubber-band-bounce") den neste tingen å legge til igjen.
+  - En `touchmove`-listener på `document` som selv kaller `preventDefault()`
+    (med mindre trykket startet inni et reelt scrollbart element - `#field`,
+    `#bench`, `.modal-card`, `.suggest-list`, osv., samme liste som over).
+    `touch-action:none` alene lot header midlertidig gli opp under iPhone sin
+    halvtransparente statuslinje-overlay under selve draget (leste som
+    "diffuse ikoner" helt øverst - ikke noe tegnet av oss, det var iOS sin
+    egen live status-bar-dimming som traff header mens den var i bevegelse).
+    **Testet fjernet én gang (2026-09-20)** for å se om `touch-action:none`
+    alene var nok, nå som header har mer klaring - det var det ikke: André
+    fikk fortsatt en vedvarende forskyvning som ikke sprettet tilbake, så
+    denne er lagt tilbake for godt.
   - **Hvorfor ikke `position:fixed` på `#app`/`html`/`body` i stedet** (ville
     løst scroll-problemet mer direkte): `#app`/`#viewport-frame` sin høyde er
     `100dvh`, og på iOS i standalone-PWA-modus har det ved kaldstart forekommet
