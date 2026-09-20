@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.0.1';
+  var APP_VERSION = '2.0.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.0.2', text: 'Stoppet at siden fortsatt kunne "gynge" opp/ned ved dra-forbi-kant (touch-action alene var ikke nok til å hindre iOS sin egen elastiske bounce).' },
     { version: '2.0.1', text: 'Mer klaring mellom header-knappene og iPhone sin statuslinje (var diffuse i toppen). Fikset at valg fra spillernavn-listen fortsatt kunne hoppe til feil navnefelt.' },
     { version: '2.0', text: 'Full gjennomgang av Symbolforklaring og om appen - alle ikoner (mål, "i", Bytt) er nå forklart. Presisert at "Kumulert rangering" kun styrer trekant-symbolene, ikke selve tidsberegningen.' },
     { version: '1.9.13', text: 'Spillerboblen viser nå både total og kamp-tid (T/K), med forklaring via "i". Nytt "Bytt"-symbol viser hvordan man bytter valgt spiller med en annen.' },
@@ -3618,6 +3619,33 @@
     renderAll();
     openSettings(true);
   }
+
+  // Belt-and-suspenders against iOS's rubber-band bounce: touch-action:none
+  // on html/body (see style.css) should already stop the browser's default
+  // touch-driven panning, but WebKit's native elastic overscroll of the
+  // whole page can still slip through it in standalone-PWA/some-iOS-
+  // version combinations - which is what let the header intermittently
+  // slide up under the iPhone status bar's own translucent overlay and
+  // read as diffuse there (see header's padding-top comment in style.css).
+  // This cancels the touch gesture at the JS level too, which WebKit can't
+  // route around the same way - UNLESS the touch started inside something
+  // that's actually meant to scroll (a modal, the suggest-list, the field/
+  // bench once they've got enough players to overflow, etc.), found by
+  // walking up from the touch target for the first scrollable ancestor,
+  // so none of those lose their own scrolling.
+  function isScrollableAncestor(el){
+    while (el && el !== document.body && el !== document.documentElement){
+      var style = getComputedStyle(el);
+      var overflowY = style.overflowY;
+      if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+  document.addEventListener('touchmove', function(e){
+    if (isScrollableAncestor(/** @type {HTMLElement} */ (e.target))) return;
+    e.preventDefault();
+  }, { passive: false });
 
   /* ---------------- Init ---------------- */
 
