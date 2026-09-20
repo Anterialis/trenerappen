@@ -498,6 +498,7 @@
   .icon-btn:active{ background:rgba(255,255,255,.22); }
   .icon-btn:disabled{ opacity:.28; cursor:default; }
   .icon-btn:disabled:active{ background:rgba(255,255,255,.12); }
+  .goal-icon{ width:21px; height:21px; display:block; }
   .icon-btn-badge{
     position:absolute; top:-2px; right:-2px;
     min-width:16px; height:16px; padding:0 3px; border-radius:50%;

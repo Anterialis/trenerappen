@@ -145,7 +145,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '1.9.11';
+  var APP_VERSION = '1.9.12';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -153,6 +153,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '1.9.12', text: 'Nytt målsymbol (fotballmål) i stedet for fotballen. Fikset at spillernavn-listen kunne hoppe over navnefelt ved valg fra forslagslisten.' },
     { version: '1.9.11', text: 'Innlogging til Historikk er nå en egen popup med lås-ikon og begrenset antall forsøk. Ny lås/åpen-badge på Historikk-fliken.' },
     { version: '1.9.10', text: 'Historikk er nå delt i skyen (ikke bare denne enheten) - alle kan lagre en kamp, men kun admin kan logge inn for å se eller slette.' },
     { version: '1.9.9', text: 'Spør nå om lagring til historikk ved Kampslutt/Avslutt/Ny økt, i stedet for en fast innstilling. Kun én "Er du sikker?"-knapp av gangen. Kampslutt/Avslutt omdøpt.' },
@@ -2871,7 +2872,18 @@
       // for a name picked from this list - dispatch it so picking a
       // suggestion behaves exactly like typing the same name would.
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      list.classList.add('hidden');
+      // Hiding the list right here, synchronously, used to cause a stray
+      // focus jump: this list can be tall enough to overlap the next
+      // couple of name rows below it, and preventDefault() on pointerdown
+      // doesn't reliably suppress the trailing click some browsers still
+      // fire after it. That click gets hit-tested against whatever is on
+      // screen *when it fires* - if the list has already collapsed by
+      // then, a row that slid up into this exact spot silently eats the
+      // click and steals focus (which row, and how far away, depended on
+      // how tall the list happened to be). Deferring the hide by a tick
+      // means any such trailing click still lands on the (still visible)
+      // list instead, same as the tap that picked the name.
+      setTimeout(function(){ list.classList.add('hidden'); }, 0);
     });
   }
 
