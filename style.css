@@ -25,11 +25,12 @@
   html,body{
     min-height:100%; margin:0; padding:0;
     overscroll-behavior:none;
+    overflow-x:hidden; /* horizontal scroll has no legitimate use here (unlike the small vertical safety-valve above/below) - html needed this too, not just body, since either can end up the actual horizontally-scrolling element depending on content. */
     background:var(--navy);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
   }
-  body{ -webkit-user-select:none; user-select:none; overflow-x:hidden; }
+  body{ -webkit-user-select:none; user-select:none; }
 
   /* ---------- Layout ---------- */
   /* Normal document flow, sized with min-height - NOT position:fixed+inset:0
@@ -465,14 +466,18 @@
        translucent overlay, reading as "cut off / faded at the top". 20px
        is a safe floor close to that status bar's real height, applied
        only as a minimum - notched devices' real (larger) inset still wins.
-       The +18px buffer past that (bumped up from +10px - even on a real
-       notch/Dynamic Island device, reported env(safe-area-inset-top)
+       The +23px buffer past that (bumped from +10px, then +18px - even on
+       a real notch/Dynamic Island device, reported env(safe-area-inset-top)
        wasn't quite enough clearance and every header button's top edge
        still read as faded/diffuse, same symptom as the no-notch case
        above just on a device the 20px floor doesn't even apply to) pushes
        every header button fully clear of that translucent status-bar
-       overlay instead of just grazing its lower edge. */
-    padding-top:calc(max(env(safe-area-inset-top), 20px) + 18px);
+       overlay instead of just grazing its lower edge. Note this only
+       covers the RESTING position - iOS's rubber-band bounce still slides
+       the header (not position:fixed, see #app above) briefly up under
+       that overlay while actively dragging past the top edge; fixing that
+       needs a touchmove guard, deliberately not added (yet). */
+    padding-top:calc(max(env(safe-area-inset-top), 20px) + 23px);
     background:linear-gradient(180deg, rgba(22,41,74,.82), rgba(15,31,54,.82));
     -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
