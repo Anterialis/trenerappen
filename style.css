@@ -749,14 +749,63 @@
     transition:color .2s ease, border-color .2s ease;
   }
   #matchCountdown.overtime{ color:var(--orange); border-color:rgba(212,144,10,.4); }
+  /* Formation layout (see fieldFormationRows() in app.js): #field is a
+     column of .field-row bands, one per tactical line, DOM-ordered top
+     (closest to the match clock/goal the home team attacks) to bottom
+     (closest to #bench-wrap below) - so the row array app.js builds
+     bottom-to-top (keeper first) gets appended in reverse. */
+  /* padding-top: 98px, not a token-ish 22px - .match-clock-wrap (score
+     buttons + the big digital clock) is absolutely positioned over #field
+     at top:10px and measures ~76px tall on its own, so it occupies
+     #field-wrap's own top ~86px regardless of what #field does. The old
+     free-wrapping layout rarely put a token that close to the top edge
+     (tokens centered as a loose blob via align-content:center), so this
+     never mattered - real bug once the formation layout started pinning
+     the forward row right at #field's own padding-top: its avatar rendered
+     hidden behind the clock. 98px clears that 86px with a little room to
+     spare; applyFieldDensity()'s own row-height budget in app.js uses the
+     same number, so keep them in sync if this ever changes. */
   #field{
     position:relative;
     height:100%;
-    display:flex; flex-wrap:wrap; align-content:center; justify-content:center;
-    align-items:center;
-    gap:24px 18px;
-    padding:22px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+    display:flex; flex-direction:column;
+    padding:98px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
     overflow-y:auto; touch-action:pan-y;
+    gap:6px;
+  }
+  .field-row{
+    display:flex; flex-direction:row; flex-wrap:wrap;
+    align-items:center; justify-content:center;
+    gap:24px 18px;
+    flex:1 1 0; min-height:0;
+  }
+  /* The goalkeeper doesn't get its own evenly-shared line like the other
+     rows (flex:1 above) - it sits at a fixed size closest to the bench,
+     pulled up toward the defense row above it a little instead of a full
+     row gap, so it reads as "just behind the back line" rather than a 4th
+     evenly-spaced row. --field-keeper-nudge is computed in
+     applyFieldDensity() from the actual leftover space in this row's
+     budget (not a flat ratio of avatar size, which once overlapped the row
+     above - see that function's own comment) so it can never overshoot
+     into content the row above still needs. */
+  .field-row-keeper{
+    flex:0 0 auto;
+    margin-top:calc(-1 * var(--field-keeper-nudge, 0px));
+  }
+  /* The row directly above the keeper (always defense) - the keeper's own
+     upward pull above could leave its timer text sitting right on top of
+     the defense row's timer text, worst right under the center defender
+     (the keeper is horizontally centered, so it lines up under whichever
+     defender happens to be in the middle). Moving the keeper down instead
+     isn't safe - #field's bottom padding is tight, and the pitch's own
+     goal-box line (drawn by #pitchLines, not part of this flex layout at
+     all) sits close enough there that a lower keeper risks its white
+     timer text landing right on that white line. Nudging the row ABOVE it
+     up a little instead keeps the keeper exactly where it already was.
+     applyFieldDensity() reserves room for this fixed 6px in its own
+     height budget - keep both in sync if this changes. */
+  .field-row-pre-keeper{
+    margin-bottom:6px;
   }
 
   #bench-wrap{
@@ -973,19 +1022,32 @@
   .badge-goals.top-scorer{ color:#ffd60a; }
   .bench-avatar .badge-goals{ bottom:4px; font-size:10px; }
 
+  /* Used to float centered over the pitch itself (left:50%/top:68%) with
+     pointer-events:none on the card so it never blocked a drag on the
+     token underneath it - except that meant tapping anywhere on the card
+     that WASN'T the "i"/swap button (both individually re-enabled) fell
+     straight through onto whatever field token happened to be directly
+     behind it, which could silently trigger a real position swap with a
+     neighbor instead of doing nothing. Real bug, only found by actually
+     tapping around inside the popup, not by reading the CSS. Docks over
+     the match-clock-wrap/score area at the top of #field-wrap instead -
+     never geometrically over a token no matter the formation, so it can
+     safely be a normal, fully-interactive card (no pointer-events:none)
+     with its own explicit close button, plus the document-level "tap
+     outside to close" listener in app.js. */
   #selectionInfo{
-    position:absolute; left:50%; top:68%; transform:translate(-50%,-50%);
-    background:rgba(15,31,54,.6); color:#fff;
+    position:absolute; left:50%; top:10px; transform:translateX(-50%) translateY(-6px);
+    max-width:calc(100% - 32px);
+    background:rgba(15,31,54,.94); color:#fff;
     -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
-    border:1px solid rgba(255,255,255,.12);
-    padding:9px 30px 9px 18px; border-radius:16px;
+    border:1px solid rgba(255,255,255,.16);
+    padding:9px 62px 9px 16px; border-radius:16px;
     box-shadow:var(--shadow-md);
     text-align:left;
     opacity:0; pointer-events:none;
-    transition:opacity .2s ease;
-    z-index:15;
-    max-width:85%;
+    transition:opacity .2s ease, transform .2s ease;
+    z-index:50;
   }
   #multiSwapWarning{
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
@@ -1002,21 +1064,40 @@
     max-width:78%;
   }
   #multiSwapWarning.visible{ opacity:1; }
-  #selectionInfo.visible{ opacity:1; }
+  #selectionInfo.visible{ opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0); }
+  #selectionInfo .si-name-row{
+    display:flex; align-items:center; gap:7px; min-width:0;
+  }
   #selectionInfo .si-name{
     font-size:13px; font-weight:700;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  /* "i" button, top-right corner - opens infoPopupModal with the T/K
-     explanation (see INFO_TEXTS.playerTime). #selectionInfo itself has
-     pointer-events:none (so the pill never blocks taps to the pitch
-     underneath it) - this re-enables it just for the button. */
+  /* Same short position tag that used to sit on the field token itself
+     (see fieldPositionTagFor()/buildFieldTokenEl() in app.js) - moved in
+     here, to the right of the name, once the popup stopped floating over
+     the pitch. hidden (not just empty) when the selected player has no
+     position (bench selection, or fieldSize < 5 - see fieldHasPositions()). */
+  #selectionInfo .si-pos-tag{
+    flex:0 0 auto;
+    font-size:10.5px; font-weight:800; letter-spacing:.03em; text-transform:uppercase;
+    color:rgba(255,255,255,.75);
+    background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.22);
+    border-radius:999px;
+    padding:2px 8px;
+  }
+  #selectionInfo .si-pos-tag[hidden]{ display:none; }
+  /* "i" button - opens infoPopupModal with the T/K explanation (see
+     INFO_TEXTS.playerTime). Sits left of .si-close-btn (see below), both
+     in the card's top-right corner - the card itself is fully interactive
+     now (no more pointer-events:none, see #selectionInfo's own comment),
+     so these two no longer need their own pointer-events:auto override. */
   #selectionInfo .si-info-btn{
-    position:absolute; top:7px; right:8px;
+    position:absolute; top:7px; right:34px;
     width:16px; height:16px; border:none; background:none; padding:0;
     color:rgba(255,255,255,.55); font-size:10px; font-weight:700; font-style:italic;
     display:flex; align-items:center; justify-content:center; line-height:1;
-    cursor:pointer; pointer-events:auto;
+    cursor:pointer;
   }
   /* Same invisible hit-area widening as .stack-btn-split .info-btn::before -
      the glyph itself stays 16px so it doesn't visually crowd the corner,
@@ -1026,14 +1107,31 @@
     content:''; position:absolute; top:-8px; bottom:-8px; left:-8px; right:-8px;
   }
   #selectionInfo .si-info-btn:active{ transform:scale(.8); }
+  /* Just a red × glyph - closes the popup outright (same as tapping
+     outside it). No circle/background of its own; same invisible hit-area
+     widening trick as .si-info-btn::before keeps it easy to tap without
+     needing a visible shape to carry that larger hitbox. */
+  #selectionInfo .si-close-btn{
+    position:absolute; top:6px; right:6px;
+    width:16px; height:16px; border:none; background:none; padding:0;
+    color:var(--danger); font-size:15px; font-weight:700; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  #selectionInfo .si-close-btn::before{
+    content:''; position:absolute; top:-8px; bottom:-8px; left:-8px; right:-8px;
+  }
+  #selectionInfo .si-close-btn:active{ transform:scale(.8); }
   /* Spillertid/Innbyttertid, each on its own row, with T ("totaltid" -
      cumulativeFieldMs/benchMs) and K ("kamptid" - currentPeriodFieldMs/
      BenchMs, i.e. since the last Kampslutt) as separate grid columns, so
      the two letters always land directly above one another regardless of
      how many digits either time happens to have. */
+  /* Half a line's worth of extra breathing room below the name/position
+     row before the times start. */
   #selectionInfo .si-stats-grid{
-    margin-top:4px; display:grid;
-    grid-template-columns:64px 1px auto auto auto auto auto;
+    margin-top:9px; display:grid;
+    grid-template-columns:64px 1px auto;
     column-gap:6px; row-gap:1px;
     font-size:11px; font-weight:600; color:rgba(255,255,255,.85);
     font-variant-numeric:tabular-nums; white-space:nowrap;
@@ -1042,6 +1140,11 @@
   #selectionInfo .si-stats-grid .si-divider{
     width:1px; align-self:stretch; background:rgba(255,255,255,.18); justify-self:center;
   }
+  /* "T: 0:00 · K: 0:00" as one grid cell (not four separate ones with a
+     column-gap between each) - a real space character between "T:" and
+     the value reads as one gap, a 6px grid gap on top of that read as two
+     different-sized gaps and confused what belonged together. */
+  #selectionInfo .si-stats-grid .si-times{ text-align:left; }
   #selectionInfo .si-stats-grid .si-sep{ margin:0 5px; opacity:.55; }
   /* Reveals that a selected token can be swapped by tapping another one -
      tapping this button itself doesn't swap anything, it just explains the
@@ -1554,6 +1657,18 @@
     padding:10px; font-size:15px; text-align:center; background:#fafbfc;
   }
   .duration-input input:disabled{ background:#eceef0; color:var(--ink-soft); cursor:not-allowed; opacity:.45; }
+  /* All four of these (fieldSizeInput, matchDurationInput, durMin, durSec)
+     are type=number for the numeric keyboard on mobile, but the up/down
+     spinner arrows that comes with that on desktop/some Android browsers
+     were never wanted UI - typing the number directly is the only input
+     method intended here. -moz-appearance:textfield removes Firefox's;
+     the pseudo-elements below remove Chrome/Safari's (Firefox has no such
+     pseudo-elements, so that rule harmlessly matches nothing there). */
+  .duration-input input[type=number]{ -moz-appearance:textfield; }
+  .duration-input input[type=number]::-webkit-outer-spin-button,
+  .duration-input input[type=number]::-webkit-inner-spin-button{
+    -webkit-appearance:none; margin:0;
+  }
   .duration-input span{ font-size:13px; color:var(--ink-soft); }
   .locked-note{ font-size:11px; font-weight:600; color:var(--ink-soft); }
 
@@ -1966,6 +2081,13 @@
      (goalPlayerModal, three modes - see openGoalPlayerModal) - a plain
      minimalist tap-list, one row per player. */
   .goal-player-list{ display:flex; flex-direction:column; gap:6px; margin:14px 0; max-height:52vh; overflow-y:auto; touch-action:pan-y; }
+  /* Separates on-field players (above) from bench/innbyttere (below) in
+     the add/remove goal-scorer picker (see renderGoalPlayerList()) - a
+     soft line rather than a label, since the row order plus this one
+     visual break already reads as "these are the subs" without needing
+     to spell it out. Not shown in "view" (top scorers) mode, which
+     doesn't group by field/bench at all. */
+  .goal-player-divider{ height:1px; background:#e7e9ec; margin:4px 2px; }
   .goal-player-row{
     display:flex; align-items:center; gap:12px; width:100%;
     padding:10px 12px; border:none; border-radius:var(--radius-sm);

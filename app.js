@@ -89,6 +89,7 @@
    * @property {MatchClock} matchClock
    * @property {boolean} wakeLockEnabled
    * @property {number} fieldSize
+   * @property {string[]|null} fieldSlotAssignment - index = formation slot (see fieldSlotList()), value = the onField player id standing there; null when fieldHasPositions() is false (fieldSize < 5, no fixed positions) or not yet reconciled - see syncFieldSlots()
    * @property {boolean} globalRunning
    * @property {number} defaultDurationMs
    * @property {number} matchDurationMs
@@ -223,7 +224,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.8';
+  var APP_VERSION = '2.1.15';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +232,13 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.15', text: 'Mer luft mellom midtforsvareren og keeperen ved 7v7/11v11 osv. - flyttet forsvarsraden opp i stedet for keeperen ned, så den ikke kommer nær målstreken.' },
+    { version: '2.1.14', text: 'Målscorer-listen viser nå utespillerne øverst (sortert etter posisjon ved 6+ på banen, ellers alfabetisk) og innbyttere under en delelinje.' },
+    { version: '2.1.13', text: 'Justert spillerinfo-vinduet: smalere, ryddigere tidsvisning, mer luft under navnet, og et rent rødt lukkesymbol uten sirkel.' },
+    { version: '2.1.12', text: 'Spillerinfo-vinduet dekker nå klokka i stedet for banen, så et trykk der aldri lenger treffer en spiller under det ved et uhell. Rød lukkeknapp, trykk utenfor for å lukke.' },
+    { version: '2.1.11', text: 'Faste posisjoner fra 5v5 og oppover - dra spillere direkte til en posisjon (f.eks. høyre midtbane), eller bytt to på banen direkte. Fjernet pil opp/ned i tallfelt.' },
+    { version: '2.1.10', text: 'Spillerne på banen står nå i ekte formasjon (forsvar/midtbane/angrep, keeper nederst) i stedet for en løs klynge - tilpasset antall på banen.' },
+    { version: '2.1.9', text: 'Fikset at «Ny økt»/«Avslutt og nullstill» beholdt gamle kamptid/byttetid/antall-på-banen-verdier i stedet for de nye fra Innstillinger.' },
     { version: '2.1.8', text: 'Fikset at Mitt lag/Historikk-innloggingsvinduet vises lyst i stedet for mørkt (en CSS-spesifisitetsfeil holdt den tiltenkte mørke bakgrunnen nede).' },
     { version: '2.1.7', text: 'Mer luft under tilbake-knappen i Innstillinger, og litt mer klaring fra toppen for alle knapper/varsler nær statuslinjen.' },
     { version: '2.1.6', text: 'Innloggingsfelt er nå lyse med mørk tekst (iOS lot seg ikke overstyre til mørkt). Innlogging på «Mitt lag» går nå rett videre til Innstillinger.' },
@@ -498,6 +506,7 @@
       matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
       wakeLockEnabled: true,
       fieldSize: coachDefaults.fieldSize,
+      fieldSlotAssignment: null,
       globalRunning: false,
       defaultDurationMs: coachDefaults.defaultDurationMs,
       matchDurationMs: coachDefaults.matchDurationMs,
@@ -540,6 +549,7 @@
     if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
     if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
     if (!raw.fieldSize) raw.fieldSize = 3;
+    if (!Array.isArray(raw.fieldSlotAssignment)) raw.fieldSlotAssignment = null;
     if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 180000;
     if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 1200000;
     if (raw.globalRunning === undefined) raw.globalRunning = false;
@@ -1636,6 +1646,7 @@
       defaultDurationMs: state.defaultDurationMs,
       matchDurationMs: state.matchDurationMs,
       fieldSize: state.fieldSize,
+      fieldSlotAssignment: cloneStateValue(state.fieldSlotAssignment || null),
       wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative,
       reorgUsesLastMatch: !!state.reorgUsesLastMatch,
@@ -1667,6 +1678,7 @@
     state.defaultDurationMs = typeof snap.defaultDurationMs === 'number' ? snap.defaultDurationMs : state.defaultDurationMs;
     state.matchDurationMs = typeof snap.matchDurationMs === 'number' ? snap.matchDurationMs : state.matchDurationMs;
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
+    state.fieldSlotAssignment = Array.isArray(snap.fieldSlotAssignment) ? cloneStateValue(snap.fieldSlotAssignment) : null;
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
     state.reorgUsesLastMatch = snap.reorgUsesLastMatch !== undefined ? !!snap.reorgUsesLastMatch : state.reorgUsesLastMatch;
@@ -1758,13 +1770,120 @@
   // still all fit without crowding. Sets CSS custom properties consumed by
   // .field-token/.avatar/.badge-warning/label/timer - see those rules.
   // Bench tokens are unaffected (fixed size), only the field gets denser.
+  //
+  // Used to be 4 static size tiers keyed only on fieldSize, tuned for the
+  // old free-wrapping layout where any number of tokens could flow across
+  // as many lines as needed with no visual penalty. Once renderField()
+  // started grouping tokens into real formation rows (see
+  // fieldFormationRows()), that stopped being the actual constraint - a
+  // fixed preset that happened to fit a loose wrapped blob of e.g. 7 tokens
+  // does NOT guarantee the widest single ROW in a formation (up to 4
+  // players standing shoulder to shoulder) fits the screen width without
+  // wrapping to a second line, which then silently doubles that row's
+  // height and overflows the pitch vertically too - a real bug this
+  // shipped as, only caught by actually measuring a formation against a
+  // narrow-phone viewport (iPhone SE width), not by eyeballing a wider
+  // simulator. Computed dynamically from the real #field-wrap box instead,
+  // so it's correct for whatever formation/screen combination actually
+  // occurs rather than a guessed preset.
+  // Last avatar px size applyFieldDensity() computed - fieldUsesSingleLetter()
+  // below reads this instead of guessing from fieldSize alone, since the
+  // dynamic sizing means the actual rendered avatar no longer maps 1:1 to
+  // fieldSize (a narrow phone can shrink it earlier, a wide one later).
+  var lastFieldAvatarSize = 68;
   function applyFieldDensity(){
-    var fs = state.fieldSize || 3;
-    var t;
-    if (fs <= 5)      t = { avatar:68, avatarFont:19, token:96, label:15, labelW:96, timer:16, badge:23, badgeFont:14 };
-    else if (fs <= 7) t = { avatar:58, avatarFont:17, token:84, label:13, labelW:84, timer:14, badge:20, badgeFont:13 };
-    else if (fs <= 9) t = { avatar:50, avatarFont:15, token:74, label:12, labelW:74, timer:13, badge:18, badgeFont:12 };
-    else              t = { avatar:44, avatarFont:14, token:66, label:11, labelW:66, timer:12, badge:16, badgeFont:11 };
+    var formation = fieldFormationRows(state.fieldSize);
+    var rowCount = formation.rows.length;
+    var maxRowLen = 1;
+    formation.rows.forEach(function(c){ if (c > maxRowLen) maxRowLen = c; });
+
+    var wrapW = (els.fieldWrap && els.fieldWrap.clientWidth) || 360;
+    var wrapH = (els.fieldWrap && els.fieldWrap.clientHeight) || 420;
+
+    // Width constraint: the widest row's tokens (+ the gaps between them)
+    // side by side, inside #field's own horizontal padding (see
+    // style.css), plus a small safety margin for the safe-area insets
+    // baked into that padding on notched devices.
+    var colGap = 14;
+    var availW = Math.max(140, wrapW - (16 + 16) - 20);
+    var tokenFromWidth = Math.floor((availW - (maxRowLen - 1) * colGap) / maxRowLen);
+
+    // Height constraint: one token's full height (avatar + label + timer)
+    // per row, stacked with the row gap between them. Treats the
+    // goalkeeper row as a full row too even though .field-row-keeper's
+    // negative margin actually lets it overlap into the row above - that
+    // makes this a slight overestimate of the space needed, i.e. errs
+    // toward a smaller/safer size instead of risking overflow. The 98
+    // matches #field's own padding-top in style.css exactly (clearance for
+    // .match-clock-wrap sitting on top of the pitch) - keep both in sync.
+    var rowGap = 6;
+    // The extra 6 (only when there's a keeper row) reserves room for
+    // .field-row-pre-keeper's own fixed margin-bottom - see its comment in
+    // style.css for why that exists instead of just nudging the keeper
+    // further up. Keep both this and that 6px in sync.
+    var availH = Math.max(140, wrapH - (98 + 16) - 12 - rowGap * (rowCount - 1) - (formation.hasKeeper ? 6 : 0));
+    var perRowH = availH / rowCount;
+    // avatar + label (margin-top 8 + ~1.2 line-height) + timer (margin-top
+    // 3 + ~1.2 line-height), with label/timer font sizes both ~0.23x the
+    // avatar (matches the old tiers' own ratios) - solves perRowH for the
+    // avatar size that makes the whole stack fit exactly. (Used to also
+    // budget room for a .field-pos-tag pill above the avatar - that moved
+    // into #selectionInfo's popup instead, see updateSelectionInfo(), so
+    // tokens on the pitch itself are back to just avatar+label+timer.)
+    var avatarFromHeight = (perRowH - 11) / 1.546;
+
+    // Avatar sits inside the token box at roughly 0.70x its width across
+    // every old tier (68/96, 58/84, 50/74, 44/66) - reusing that ratio
+    // keeps the same visual proportions at any computed size.
+    var avatarFromWidth = tokenFromWidth * 0.70;
+
+    var avatar = Math.round(Math.min(avatarFromHeight, avatarFromWidth));
+    // Only capped from above (70px, purely cosmetic - no need for jumbo
+    // icons on a spacious tablet) - NOT forced up from below past whatever
+    // the fit math above actually solved for. A forced-up floor here was a
+    // real bug: on the smallest common phone with a full 4-row formation
+    // (keeper included) plus .field-pos-tag's own height, the math solves
+    // for ~21px, and forcing that up to a nicer-looking 34px silently
+    // overlapped the keeper row into the row above it - only caught by
+    // measuring actual rendered token positions against each other on that
+    // exact viewport, not by testing on a bigger phone where 34px fits
+    // fine. 20px is the true last-resort floor (below that a circle with
+    // one letter in it stops being legible at all) - #field's own
+    // overflow-y:auto remains the final safety net for anything smaller
+    // still, same as it always was.
+    avatar = Math.max(20, Math.min(70, avatar));
+    lastFieldAvatarSize = avatar;
+    var token = Math.round(avatar / 0.70);
+
+    // The keeper row (.field-row-keeper) pulls itself up toward the row
+    // above via a negative margin, so it reads as "just behind the back
+    // line" instead of a full 4th row - but how far it can safely move
+    // depends on how much slack this avatar size actually left inside its
+    // row's own budget (perRowH above). A fixed ratio of avatar size (what
+    // this used to be) doesn't account for that - real bug this shipped
+    // as once, only caught by measuring actual rendered
+    // getBoundingClientRect()s against each other, not by eyeballing one
+    // screenshot. Capped at 12px and 60% of the leftover slack so it can
+    // never eat into space the row above actually needs. Capped at 6 (not
+    // the original 12) now that .field-row-pre-keeper's own fixed margin
+    // also contributes real, guaranteed clearance above the keeper -
+    // between the two, the defense row moves up rather than the keeper
+    // needing to be pulled up as aggressively on its own.
+    var contentH = avatar + 11;
+    var slack = Math.max(0, perRowH - contentH);
+    var keeperNudge = Math.round(Math.min(6, slack * 0.6));
+
+    var t = {
+      avatar: avatar,
+      avatarFont: Math.round(avatar * 0.28),
+      token: token,
+      label: Math.round(avatar * 0.22),
+      labelW: token,
+      timer: Math.round(avatar * 0.235),
+      badge: Math.round(avatar * 0.34),
+      badgeFont: Math.round(avatar * 0.205),
+      keeperNudge: keeperNudge
+    };
     var s = document.documentElement.style;
     s.setProperty('--field-avatar-size', t.avatar + 'px');
     s.setProperty('--field-avatar-font', t.avatarFont + 'px');
@@ -1773,14 +1892,179 @@
     s.setProperty('--field-label-max-w', t.labelW + 'px');
     s.setProperty('--field-timer-font', t.timer + 'px');
     s.setProperty('--field-badge-size', t.badge + 'px');
+    s.setProperty('--field-keeper-nudge', t.keeperNudge + 'px');
     s.setProperty('--field-badge-font', t.badgeFont + 'px');
   }
 
   // Once the field avatar is too small to comfortably show two letters,
-  // fall back to one - same density tiers as applyFieldDensity (the 50px
-  // and 44px avatar sizes).
+  // fall back to one - reads the size applyFieldDensity() actually landed
+  // on (see lastFieldAvatarSize) rather than fieldSize directly, since a
+  // narrow phone can hit that threshold earlier than a wide one would at
+  // the same fieldSize.
   function fieldUsesSingleLetter(){
-    return (state.fieldSize || 3) >= 8;
+    return lastFieldAvatarSize <= 50;
+  }
+
+  // Real-football row shapes per fieldSize (1-11), bottom-to-top (keeper/
+  // back line first, forward line last) - renderField() slices the
+  // time-sorted onField list into these bands instead of just letting them
+  // wrap freely, so e.g. 5v5 reads as a back three + front two rather than
+  // a loose cluster. No dedicated keeper line under 6 (a lone extra token
+  // in a 5-a-side game isn't meaningfully "a goalkeeper" the way it is once
+  // there's a real back line in front of it) - from 6 up, one slot peels
+  // off as keeper and the rest split into defence/midfield/forward using
+  // the same 3/2/1 (7), 3/3/1 (8), 3/3/2 (9), 4/3/2 (10), 4/4/2 (11) shapes
+  // real small-sided/11-a-side football actually uses, not an even split.
+  var FIELD_FORMATIONS = {
+    1: { rows:[1],         roles:['B'],         hasKeeper:false },
+    2: { rows:[1,1],       roles:['B','S'],     hasKeeper:false },
+    3: { rows:[2,1],       roles:['B','S'],     hasKeeper:false },
+    4: { rows:[2,2],       roles:['B','S'],     hasKeeper:false },
+    5: { rows:[3,2],       roles:['B','S'],     hasKeeper:false },
+    6: { rows:[1,2,2,1],   roles:['K','B','M','S'], hasKeeper:true },
+    7: { rows:[1,3,2,1],   roles:['K','B','M','S'], hasKeeper:true },
+    8: { rows:[1,3,3,1],   roles:['K','B','M','S'], hasKeeper:true },
+    9: { rows:[1,3,3,2],   roles:['K','B','M','S'], hasKeeper:true },
+    10:{ rows:[1,4,3,2],   roles:['K','B','M','S'], hasKeeper:true },
+    11:{ rows:[1,4,4,2],   roles:['K','B','M','S'], hasKeeper:true }
+  };
+  /** @returns {{rows:number[], roles:string[], hasKeeper:boolean}} */
+  function fieldFormationRows(fieldSize){
+    var n = Math.max(1, Math.min(11, fieldSize || 3));
+    return FIELD_FORMATIONS[n] || FIELD_FORMATIONS[3];
+  }
+
+  // Positions only mean anything from 5v5 up - at 3v3 (and the in-between
+  // 4v4) the kids are too young for fixed spots and just chase the ball
+  // everywhere, so the field stays the old free-for-all (see renderField()'s
+  // branch on this). From 5v5 up, every field slot has a genuine identity
+  // (see fieldSlotTags below) that a sub inherits when swapped on, and that
+  // two on-field players can trade directly by dragging one onto the other.
+  function fieldHasPositions(){
+    return (state.fieldSize || 3) >= 5;
+  }
+
+  // Left/center/right tag(s) for one row of `count` players at one role
+  // letter (K=keeper, B=back/forsvar, M=midtbane, S=spiss/angrep) - "V"/"H"
+  // prefixes (venstre/høyre) only kick in once there's more than one player
+  // to actually tell apart; a lone keeper or lone forward just gets the
+  // bare letter. Max row length in any formation here is 4 (see
+  // FIELD_FORMATIONS), so 3 and 4-wide rows are the only cases that need a
+  // center/split-center variant.
+  /** @param {number} count @param {string} letter @returns {string[]} */
+  function positionTags(count, letter){
+    if (count <= 1) return [letter];
+    if (count === 2) return ['V'+letter, 'H'+letter];
+    if (count === 3) return ['V'+letter, letter, 'H'+letter];
+    if (count === 4) return ['V'+letter, 'VS'+letter, 'HS'+letter, 'H'+letter];
+    var out = [];
+    for (var i = 0; i < count; i++) out.push(letter + (i+1));
+    return out;
+  }
+
+  // Flat list of {tag, name} for every slot in a fieldSize's formation,
+  // bottom-to-top / left-to-right - same order state.fieldSlotAssignment
+  // uses (see syncFieldSlots()), so index i here always names slot i there.
+  var FIELD_SLOT_NAMES = { K:'Keeper', B:'Forsvar', M:'Midtbane', S:'Angrep' };
+  /** @returns {{tag:string, role:string}[]} */
+  function fieldSlotList(fieldSize){
+    var formation = fieldFormationRows(fieldSize);
+    var out = [];
+    formation.rows.forEach(function(count, i){
+      var role = formation.roles[i];
+      positionTags(count, role).forEach(function(tag){ out.push({ tag: tag, role: role }); });
+    });
+    return out;
+  }
+
+  // Keeps state.fieldSlotAssignment (an array of player ids, index = slot,
+  // same order as fieldSlotList()) in sync with the real membership in
+  // state.onField, without caring HOW onField changed - a normal bench<->
+  // field swap, resetMatch(), joining someone else's shared session, a
+  // roster edit that removed a player, all just fall out of the same
+  // reconciliation. A departing id's slot is freed; any onField id missing
+  // from the array lands in the first free slot - which, for the common
+  // "one player swapped for another" case, is exactly the slot the
+  // departing player just vacated, so a substitute naturally inherits the
+  // position of whoever they replaced (real substitution behavior) without
+  // any drag/tap code needing to know that on purpose. Call before reading
+  // fieldSlotAssignment anywhere it matters (renderField() does, every
+  // render) - idempotent and cheap, so calling it defensively costs nothing.
+  function syncFieldSlots(){
+    if (!fieldHasPositions()){ state.fieldSlotAssignment = null; return; }
+    var totalSlots = fieldSlotList(state.fieldSize).length;
+    var arr = Array.isArray(state.fieldSlotAssignment) ? state.fieldSlotAssignment.slice(0, totalSlots) : [];
+    while (arr.length < totalSlots) arr.push(null);
+    var seen = {};
+    arr = arr.map(function(id){
+      if (!id || state.onField.indexOf(id) === -1) return null;
+      if (seen[id]) return null; // defensive: never let one id occupy two slots
+      seen[id] = true;
+      return id;
+    });
+    state.onField.forEach(function(id){
+      if (arr.indexOf(id) !== -1) return;
+      var emptyIdx = arr.indexOf(null);
+      if (emptyIdx !== -1) arr[emptyIdx] = id; else arr.push(id);
+    });
+    state.fieldSlotAssignment = arr;
+  }
+
+  // Short position tag (e.g. "HB") for a player currently on the field, or
+  // null if positions aren't active for this fieldSize or the id isn't on
+  // the field at all - used by updateSelectionInfo() to show it inside the
+  // spillerinfo popup (see that function's own comment for why it lives
+  // there now instead of on the token itself).
+  /** @param {string} id @returns {string|null} */
+  function fieldPositionTagFor(id){
+    if (!fieldHasPositions()) return null;
+    syncFieldSlots();
+    var arr = state.fieldSlotAssignment;
+    if (!arr) return null;
+    var idx = arr.indexOf(id);
+    if (idx === -1) return null;
+    var slots = fieldSlotList(state.fieldSize);
+    return slots[idx] ? slots[idx].tag : null;
+  }
+
+  // Same lookup as fieldPositionTagFor() but the bare role letter (K/B/M/S)
+  // instead of the full tag (e.g. "VM") - used by renderGoalPlayerList() to
+  // group the goal-scorer picker by line (angrep/midtbane/forsvar) once
+  // there are enough players on the field for that grouping to mean
+  // anything (see GOAL_PICKER_GROUP_BY_ROLE_MIN_FIELD_SIZE below).
+  /** @param {string} id @returns {string|null} */
+  function fieldPositionRoleFor(id){
+    if (!fieldHasPositions()) return null;
+    syncFieldSlots();
+    var arr = state.fieldSlotAssignment;
+    if (!arr) return null;
+    var idx = arr.indexOf(id);
+    if (idx === -1) return null;
+    var slots = fieldSlotList(state.fieldSize);
+    return slots[idx] ? slots[idx].role : null;
+  }
+
+  // Pure position trade - both players stay on the field the whole time
+  // (no field/bench membership change, no timer interruption), so this is
+  // deliberately NOT swapFieldAndBench()/performSwap(), which both commit a
+  // field or bench stint as part of the mutation. pushUndoSnapshot() runs
+  // BEFORE the actual swap (it snapshots current state as the "undo to"
+  // point - performSwap() above is the same order), so undoing this
+  // reliably restores the pre-swap positions rather than being a no-op.
+  /** @param {string} idA @param {string} idB */
+  function performPositionSwap(idA, idB){
+    syncFieldSlots();
+    var arr = state.fieldSlotAssignment;
+    if (!arr) return;
+    var ia = arr.indexOf(idA), ib = arr.indexOf(idB);
+    if (ia === -1 || ib === -1) return;
+    pushUndoSnapshot();
+    arr[ia] = idB;
+    arr[ib] = idA;
+    saveState();
+    renderAll();
+    flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + idA + '"]')));
+    flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + idB + '"]')));
   }
 
   function renderAll(){
@@ -2027,13 +2311,48 @@
   /** @type {'add'|'remove'|'view'} */
   var goalPlayerMode = 'add';
 
+  // Angrep/midtbane/forsvar order for the goal-scorer picker's on-field
+  // group (see renderGoalPlayerList()) - only applied once there are
+  // enough players on the field for lines to mean anything (fieldSize >=
+  // 6, same cutoff fieldHasPositions()/FIELD_FORMATIONS already use for
+  // "real" back/mid/front lines vs. the free-for-all under that). Below
+  // that, and always within one line, alphabetical.
+  var GOAL_PICKER_ROLE_ORDER = { S:0, M:1, B:2, K:3 };
+  /** @param {Player[]} list @param {boolean} groupByRole @returns {Player[]} */
+  function sortGoalPickerGroup(list, groupByRole){
+    return list.slice().sort(function(a, b){
+      if (groupByRole){
+        var ra = GOAL_PICKER_ROLE_ORDER[fieldPositionRoleFor(a.id) || ''];
+        var rb = GOAL_PICKER_ROLE_ORDER[fieldPositionRoleFor(b.id) || ''];
+        if (ra === undefined) ra = 9;
+        if (rb === undefined) rb = 9;
+        if (ra !== rb) return ra - rb;
+      }
+      return a.name.localeCompare(b.name, 'nb');
+    });
+  }
+
   function renderGoalPlayerList(){
     var goalBadges = computeGoalBadges();
     var singleLetter = fieldUsesSingleLetter();
     var rows = state.players.slice();
+    // Where to insert the "these are substitutes" divider, in the
+    // interactive (add/remove) modes only - null means no divider (view
+    // mode's own sort below doesn't group by field/bench at all).
+    var dividerBeforeIndex = null;
     if (goalPlayerMode === 'view'){
       rows = rows.filter(function(p){ return (goalBadges.counts[p.id] || 0) > 0; });
       rows.sort(function(a,b){ return (goalBadges.counts[b.id] || 0) - (goalBadges.counts[a.id] || 0); });
+    } else {
+      var onFieldSet = {};
+      state.onField.forEach(function(id){ onFieldSet[id] = true; });
+      var onFieldPlayers = rows.filter(function(p){ return onFieldSet[p.id]; });
+      var benchPlayers = rows.filter(function(p){ return !onFieldSet[p.id]; });
+      var groupByRole = fieldHasPositions() && (state.fieldSize || 3) >= 6;
+      onFieldPlayers = sortGoalPickerGroup(onFieldPlayers, groupByRole);
+      benchPlayers = sortGoalPickerGroup(benchPlayers, false);
+      rows = onFieldPlayers.concat(benchPlayers);
+      if (onFieldPlayers.length > 0 && benchPlayers.length > 0) dividerBeforeIndex = onFieldPlayers.length;
     }
     if (rows.length === 0){
       els.goalPlayerList.innerHTML = '<p class="goal-player-empty">Ingen mål registrert ennå.</p>';
@@ -2041,12 +2360,13 @@
     }
     var interactive = goalPlayerMode !== 'view';
     var tag = interactive ? 'button' : 'div';
-    els.goalPlayerList.innerHTML = rows.map(function(p){
+    els.goalPlayerList.innerHTML = rows.map(function(p, i){
       var n = goalBadges.counts[p.id] || 0;
       var disabled = goalPlayerMode === 'remove' && n === 0;
       var openTag = '<' + tag + ' class="goal-player-row"' +
         (interactive ? ' type="button" data-id="' + p.id + '"' + (disabled ? ' disabled' : '') : '') + '>';
-      return openTag +
+      return (i === dividerBeforeIndex ? '<div class="goal-player-divider"></div>' : '') +
+        openTag +
         '<span class="goal-player-row-avatar">' + initials(p.name, singleLetter) + '</span>' +
         '<span class="goal-player-row-name">' + escapeHtml(p.name) + '</span>' +
         (n > 0 ? '<span class="goal-player-row-count">' + n + '</span>' : '') +
@@ -2221,41 +2541,100 @@
     return '<div class="badge-goals' + (top ? ' top-scorer' : '') + '">' + n + '</div>';
   }
 
+  // Builds one .field-token element - shared by both renderField() branches
+  // below (fixed positions vs. the old free time-sorted grouping) so the
+  // actual token markup (avatar/badges/label/timer) only lives in one place.
+  // The position tag (e.g. "HB") used to render as a pill above the avatar
+  // here, but that's what caused the "tap a player, the popup opens, tap
+  // near it, the tap falls through onto a token underneath" bug - moved
+  // into #selectionInfo's own popup instead (see updateSelectionInfo() and
+  // fieldPositionTagFor()), which no longer sits over the pitch at all.
+  /** @param {string} id @param {number} now @param {Object} rankBadges @param {Object} goalBadges @param {boolean} singleLetter */
+  function buildFieldTokenEl(id, now, rankBadges, goalBadges, singleLetter){
+    var p = playerById(id);
+    if (!p) return null;
+    var elapsed = fieldElapsed(id, now);
+    var timeUp = elapsed >= state.defaultDurationMs;
+    var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
+    var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
+    var el = document.createElement('div');
+    el.className = 'token field-token token-enter' + (isChecked ? ' multi-checked' : '');
+    el.dataset.id = id;
+    el.innerHTML =
+      '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
+        rankBadgeHtml(rankBadges[id]) +
+        goalBadgeHtml(id, goalBadges) +
+        (farOver ? '<div class="badge-warning overtime">⇅</div>' : timeUp ? '<div class="badge-warning due">⇅</div>' : '') +
+        (isChecked ? '<div class="badge-check">✓</div>' : '') +
+      '</div>' +
+      '<div class="label">' + escapeHtml(p.name) + '</div>' +
+      '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>';
+    attachTokenEvents(el, id, 'field');
+    return el;
+  }
+
   function renderField(){
-    Array.prototype.forEach.call(els.field.querySelectorAll('.token'), function(n){ n.remove(); });
+    els.field.innerHTML = '';
     var now = Date.now();
     var rankBadges = computeRankBadges(now);
     var goalBadges = computeGoalBadges();
     var singleLetter = fieldUsesSingleLetter();
-    var sorted = state.onField.filter(function(id, i){ return state.onField.indexOf(id) === i; }).sort(function(a,b){
-      var diff = fieldElapsed(a, now) - fieldElapsed(b, now);
-      if (diff !== 0) return diff;
-      var pa = playerById(a), pb = playerById(b);
-      if (!pa || !pb) return 0;
-      return pa.name.localeCompare(pb.name, 'nb');
-    });
-    sorted.forEach(function(id){
-      var p = playerById(id);
-      if (!p) return;
-      var elapsed = fieldElapsed(id, now);
-      var timeUp = elapsed >= state.defaultDurationMs;
-      var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
-      var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
-      var el = document.createElement('div');
-      el.className = 'token field-token token-enter' + (isChecked ? ' multi-checked' : '');
-      el.dataset.id = id;
-      el.innerHTML =
-        '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
-          rankBadgeHtml(rankBadges[id]) +
-          goalBadgeHtml(id, goalBadges) +
-          (farOver ? '<div class="badge-warning overtime">⇅</div>' : timeUp ? '<div class="badge-warning due">⇅</div>' : '') +
-          (isChecked ? '<div class="badge-check">✓</div>' : '') +
-        '</div>' +
-        '<div class="label">' + escapeHtml(p.name) + '</div>' +
-        '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>';
-      attachTokenEvents(el, id, 'field');
-      els.field.appendChild(el);
-    });
+    var formation = fieldFormationRows(state.fieldSize);
+    var rowEls = [];
+
+    if (fieldHasPositions()){
+      // Fixed positions (5v5 and up, see fieldHasPositions()): each slot
+      // keeps its own identity across swaps (see syncFieldSlots()/
+      // performPositionSwap()) instead of being re-sorted by time on field
+      // every render - a sub inherits the exact slot of whoever they
+      // replaced, and dragging one on-field player onto another trades
+      // their two positions directly without touching anyone else.
+      syncFieldSlots();
+      var slotIdx = 0;
+      formation.rows.forEach(function(count, rowIndex){
+        var rowEl = document.createElement('div');
+        rowEl.className = 'field-row' +
+          (formation.hasKeeper && rowIndex === 0 ? ' field-row-keeper' : '') +
+          // The row directly above the keeper (always defense - rows[1]
+          // whenever hasKeeper) - see .field-row-pre-keeper in style.css
+          // for why this needs its own small nudge separate from the
+          // keeper's own negative margin.
+          (formation.hasKeeper && rowIndex === 1 ? ' field-row-pre-keeper' : '');
+        for (var k = 0; k < count; k++, slotIdx++){
+          var id = state.fieldSlotAssignment[slotIdx];
+          if (!id) continue;
+          var el = buildFieldTokenEl(id, now, rankBadges, goalBadges, singleLetter);
+          if (el) rowEl.appendChild(el);
+        }
+        rowEls.push(rowEl);
+      });
+    } else {
+      // No fixed positions (3v3/4v4 - too young for a back line to mean
+      // anything, see fieldHasPositions()) - same free grouping as before:
+      // whoever's been on field longest fills the back row first.
+      var sorted = state.onField.filter(function(id, i){ return state.onField.indexOf(id) === i; }).sort(function(a,b){
+        var diff = fieldElapsed(a, now) - fieldElapsed(b, now);
+        if (diff !== 0) return diff;
+        var pa = playerById(a), pb = playerById(b);
+        if (!pa || !pb) return 0;
+        return pa.name.localeCompare(pb.name, 'nb');
+      });
+      var idx = 0;
+      formation.rows.forEach(function(count){
+        var rowEl = document.createElement('div');
+        rowEl.className = 'field-row';
+        for (var k = 0; k < count && idx < sorted.length; k++, idx++){
+          var el = buildFieldTokenEl(sorted[idx], now, rankBadges, goalBadges, singleLetter);
+          if (el) rowEl.appendChild(el);
+        }
+        rowEls.push(rowEl);
+      });
+    }
+
+    // Row wrapper elements are built bottom-to-top (keeper/back line
+    // first) either way - append to #field top-to-bottom (forward line
+    // first), see the DOM-order comment on #field in style.css.
+    for (var r = rowEls.length - 1; r >= 0; r--) els.field.appendChild(rowEls[r]);
     applySelectionStyles();
   }
 
@@ -2371,19 +2750,16 @@
     }
     if (selected.id !== selectionInfoRenderedId){
       els.selectionInfo.innerHTML =
-        '<div class="si-name"></div>' +
+        '<div class="si-name-row"><span class="si-name"></span><span class="si-pos-tag"></span></div>' +
         '<button type="button" class="si-info-btn" data-info="playerTime" aria-label="Forklaring">i</button>' +
+        '<button type="button" class="si-close-btn" aria-label="Lukk">×</button>' +
         '<div class="si-stats-grid">' +
           '<span class="si-label">Spillertid:</span>' +
           '<div class="si-divider"></div>' +
-          '<span>T:</span><span class="si-field-total"></span>' +
-          '<span class="si-sep">·</span>' +
-          '<span>K:</span><span class="si-field-period"></span>' +
+          '<span class="si-times">T: <span class="si-field-total"></span><span class="si-sep">·</span>K: <span class="si-field-period"></span></span>' +
           '<span class="si-label">Innbyttertid:</span>' +
           '<div class="si-divider"></div>' +
-          '<span>T:</span><span class="si-bench-total"></span>' +
-          '<span class="si-sep">·</span>' +
-          '<span>K:</span><span class="si-bench-period"></span>' +
+          '<span class="si-times">T: <span class="si-bench-total"></span><span class="si-sep">·</span>K: <span class="si-bench-period"></span></span>' +
         '</div>' +
         '<div class="si-swap-row">' +
           '<button type="button" class="si-swap-btn" aria-label="Bytt">' +
@@ -2398,6 +2774,10 @@
     }
     var now = Date.now();
     els.selectionInfo.querySelector('.si-name').textContent = p.name;
+    var posTag = selected.zone === 'field' ? fieldPositionTagFor(selected.id) : null;
+    var posTagEl = els.selectionInfo.querySelector('.si-pos-tag');
+    posTagEl.textContent = posTag || '';
+    posTagEl.hidden = !posTag;
     els.selectionInfo.querySelector('.si-field-total').textContent = formatCumulative(cumulativeFieldMs(selected.id, now));
     els.selectionInfo.querySelector('.si-field-period').textContent = formatCumulative(currentPeriodFieldMs(selected.id, now));
     els.selectionInfo.querySelector('.si-bench-total').textContent = formatCumulative(cumulativeBenchMs(selected.id, now));
@@ -2587,6 +2967,17 @@
       return;
     }
     if (selected.zone === zone){
+      // Two field taps with positions active trade those two players'
+      // positions directly - a genuine mutation, not just a reselect (see
+      // performPositionSwap()). Two bench taps (or two field taps without
+      // positions, e.g. 3v3) still just reselect - bench has no position
+      // concept, and neither does an un-positioned field.
+      if (zone === 'field' && fieldHasPositions()){
+        var prevSelectedId = selected.id;
+        selected = null;
+        performPositionSwap(prevSelectedId, id);
+        return;
+      }
       selected = {id:id, zone:zone};
       applySelectionStyles();
       return;
@@ -2683,7 +3074,11 @@
         if (overToken && overId && overId !== id){
           var overIsField = state.onField.indexOf(overId) !== -1;
           var overIsBench = state.onBench.indexOf(overId) !== -1;
-          isValidTarget = (zone === 'field' && overIsBench) || (zone === 'bench' && overIsField);
+          isValidTarget = (zone === 'field' && overIsBench) || (zone === 'bench' && overIsField) ||
+            // field-onto-field only trades positions when this fieldSize
+            // actually has fixed positions (see fieldHasPositions()) - a
+            // 3v3/4v4 field-on-field drop stays a no-op, same as today.
+            (zone === 'field' && overIsField && fieldHasPositions());
         }
         if (isValidTarget && overToken && overToken !== hoverTargetEl){
           clearHoverTarget();
@@ -2765,11 +3160,12 @@
     suggestedPartnerId = null;
     applySelectionStyles();
 
-    // Dropped directly on top of another player -> swap with them
-    // specifically. field-onto-bench or bench-onto-field pairs swap;
-    // dropping on a token in the SAME zone (bench-on-bench, field-on-field)
-    // is invalid - falls through to the reject path below like any other
-    // no-op drop.
+    // Dropped directly on top of another player -> act on them
+    // specifically. field-onto-bench/bench-onto-field swap membership;
+    // field-onto-field trades the two positions when this fieldSize has
+    // fixed ones (see fieldHasPositions()). Anything else (bench-on-bench,
+    // or field-on-field without positions) is invalid - falls through to
+    // the reject path below like any other no-op drop.
     var targetEl = /** @type {HTMLElement|null} */ (document.elementFromPoint(clientX, clientY));
     var targetTokenEl = targetEl ? targetEl.closest('.token') : null;
     var targetId = targetTokenEl ? /** @type {HTMLElement} */ (targetTokenEl).dataset.id : null;
@@ -2782,6 +3178,10 @@
       }
       if (fromZone === 'bench' && targetIsField){
         animateAndPerformSwap(targetId, id);
+        return;
+      }
+      if (fromZone === 'field' && targetIsField && fieldHasPositions()){
+        performPositionSwap(id, targetId);
         return;
       }
       renderAll();
@@ -4336,23 +4736,24 @@
     timeUpNotified = {};
     multiMode = false;
     multiSelected = [];
-    var keepDuration = state.defaultDurationMs;
-    var keepMatchDuration = state.matchDurationMs;
     var keepWakeLock = state.wakeLockEnabled;
-    var keepFieldSize = state.fieldSize;
-    var keepRankByCumulative = state.rankByCumulative;
     // defaultState() sets these back to null/[] - losing sessionOwnerDeviceId
     // here would silently un-master the very device that's allowed to call
     // this function, locking everyone (including the real owner) out of
     // isMaster()-gated controls for the rest of the shared session.
     var keepOwnerDeviceId = state.sessionOwnerDeviceId;
     var keepParticipants = state.participants;
+    // defaultDurationMs/matchDurationMs/fieldSize/rankByCumulative are
+    // deliberately NOT carried over from the old state here (they used to
+    // be) - defaultState() above already reads them fresh from
+    // loadCoachDefaults(), which is exactly Innstillingers "Standardverdier
+    // for ny kamp" group. Carrying over the pre-reset values instead meant
+    // "Ny økt"/"Avslutt og nullstill" silently ignored any Innstillinger
+    // change made since the session started - e.g. switching to 5er-fotball
+    // in Innstillinger still left the next match at 3 på banen, since this
+    // stale value overwrote the fresh default defaultState() had just set.
     state = defaultState();
-    state.defaultDurationMs = keepDuration;
-    state.matchDurationMs = keepMatchDuration;
     state.wakeLockEnabled = keepWakeLock;
-    state.fieldSize = keepFieldSize;
-    state.rankByCumulative = keepRankByCumulative;
     state.sessionOwnerDeviceId = keepOwnerDeviceId;
     state.participants = keepParticipants;
     saveState();
@@ -5022,7 +5423,26 @@
           ? 'Trykk på en utespiller for å bytte spillerne med hverandre.'
           : 'Trykk på en innbytter for å bytte spillerne med hverandre.';
         els.infoPopupModal.classList.add('open');
+        return;
       }
+      if (target.closest('.si-close-btn')){
+        selected = null;
+        applySelectionStyles();
+      }
+    });
+    // "Trykk utenfor for å lukke" for the spillerinfo-popup - anywhere that
+    // isn't a token (tapping another one already changes/clears the
+    // selection on its own via handleTap) and isn't inside the popup
+    // itself. Now that #selectionInfo docks over the clock/score instead
+    // of floating over the pitch (see its own comment in style.css for
+    // why), it never geometrically overlaps a token, so this is the only
+    // remaining way to dismiss it without picking a new player.
+    document.addEventListener('click', function(e){
+      if (!selected) return;
+      var target = /** @type {HTMLElement} */ (e.target);
+      if (target.closest('.token') || target.closest('#selectionInfo')) return;
+      selected = null;
+      applySelectionStyles();
     });
     els.matchClock.addEventListener('click', openDurationPicker);
     bindScoreButton(els.homeScoreBtn,
