@@ -292,10 +292,10 @@
      notched devices, where env(safe-area-inset-top) alone still wasn't
      quite enough, AND on rectangular-corner ones, where env() reports 0
      despite the OS bar still visually sitting there). Reusing the same
-     already-tuned +23px past the max(env,20) floor instead of re-deriving
+     already-tuned +26px past the max(env,20) floor instead of re-deriving
      a new magic number for yet another top-of-screen control. */
   .account-btn{
-    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 23px); right:16px; z-index:1;
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 26px); right:16px; z-index:1;
     display:flex; flex-direction:column; align-items:center; gap:4px;
     background:none; border:none; cursor:pointer; padding:0;
   }
@@ -361,12 +361,12 @@
        notch, no Dynamic Island) report 0 for every safe-area-inset even in
        standalone PWA mode, despite the OS status bar still visually
        occupying ~20pt up there - env(safe-area-inset-top) alone left this
-       sitting right under it, faded/cut by the status bar overlay. +23px
-       (not the +16px this started at) matches `header`'s own tuned value -
-       even a real notch/Dynamic Island's reported inset wasn't quite
-       enough on its own before that bump, same symptom, see header's
-       comment for the fuller story. */
-    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 23px); left:16px;
+       sitting right under it, faded/cut by the status bar overlay. +26px
+       (not the +16px this started at, then +23px) matches `header`'s own
+       tuned value - even a real notch/Dynamic Island's reported inset
+       wasn't quite enough on its own before that bump, same symptom, see
+       header's comment for the fuller story. */
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 26px); left:16px;
     width:36px; height:36px; border-radius:50%; border:none;
     background:rgba(255,255,255,.10); color:#fff; font-size:20px;
     display:flex; align-items:center; justify-content:center; cursor:pointer;
@@ -437,7 +437,7 @@
     position:absolute; inset:0; z-index:310;
     display:flex; flex-direction:column;
     background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
-    padding:calc(max(env(safe-area-inset-top), 20px) + 64px) 20px calc(env(safe-area-inset-bottom) + 20px);
+    padding:calc(max(env(safe-area-inset-top), 20px) + 67px) 20px calc(env(safe-area-inset-bottom) + 20px);
     opacity:0; pointer-events:none; transform:scale(1.03);
     transition:opacity .3s ease, transform .3s ease;
   }
@@ -447,8 +447,16 @@
      puts its back button inline in the header row instead (no floating
      button to clear), and Register's centered card doesn't sit under one
      either, so both can start much closer to the top. */
-  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 23px); }
-  .history-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 26px); }
+  /* margin-bottom: the back button/title row otherwise sat right on top
+     of whatever comes next (e.g. #settingsStorageNote) - noticeably
+     cramped on the compact-top screens, which have no floating button
+     reserving extra room above the first in-flow content like Historikk's
+     own (non-compact) header effectively gets. Fixed by adding room BELOW
+     the row, not by moving the row itself further up - moving it up is
+     exactly what re-creates the faded/diffuse-near-the-status-bar problem
+     the +26px top offset above exists to avoid. */
+  .history-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
   .history-header-actions{ display:flex; align-items:center; gap:8px; }
   .screen-back-btn{
     width:30px; height:30px; border-radius:50%; flex:0 0 auto;
@@ -562,18 +570,19 @@
        translucent overlay, reading as "cut off / faded at the top". 20px
        is a safe floor close to that status bar's real height, applied
        only as a minimum - notched devices' real (larger) inset still wins.
-       The +23px buffer past that (bumped from +10px, then +18px - even on
-       a real notch/Dynamic Island device, reported env(safe-area-inset-top)
-       wasn't quite enough clearance and every header button's top edge
-       still read as faded/diffuse, same symptom as the no-notch case
-       above just on a device the 20px floor doesn't even apply to) pushes
-       every header button fully clear of that translucent status-bar
-       overlay instead of just grazing its lower edge. Note this only
-       covers the RESTING position - iOS's rubber-band bounce still slides
-       the header (not position:fixed, see #app above) briefly up under
-       that overlay while actively dragging past the top edge; fixing that
-       needs a touchmove guard, deliberately not added (yet). */
-    padding-top:calc(max(env(safe-area-inset-top), 20px) + 23px);
+       The +26px buffer past that (bumped from +10px, then +18px, then
+       +23px - even on a real notch/Dynamic Island device, reported
+       env(safe-area-inset-top) wasn't quite enough clearance and every
+       header button's top edge still read as faded/diffuse, same symptom
+       as the no-notch case above just on a device the 20px floor doesn't
+       even apply to) pushes every header button fully clear of that
+       translucent status-bar overlay instead of just grazing its lower
+       edge. Note this only covers the RESTING position - iOS's
+       rubber-band bounce still slides the header (not position:fixed, see
+       #app above) briefly up under that overlay while actively dragging
+       past the top edge; fixing that needs a touchmove guard, deliberately
+       not added (yet). */
+    padding-top:calc(max(env(safe-area-inset-top), 20px) + 26px);
     background:linear-gradient(180deg, rgba(22,41,74,.82), rgba(15,31,54,.82));
     -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
@@ -1218,6 +1227,16 @@
     transform:scale(.92);
     transition:transform .3s cubic-bezier(.25,.8,.25,1);
   }
+  /* Real bug this shipped as: #historyLoginModal/#accountLoginModal both
+     carry .modal-card-dark specifically to get a dark navy card instead of
+     this rule's light one (see .modal-card-dark's own comment below), but
+     .modal-centered .modal-card above is two classes (specificity 0,2,0) -
+     plain .modal-card-dark (0,1,0) can never outrank that regardless of
+     source order, so every "dark" login card actually rendered with this
+     light background instead. Matching the specificity here (also 0,2,0,
+     and after the rule above so it wins the tie) is what lets the darker
+     background actually win for these two. */
+  .modal-centered .modal-card-dark{ background:rgba(12,26,46,.92); }
   .modal-centered.open .modal-card{ transform:scale(1); }
   @media (prefers-reduced-motion: reduce){
     .modal-centered .modal-card{ transition:none; }
@@ -1236,7 +1255,11 @@
      with the gold/silver padlock artwork, and a login is explicitly a
      "security" moment the rest of the app's white modals don't need to
      signal), now a shared class so #accountLoginModal (Mitt lag) can reuse
-     the same look instead of redefining it. */
+     the same look instead of redefining it. Also reused bare (no
+     .modal-card) on Register's own .account-form-card, and inside
+     #settingsModal (not .modal-centered) alongside plain .modal-card -
+     both of those already get this rule's background fine, so it's left
+     here as the general case. */
   .modal-card-dark{
     background:rgba(12,26,46,.92);
     border:1px solid rgba(255,255,255,.16);
@@ -2156,8 +2179,14 @@
   .sync-dot.offline{ background:var(--orange); }
   .session-code-bar.offline{ color:rgba(255,197,138,.9); }
 
+  /* Was + 10px - the header/account-btn/coin-flip-close/compact-top formula
+     above this got bumped to +26px over several rounds of tuning (see
+     header's own long comment), but this one was never brought along, so
+     it sat closer to the status-bar overlay than every other top-of-screen
+     control and risked the same faded/diffuse look. Matched to the same
+     +26px for consistency. */
   .auto-pause-notice{
-    position:absolute; left:50%; top:calc(max(env(safe-area-inset-top), 20px) + 10px);
+    position:absolute; left:50%; top:calc(max(env(safe-area-inset-top), 20px) + 26px);
     transform:translate(-50%,-140%);
     z-index:400;
     max-width:86%;

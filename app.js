@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.6';
+  var APP_VERSION = '2.1.8';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,8 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.8', text: 'Fikset at Mitt lag/Historikk-innloggingsvinduet vises lyst i stedet for mørkt (en CSS-spesifisitetsfeil holdt den tiltenkte mørke bakgrunnen nede).' },
+    { version: '2.1.7', text: 'Mer luft under tilbake-knappen i Innstillinger, og litt mer klaring fra toppen for alle knapper/varsler nær statuslinjen.' },
     { version: '2.1.6', text: 'Innloggingsfelt er nå lyse med mørk tekst (iOS lot seg ikke overstyre til mørkt). Innlogging på «Mitt lag» går nå rett videre til Innstillinger.' },
     { version: '2.1.5', text: 'Fikset uleselig hvit tekst på hvit bakgrunn i innloggingsfelter når iOS/Safari autofyller e-post eller passord.' },
     { version: '2.1.4', text: 'Fikset at «Mitt lag» viste innlogging selv om du var innlogget, og at «Logg ut»-knappen i Innstillinger ikke oppdaterte seg synlig.' },
