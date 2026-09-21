@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.2';
+  var APP_VERSION = '2.1.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.3', text: 'Fikset at innstillingsvinduet ble klemt sammen og avskåret når tastaturet dukket opp (kolliderte med en eldre viewport-justering).' },
     { version: '2.1.2', text: 'Innstillingsvinduet før kampstart har fått mørkt design (samme stil som Innstillinger-siden). Fikset ødelagt scroll og gjennomsiktig bakgrunn der.' },
     { version: '2.1.1', text: 'Uavgjort får nå eget symbol i Kampresultat. Fikset at spilletid kunne telles dobbelt ved Kampslutt, og to visningsfeil (Mitt lag, vær-symbol).' },
     { version: '2.1', text: 'Nytt Kampresultat-vindu med seier/tap-symboler. «Mitt lag»-innlogging og Innstillinger for lagets standardverdier. Historikk kan nå deles med innloggede brukere.' },
@@ -2175,6 +2176,19 @@
   function applyRealViewportHeight(){
     var isTouchDevice = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
     if (!isTouchDevice) return;
+    // Skipped while a text field has focus - visualViewport shrinking here
+    // almost always means the on-screen keyboard just opened, not a
+    // genuine cold-launch/rotation correction (this function's actual
+    // purpose, see its own comment above). Actively clamping #app to that
+    // shorter height fights iOS's own "scroll the focused input above the
+    // keyboard" behavior instead of cooperating with it - the two together
+    // is what produced the cropped-looking modal (title sliced off at the
+    // very top) reported against a name field in Innstillinger. The app is
+    // deliberately normal document flow, not position:fixed (see #app's
+    // own comment) specifically so it can just scroll instead of us having
+    // to hard-clamp its height for every viewport change.
+    var active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
     var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     if (!h) return;
     els.viewportFrame.style.height = h + 'px';
