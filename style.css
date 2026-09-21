@@ -1650,6 +1650,12 @@
     font-size:12.5px; line-height:1.5; color:rgba(255,255,255,.65);
   }
   .settings-logout-btn{ display:block; width:100%; text-align:center; margin-top:14px; font-size:12.5px; color:rgba(255,255,255,.4); font-weight:600; }
+  /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
+     display:block above has the same specificity as the browser's default
+     [hidden]{display:none} and comes later, so it silently won this fight
+     and kept "Logg ut" visible (and clickable, doing nothing) while signed
+     out - toggled via the `hidden` attribute in updateSettingsStorageNote(). */
+  .settings-logout-btn[hidden]{ display:none; }
   .info-label-row{ display:flex; align-items:center; gap:6px; }
   /* Every #endMatchModal action (Kampslutt/Avslutt og nullstill/Forlat
      kampen/Forlat delt økt) is one .stack-btn-sized pill with its own "i"
