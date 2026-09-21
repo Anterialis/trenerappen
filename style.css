@@ -286,8 +286,16 @@
   .tile-label-scrim p{ margin:0; font-size:11.5px; font-weight:700; color:#fff; text-align:center; }
 
   /* ---------- "Mitt lag" account button ---------- */
+  /* Same status-bar clearance formula as `header` above (see its own long
+     comment for why: a plain 16px/20px sat right under the status bar's
+     translucent overlay, reading as faded/half-invisible - both on
+     notched devices, where env(safe-area-inset-top) alone still wasn't
+     quite enough, AND on rectangular-corner ones, where env() reports 0
+     despite the OS bar still visually sitting there). Reusing the same
+     already-tuned +23px past the max(env,20) floor instead of re-deriving
+     a new magic number for yet another top-of-screen control. */
   .account-btn{
-    position:absolute; top:16px; right:16px; z-index:1;
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 23px); right:16px; z-index:1;
     display:flex; flex-direction:column; align-items:center; gap:4px;
     background:none; border:none; cursor:pointer; padding:0;
   }
@@ -353,8 +361,12 @@
        notch, no Dynamic Island) report 0 for every safe-area-inset even in
        standalone PWA mode, despite the OS status bar still visually
        occupying ~20pt up there - env(safe-area-inset-top) alone left this
-       sitting right under it, faded/cut by the status bar overlay. */
-    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 16px); left:16px;
+       sitting right under it, faded/cut by the status bar overlay. +23px
+       (not the +16px this started at) matches `header`'s own tuned value -
+       even a real notch/Dynamic Island's reported inset wasn't quite
+       enough on its own before that bump, same symptom, see header's
+       comment for the fuller story. */
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 23px); left:16px;
     width:36px; height:36px; border-radius:50%; border:none;
     background:rgba(255,255,255,.10); color:#fff; font-size:20px;
     display:flex; align-items:center; justify-content:center; cursor:pointer;
@@ -435,7 +447,7 @@
      puts its back button inline in the header row instead (no floating
      button to clear), and Register's centered card doesn't sit under one
      either, so both can start much closer to the top. */
-  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 20px); }
+  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 23px); }
   .history-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .history-header-actions{ display:flex; align-items:center; gap:8px; }
   .screen-back-btn{
@@ -1311,9 +1323,17 @@
     position:absolute; top:14px; right:18px;
     display:flex; flex-direction:column; align-items:center; gap:2px;
   }
+  /* Same author-display-beats-[hidden] gotcha as elsewhere in this file -
+     without this, BOTH the sun/S and raincloud/T badges stayed visible at
+     once regardless of showMatchSummaryThen()'s .hidden assignments (most
+     visible on a draw, where JS correctly hides both but neither actually
+     disappeared) - only caught by actually rendering this popup in a
+     browser, not by reading the JS. */
+  .match-summary-weather[hidden]{ display:none; }
   .match-summary-weather-letter{ font-size:15px; font-weight:800; line-height:1; }
   .match-summary-weather-letter-win{ color:#ff8a00; }
   .match-summary-weather-letter-loss{ color:#5b9bd5; }
+  .match-summary-weather-letter-draw{ color:#8b93a1; }
   @keyframes matchSummarySunPulse{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.06); } }
   @keyframes matchSummaryRaindrop{ 0%{ transform:translateY(-2px); opacity:0; } 30%{ opacity:1; } 100%{ transform:translateY(9px); opacity:0; } }
   .match-summary-sun-rays{ transform-origin:center; animation:matchSummarySunPulse 3.2s ease-in-out infinite; }
@@ -2017,6 +2037,12 @@
   /* Same reasoning again - opened directly from historyTile on the
      launcher, before .history-screen (also 310) is ever reached. */
   #historyLoginModal{ z-index:310; }
+  /* Same reasoning again - opened directly from accountBtn on the
+     launcher. Missing this (unlike historyLoginModal above) meant the
+     modal rendered fully "open" but completely invisible and unclickable
+     behind .launcher-screen - only caught by actually running the app in
+     a browser, not by reading the CSS. */
+  #accountLoginModal{ z-index:310; }
   /* Opened from inside .history-screen itself (z-index:310, same as
      .launcher-screen) - same reasoning as the two rules above, one level
      higher again since .history-screen is already at 310. Pre-existing bug

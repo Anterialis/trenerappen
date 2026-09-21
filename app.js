@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1';
+  var APP_VERSION = '2.1.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.1', text: 'Uavgjort får nå eget symbol i Kampresultat. Fikset at spilletid kunne telles dobbelt ved Kampslutt, og to visningsfeil (Mitt lag, vær-symbol).' },
     { version: '2.1', text: 'Nytt Kampresultat-vindu med seier/tap-symboler. «Mitt lag»-innlogging og Innstillinger for lagets standardverdier. Historikk kan nå deles med innloggede brukere.' },
     { version: '2.0.7', text: 'Målene i Historikk viser nå tidspunkt for hver scoring. Ny "Kampen er ferdig"-oppsummering vises rett etter Kampslutt/Avslutt.' },
     { version: '2.0.6', text: 'Sikret delt økt mot at en inaktiv enhet kan overskrive en aktiv kamp med gamle data. Innlogging til Historikk kan nå også skje med brukernavn.' },
@@ -3568,9 +3569,23 @@
       sb.auth.signUp({ email: email, password: password }).then(function(res){
         els.registerSubmitBtn.disabled = false;
         if (res.error){
-          els.registerNote.textContent = res.error.message === 'User already registered'
-            ? 'Det finnes allerede en konto med denne e-posten.'
-            : 'Kunne ikke opprette bruker akkurat nå.';
+          // Supabase's own messages are specific enough to be worth
+          // showing (wrong email format, too-short password, rate limit) -
+          // a single generic fallback for all of them tested badly against
+          // the real API's actual error set (see the conversation this
+          // shipped from: caught by really calling signUp, not by reading
+          // the code). Login's own error stays deliberately generic
+          // ("feil e-post eller passord") for the usual reason - it
+          // shouldn't confirm whether an email exists - but there's no such
+          // concern here.
+          var code = res.error.code;
+          var msg;
+          if (code === 'user_already_exists') msg = 'Det finnes allerede en konto med denne e-posten.';
+          else if (code === 'email_address_invalid') msg = 'Dette ser ikke ut som en gyldig e-postadresse.';
+          else if (code === 'weak_password') msg = 'Passordet er for svakt: ' + (res.error.message || '');
+          else if (code === 'over_email_send_rate_limit') msg = 'For mange forsøk på kort tid. Vent litt og prøv igjen.';
+          else msg = 'Kunne ikke opprette bruker akkurat nå.';
+          els.registerNote.textContent = msg;
           els.registerNote.style.display = '';
           return;
         }
@@ -4089,12 +4104,16 @@
     els.matchSummaryDuration.textContent = formatMs(entry.durationMs || 0) + ' spilt';
     var swapCount = entry.swapCount || 0;
     els.matchSummarySwaps.textContent = swapCount + (swapCount === 1 ? ' bytte' : ' bytter');
-    // No symbol at all for a draw - deliberate for now, nothing's been agreed
-    // on for that case yet, and the plain score line reads fine on its own.
+    // Always exactly one of the three visible - sun/S (win), raincloud/T
+    // (loss), or three calm lines/U (draw, deliberately neutral: same gray
+    // for both icon and letter, never orange or blue, so it can't read as
+    // a muted win or loss).
     var isWin = entry.homeScore > entry.awayScore;
     var isLoss = entry.homeScore < entry.awayScore;
+    var isDraw = !isWin && !isLoss;
     els.matchSummaryWeatherWin.hidden = !isWin;
     els.matchSummaryWeatherLoss.hidden = !isLoss;
+    els.matchSummaryWeatherDraw.hidden = !isDraw;
     var goals = entry.goals || [];
     els.matchSummaryGoalsTitle.hidden = goals.length === 0;
     els.matchSummaryGoals.innerHTML = goals.map(function(g){
@@ -4129,8 +4148,28 @@
   /** @param {boolean} reorganize @param {boolean} saveToHistory */
   function endMatchPeriod(reorganize, saveToHistory){
     var now = Date.now();
-    state.onField.forEach(function(id){ commitFieldStint(id, now); });
-    state.onBench.forEach(function(id){ commitBenchStint(id, now); });
+    // commitFieldStint/commitBenchStint bank the current stint's elapsed
+    // time into state.cumulative, but - unlike every other caller (a swap
+    // removes the player from onField/deletes their timer entirely; a
+    // pause runs the same freeze through freezeTimersAt, which also
+    // advances sinceTs) - this player is still sitting in state.onField
+    // with a stale fieldTimers[id].sinceTs right up until computeMatch-
+    // ScoreAndPlayerMs() runs a few lines down. That call's own
+    // cumulativeFieldMs() re-adds fieldElapsed() for anyone still on the
+    // field, double-counting the exact same stint on top of what was just
+    // committed - real bug, reproduces on every ordinary Kampslutt with
+    // anyone still on the field (i.e. almost always), found by actually
+    // starting a match, waiting a few seconds and ending it, nothing
+    // exotic. Advancing sinceTs here too closes the window: a fieldElapsed
+    // call an instant later correctly reads ~0 additional.
+    state.onField.forEach(function(id){
+      commitFieldStint(id, now);
+      if (state.fieldTimers[id]) state.fieldTimers[id].sinceTs = now;
+    });
+    state.onBench.forEach(function(id){
+      commitBenchStint(id, now);
+      if (state.benchTimers[id]) state.benchTimers[id].sinceTs = now;
+    });
 
     // Archive this match before wiping its scoreboard - "Kampslutt" means
     // exactly that (a cup day is several separate matches back to back, not
@@ -4498,6 +4537,7 @@
     els.matchSummaryModal = qs('matchSummaryModal');
     els.matchSummaryWeatherWin = qs('matchSummaryWeatherWin');
     els.matchSummaryWeatherLoss = qs('matchSummaryWeatherLoss');
+    els.matchSummaryWeatherDraw = qs('matchSummaryWeatherDraw');
     els.matchSummaryHeadline = qs('matchSummaryHeadline');
     els.matchSummaryDuration = qs('matchSummaryDuration');
     els.matchSummarySwaps = qs('matchSummarySwaps');
