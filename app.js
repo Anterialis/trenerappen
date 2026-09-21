@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.4';
+  var APP_VERSION = '2.1.5';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.5', text: 'Fikset uleselig hvit tekst på hvit bakgrunn i innloggingsfelter når iOS/Safari autofyller e-post eller passord.' },
     { version: '2.1.4', text: 'Fikset at «Mitt lag» viste innlogging selv om du var innlogget, og at «Logg ut»-knappen i Innstillinger ikke oppdaterte seg synlig.' },
     { version: '2.1.3', text: 'Fikset at innstillingsvinduet ble klemt sammen og avskåret når tastaturet dukket opp (kolliderte med en eldre viewport-justering).' },
     { version: '2.1.2', text: 'Innstillingsvinduet før kampstart har fått mørkt design (samme stil som Innstillinger-siden). Fikset ødelagt scroll og gjennomsiktig bakgrunn der.' },

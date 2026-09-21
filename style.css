@@ -1418,6 +1418,24 @@
     outline:none; border-color:var(--accent); background:rgba(255,255,255,.13);
     box-shadow:0 0 0 3px rgba(255,138,61,.25);
   }
+  /* iOS/Safari autofill (username/e-post og passord-felt - all six
+     .text-input fields use those autocomplete values) paints its own pale
+     background behind the value but leaves this class's color:#fff alone,
+     so an autofilled value renders white-on-near-white and is unreadable.
+     Forcing a matching dark background via the inset box-shadow trick (the
+     standard fix - background/background-color themselves can't override
+     autofill's own paint) keeps the glass look and keeps the white text
+     legible. The absurd transition delay defeats Chrome/Safari's own
+     autofill-background transition, which would otherwise still flash the
+     pale color for a moment first. */
+  .text-input:-webkit-autofill,
+  .text-input:-webkit-autofill:hover,
+  .text-input:-webkit-autofill:focus{
+    -webkit-text-fill-color:#fff;
+    -webkit-box-shadow:0 0 0 1000px rgba(20,30,46,.92) inset;
+    box-shadow:0 0 0 1000px rgba(20,30,46,.92) inset;
+    transition:background-color 9999s ease-in-out 0s;
+  }
   /* Styled like a little scoreboard code (echoes #matchClock's digital
      look) rather than a plain text field, since that's exactly what it
      becomes on the pitch - see .away-team-label. */
