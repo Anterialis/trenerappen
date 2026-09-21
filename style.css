@@ -1405,35 +1405,39 @@
   /* Same glass recipe as .history-tile-badge/.launcher-tile, not the pale
      #fafbfc opponent-name-input above - used on dark backgrounds (the
      Historikk login popup, the dark .history-screen), not a white card. */
+  /* Was a dark/glass field (white text on translucent white-on-dark) to
+     match the dark card around it - but every field here also carries a
+     real autocomplete="username"/"current-password"/"new-password" (that's
+     the whole point - Safari's own password manager needs it), and real
+     iOS Safari paints its AutoFill highlight as a native, non-CSS-paintable
+     light overlay on top of fields like that (unlike desktop browsers,
+     where the usual inset-box-shadow trick can repaint it), so an
+     autofilled value rendered white-on-white regardless of any autofill
+     CSS override attempted here. .name-row input[type=text] (the player
+     name fields) never had this problem for an unrelated reason - it's
+     autocomplete="off", so iOS never shows its AutoFill layer there at
+     all - not something this field can copy without breaking the actual
+     password-manager integration. Going light instead removes the
+     collision itself: no fight left over what color iOS's overlay paints,
+     since this field already looks that way. */
   .text-input{
-    width:100%; border:1.5px solid rgba(255,255,255,.22); border-radius:12px;
-    padding:14px 15px; font-size:16px; color:#fff;
-    background:rgba(255,255,255,.08);
-    -webkit-backdrop-filter:blur(12px) saturate(160%);
-    backdrop-filter:blur(12px) saturate(160%);
-    transition:border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    width:100%; border:1.5px solid #dde1e6; border-radius:12px;
+    padding:14px 15px; font-size:16px; color:#1a2738;
+    background:#fafbfc;
+    transition:border-color .15s ease, box-shadow .15s ease;
   }
-  .text-input::placeholder{ color:rgba(255,255,255,.45); }
+  .text-input::placeholder{ color:#8a94a3; }
   .text-input:focus{
-    outline:none; border-color:var(--accent); background:rgba(255,255,255,.13);
+    outline:none; border-color:var(--accent);
     box-shadow:0 0 0 3px rgba(255,138,61,.25);
   }
-  /* iOS/Safari autofill (username/e-post og passord-felt - all six
-     .text-input fields use those autocomplete values) paints its own pale
-     background behind the value but leaves this class's color:#fff alone,
-     so an autofilled value renders white-on-near-white and is unreadable.
-     Forcing a matching dark background via the inset box-shadow trick (the
-     standard fix - background/background-color themselves can't override
-     autofill's own paint) keeps the glass look and keeps the white text
-     legible. The absurd transition delay defeats Chrome/Safari's own
-     autofill-background transition, which would otherwise still flash the
-     pale color for a moment first. */
   .text-input:-webkit-autofill,
   .text-input:-webkit-autofill:hover,
   .text-input:-webkit-autofill:focus{
-    -webkit-text-fill-color:#fff;
-    -webkit-box-shadow:0 0 0 1000px rgba(20,30,46,.92) inset;
-    box-shadow:0 0 0 1000px rgba(20,30,46,.92) inset;
+    -webkit-text-fill-color:#1a2738;
+    caret-color:#1a2738;
+    -webkit-box-shadow:0 0 0 1000px #fafbfc inset;
+    box-shadow:0 0 0 1000px #fafbfc inset;
     transition:background-color 9999s ease-in-out 0s;
   }
   /* Styled like a little scoreboard code (echoes #matchClock's digital

@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.5';
+  var APP_VERSION = '2.1.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.6', text: 'Innloggingsfelt er nå lyse med mørk tekst (iOS lot seg ikke overstyre til mørkt). Innlogging på «Mitt lag» går nå rett videre til Innstillinger.' },
     { version: '2.1.5', text: 'Fikset uleselig hvit tekst på hvit bakgrunn i innloggingsfelter når iOS/Safari autofyller e-post eller passord.' },
     { version: '2.1.4', text: 'Fikset at «Mitt lag» viste innlogging selv om du var innlogget, og at «Logg ut»-knappen i Innstillinger ikke oppdaterte seg synlig.' },
     { version: '2.1.3', text: 'Fikset at innstillingsvinduet ble klemt sammen og avskåret når tastaturet dukket opp (kolliderte med en eldre viewport-justering).' },
@@ -3558,7 +3559,13 @@
         }
         // onAuthStateChange (below) sets adminUser and pulls team_settings -
         // just wait for that same event rather than duplicating the fetch.
+        // By the time this .then() runs, onAuthStateChange has already
+        // fired (supabase-js updates its internal session and notifies
+        // listeners before resolving signInWithPassword's own promise), so
+        // isTeamAccountSignedIn() inside openSettingsScreen() already sees
+        // the signed-in state - no race with the note it renders.
         closeAccountLoginModal();
+        openSettingsScreen();
       });
     });
 
