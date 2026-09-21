@@ -223,7 +223,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.1';
+  var APP_VERSION = '2.1.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -231,6 +231,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.2', text: 'Innstillingsvinduet før kampstart har fått mørkt design (samme stil som Innstillinger-siden). Fikset ødelagt scroll og gjennomsiktig bakgrunn der.' },
     { version: '2.1.1', text: 'Uavgjort får nå eget symbol i Kampresultat. Fikset at spilletid kunne telles dobbelt ved Kampslutt, og to visningsfeil (Mitt lag, vær-symbol).' },
     { version: '2.1', text: 'Nytt Kampresultat-vindu med seier/tap-symboler. «Mitt lag»-innlogging og Innstillinger for lagets standardverdier. Historikk kan nå deles med innloggede brukere.' },
     { version: '2.0.7', text: 'Målene i Historikk viser nå tidspunkt for hver scoring. Ny "Kampen er ferdig"-oppsummering vises rett etter Kampslutt/Avslutt.' },

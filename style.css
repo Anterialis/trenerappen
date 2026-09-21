@@ -1521,6 +1521,55 @@
      for non-master users (see openSettings/isMaster in app.js). */
   .settings-row[hidden]{ display:none; }
   .settings-row-label{ font-size:14px; font-weight:600; color:var(--ink); }
+  /* ---------- Pre-match Innstillinger (#settingsModal), dark redesign ----------
+     Deliberate redesign (not the settings-card collision fix above, which
+     only restored the old white look) - matches the dark "Innstillinger"
+     screen's own language, on top of the proven .modal-card-dark card
+     (see index.html: same class the login popup uses, background solid
+     enough at 92% opacity to stay readable, not the near-transparent
+     glass this modal briefly had by accident). Everything below just
+     re-colors this one modal's own form controls for that dark card -
+     none of it touches the light modal-card other screens still use. */
+  #settingsModal .modal-card{ text-align:left; }
+  #settingsModal .joined-empty-note{
+    background:rgba(212,144,10,.16); border-color:rgba(212,144,10,.4); color:#ffcf7a;
+  }
+  #settingsModal .master-only-note{
+    background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.16); color:rgba(255,255,255,.65);
+  }
+  #settingsModal .section-label{ color:rgba(255,255,255,.5); }
+  #settingsModal .locked-note{ color:rgba(255,255,255,.45); }
+  #settingsModal .settings-row-label{ color:#fff; }
+  #settingsModal .info-btn{ color:rgba(255,255,255,.5); }
+  #settingsModal .name-row input[type=text],
+  #settingsModal .duration-input input{
+    background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); color:#fff;
+  }
+  #settingsModal .name-row input[type=text]::placeholder,
+  #settingsModal .duration-input input::placeholder{ color:rgba(255,255,255,.35); }
+  #settingsModal .duration-input input:disabled,
+  #settingsModal .name-row.locked .name-input-wrap input{
+    background:rgba(255,255,255,.04); color:rgba(255,255,255,.3);
+  }
+  #settingsModal .duration-input span{ color:rgba(255,255,255,.55); }
+  #settingsModal .name-row-clear-divider{ background:rgba(255,255,255,.2); }
+  #settingsModal .name-row-clear-btn{ color:rgba(255,255,255,.5); }
+  #settingsModal .add-player-row-btn{ border-color:rgba(255,255,255,.3); color:rgba(255,255,255,.55); }
+  #settingsModal .export-link-btn{ border-color:rgba(255,255,255,.3); color:rgba(255,255,255,.65); }
+  #settingsModal .suggest-list{ background:#1a2a44; border-color:rgba(255,255,255,.18); }
+  #settingsModal .suggest-item{ color:#fff; border-bottom-color:rgba(255,255,255,.08); }
+  #settingsModal .suggest-item:active{ background:rgba(255,255,255,.08); }
+  /* Same glass toggle as the new Innstillinger screen's .toggle.dark - this
+     modal's three toggles (wakeLockToggle, shareSessionToggle,
+     rankByCumulativeToggle) get it by scope instead of an HTML class on
+     each, since there'd be no light-surface use of them left in here to
+     keep separate. */
+  #settingsModal .toggle-slider{
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.22);
+    -webkit-backdrop-filter:blur(10px) saturate(160%); backdrop-filter:blur(10px) saturate(160%);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.25);
+  }
+  #settingsModal .toggle input:checked + .toggle-slider{ background:rgba(50,215,75,.35); border-color:rgba(50,215,75,.55); }
   .settings-row-label-wrap{ display:flex; align-items:center; gap:6px; }
   .share-mode-row{ margin-top:12px; }
   .share-mode-row[hidden]{ display:none; }
@@ -1552,7 +1601,16 @@
     font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
     color:rgba(255,255,255,.45); margin:0 0 8px;
   }
-  .settings-card{
+  /* Named settings-group-card, not settings-card - .settings-card already
+     existed (see far below, on #settingsModal's own card: "position:
+     relative; padding-top:50px", clearance for its × button) for a totally
+     unrelated purpose. Reusing that name here silently merged the two:
+     this rule's background/overflow overrode .modal-card's own white
+     background and working scroll on the OLD pre-match settings modal,
+     since both rules target the same class with equal specificity and
+     this one came later - real bug, only found by actually opening that
+     modal and seeing it half-transparent with scrolling dead. */
+  .settings-group-card{
     background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:16px;
     -webkit-backdrop-filter:blur(14px) saturate(150%); backdrop-filter:blur(14px) saturate(150%);
     overflow:hidden;
