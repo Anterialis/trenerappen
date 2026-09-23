@@ -374,6 +374,26 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <p class="toggle-row-label">Bytteforslag: kumulert spilletid</p>
+              <p class="toggle-row-sub">AV: rangerer på spilletid kun denne kampen. PÅ: rangerer på total spilletid gjennom alle kamper</p>
+            </div>
+            <label class="toggle dark">
+              <input type="checkbox" id="settingsDefaultSwapBasisCumulative">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <p class="toggle-row-label">Bytteforslag: velg innbytter etter lavest spilletid</p>
+              <p class="toggle-row-sub">AV: alltid den som har ventet lengst på benken. PÅ: alltid den med lavest spilletid, selv om det er den som nettopp ble byttet ut</p>
+            </div>
+            <label class="toggle dark">
+              <input type="checkbox" id="settingsDefaultSwapBenchByPlaytime">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -528,6 +548,28 @@
       </span>
       <label class="toggle">
         <input type="checkbox" id="rankByCumulativeToggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row" id="swapSuggestionBasisRow">
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Bytteforslag: kumulert spilletid</span>
+        <button type="button" class="info-btn" data-info="swapSuggestionBasis" aria-label="Om bytteforslagets spilletid-grunnlag">i</button>
+      </span>
+      <label class="toggle">
+        <input type="checkbox" id="swapSuggestionBasisToggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row" id="swapSuggestionBenchModeRow">
+      <span class="settings-row-label-wrap">
+        <span class="settings-row-label">Bytteforslag: innbytter etter lavest spilletid</span>
+        <button type="button" class="info-btn" data-info="swapSuggestionBenchMode" aria-label="Om bytteforslagets innbytter-valg">i</button>
+      </span>
+      <label class="toggle">
+        <input type="checkbox" id="swapSuggestionBenchModeToggle">
         <span class="toggle-slider"></span>
       </label>
     </div>

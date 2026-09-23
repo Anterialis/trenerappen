@@ -95,6 +95,8 @@
    * @property {number} matchDurationMs
    * @property {boolean} rankByCumulative
    * @property {boolean} reorgUsesLastMatch
+   * @property {'match'|'cumulative'} swapSuggestionBasis - which spilletid measure "Forslag" ranks field/bench candidates by: 'match' (this match/period only) or 'cumulative' (lifetime, across matches) - see computeSwapSuggestion()
+   * @property {'waited'|'cumulative'} swapSuggestionBenchMode - which bench player "Forslag" picks: 'waited' (longest current bench stint, ties random) or 'cumulative' (least spilletid by swapSuggestionBasis, ties random) - see computeSwapSuggestion()
    * @property {boolean} shareEditable
    * @property {string|null} sessionOwnerDeviceId
    * @property {Participant[]} participants
@@ -158,6 +160,8 @@
    * @property {number} fieldSize
    * @property {boolean} rankByCumulative
    * @property {boolean} reorgUsesLastMatch
+   * @property {'match'|'cumulative'} swapSuggestionBasis
+   * @property {'waited'|'cumulative'} swapSuggestionBenchMode
    */
   /** @returns {CoachDefaults} */
   function loadCoachDefaults(){
@@ -167,7 +171,8 @@
     var fallback = {
       homeTeamName: 'Nøtterøy', homeTeamAbbr: 'NØT',
       matchDurationMs: 900000, defaultDurationMs: 180000, fieldSize: 3,
-      rankByCumulative: false, reorgUsesLastMatch: false
+      rankByCumulative: false, reorgUsesLastMatch: false,
+      swapSuggestionBasis: 'match', swapSuggestionBenchMode: 'waited'
     };
     try {
       var raw = localStorage.getItem(COACH_DEFAULTS_KEY);
@@ -180,7 +185,9 @@
         defaultDurationMs: typeof parsed.defaultDurationMs === 'number' && parsed.defaultDurationMs > 0 ? parsed.defaultDurationMs : fallback.defaultDurationMs,
         fieldSize: typeof parsed.fieldSize === 'number' && parsed.fieldSize > 0 ? parsed.fieldSize : fallback.fieldSize,
         rankByCumulative: !!parsed.rankByCumulative,
-        reorgUsesLastMatch: !!parsed.reorgUsesLastMatch
+        reorgUsesLastMatch: !!parsed.reorgUsesLastMatch,
+        swapSuggestionBasis: parsed.swapSuggestionBasis === 'cumulative' ? 'cumulative' : 'match',
+        swapSuggestionBenchMode: parsed.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : 'waited'
       };
     } catch(e){ return fallback; }
   }
@@ -224,7 +231,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.17';
+  var APP_VERSION = '2.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -232,6 +239,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2', text: 'To nye valg for Bytteforslag: rangér etter kamp- eller total spilletid, og velg innbytter etter ventetid eller lavest spilletid. Ekte tilfeldig valg ved uavgjort.' },
     { version: '2.1.17', text: 'Fikset at Forslag-knappen mistet markeringen med en gang - andre trykk (bekreft bytte) gjorde ingenting.' },
     { version: '2.1.16', text: '"Forslag"-knappen bekrefter nå bytte med et andre trykk, akkurat som multiBytte - grønn med avbryt-kryss.' },
     { version: '2.1.15', text: 'Mer luft mellom midtforsvareren og keeperen ved 7v7/11v11 osv. - flyttet forsvarsraden opp i stedet for keeperen ned, så den ikke kommer nær målstreken.' },
@@ -363,6 +371,14 @@
     rankCumulative: {
       title: 'Kumulert rangering (trekanter)',
       text: 'Gjelder kun trekant-symbolene som viser mest/minst spilletid - selve tidene kumuleres alltid uansett, se «i» i spillerboblen. AV: trekantene ser kun på inneværende kamp. PÅ: trekantene ser på kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
+    },
+    swapSuggestionBasis: {
+      title: 'Bytteforslag: kumulert spilletid',
+      text: 'Styrer hvilken utespiller "Forslag" foreslår byttet ut, blant de som har passert byttetiden sin. AV: den med mest spilletid kun i denne kampen. PÅ: den med mest spilletid totalt, på tvers av alle kamper siden siste nullstilling.'
+    },
+    swapSuggestionBenchMode: {
+      title: 'Bytteforslag: innbytter etter lavest spilletid',
+      text: 'Styrer hvilken innbytter "Forslag" foreslår byttet inn. AV (standard): alltid den som har ventet lengst sammenhengende på benken akkurat nå. PÅ: alltid den med lavest spilletid (samme grunnlag som bryteren over) - selv om det betyr at spilleren som nettopp ble byttet ut kommer inn igjen før andre som har ventet lenger denne kampen.'
     },
     endPeriod: {
       title: 'Kampslutt, ny kamp',
@@ -515,6 +531,8 @@
       matchDurationMs: coachDefaults.matchDurationMs,
       rankByCumulative: coachDefaults.rankByCumulative,
       reorgUsesLastMatch: coachDefaults.reorgUsesLastMatch,
+      swapSuggestionBasis: coachDefaults.swapSuggestionBasis,
+      swapSuggestionBenchMode: coachDefaults.swapSuggestionBenchMode,
       shareEditable: true,
       sessionOwnerDeviceId: null,
       participants: [],
@@ -558,6 +576,8 @@
     if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     if (raw.reorgUsesLastMatch === undefined) raw.reorgUsesLastMatch = false;
+    if (raw.swapSuggestionBasis !== 'cumulative') raw.swapSuggestionBasis = 'match';
+    if (raw.swapSuggestionBenchMode !== 'cumulative') raw.swapSuggestionBenchMode = 'waited';
     if (raw.shareEditable === undefined) raw.shareEditable = true;
     if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
     if (!Array.isArray(raw.participants)) raw.participants = [];
@@ -942,7 +962,9 @@
       default_duration_ms: d.defaultDurationMs,
       field_size: d.fieldSize,
       rank_by_cumulative: d.rankByCumulative,
-      reorg_uses_last_match: d.reorgUsesLastMatch
+      reorg_uses_last_match: d.reorgUsesLastMatch,
+      swap_suggestion_basis: d.swapSuggestionBasis,
+      swap_suggestion_bench_mode: d.swapSuggestionBenchMode
     };
   }
   /** @param {any} row @returns {CoachDefaults} */
@@ -954,7 +976,9 @@
       defaultDurationMs: row.default_duration_ms,
       fieldSize: row.field_size,
       rankByCumulative: !!row.rank_by_cumulative,
-      reorgUsesLastMatch: !!row.reorg_uses_last_match
+      reorgUsesLastMatch: !!row.reorg_uses_last_match,
+      swapSuggestionBasis: row.swap_suggestion_basis === 'cumulative' ? 'cumulative' : 'match',
+      swapSuggestionBenchMode: row.swap_suggestion_bench_mode === 'cumulative' ? 'cumulative' : 'waited'
     };
   }
   /** @param {string} userId @returns {Promise<CoachDefaults|null>} */
@@ -1610,22 +1634,60 @@
     return badges;
   }
 
-  // Picks the swap the "Forslag" button recommends: whoever on the field
-  // has the most playtime (same metric/toggle as computeRankBadges above)
-  // AMONG those who have actually exceeded the defined swap time (byttetid)
-  // in their current stint - not just whoever has the most playtime
-  // overall, since that player might have only just come on - paired with
-  // whoever has waited longest on the bench. Returns null when nobody on
-  // the field is actually due yet, or the bench is empty.
+  // Picks whichever id in `ids` has the highest metricFor() value (lowest,
+  // if `lowest` is true) - an exact tie (common here: a batch swap/reorg
+  // gives several players the same sinceTs, so their elapsed times stay
+  // identical until something changes one of them) is broken by a genuine
+  // random pick among the tied ids, rather than always favoring whichever
+  // one happened to sort first.
+  /** @param {string[]} ids @param {function(string):number} metricFor @param {boolean} [lowest] @returns {string|null} */
+  function pickByMetric(ids, metricFor, lowest){
+    var best = null, bestVal = null, tied = [];
+    ids.forEach(function(id){
+      var val = metricFor(id);
+      if (best === null || (lowest ? val < bestVal : val > bestVal)){
+        best = id; bestVal = val; tied = [id];
+      } else if (val === bestVal){
+        tied.push(id);
+      }
+    });
+    if (tied.length <= 1) return best;
+    return tied[Math.floor(Math.random() * tied.length)];
+  }
+
+  // Picks the swap the "Forslag" button recommends.
+  //
+  // Field player (who to sub OUT): among those who have actually exceeded
+  // the defined swap time (byttetid) in their current stint - not just
+  // whoever has the most playtime overall, since that player might have
+  // only just come on - whoever has the most spilletid, per
+  // state.swapSuggestionBasis ('match': this match/period only, same as
+  // the K figure in the spillerboble; 'cumulative': lifetime across
+  // matches, same as the T figure).
+  //
+  // Bench player (who to sub IN): per state.swapSuggestionBenchMode -
+  // 'waited' (default) always picks whoever's current bench stint has run
+  // longest, regardless of their own playtime. 'cumulative' instead picks
+  // whoever has the LEAST spilletid (same swapSuggestionBasis measure as
+  // the field pick) - a fairness-by-total-minutes strategy the coach opts
+  // into knowingly, since it can mean the player just subbed off gets put
+  // straight back on ahead of someone who's waited longer on the bench,
+  // if that someone already has more minutes this match/lifetime.
+  //
+  // Returns null when nobody on the field is actually due yet, or the
+  // bench is empty.
   /** @param {number} now @returns {{fieldId:string, benchId:string}|null} */
   function computeSwapSuggestion(now){
     if (state.onBench.length === 0) return null;
-    var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
+    var msFor = state.swapSuggestionBasis === 'cumulative' ? cumulativeFieldMs : currentPeriodFieldMs;
     var due = state.onField.filter(function(id){ return fieldElapsed(id, now) >= state.defaultDurationMs; });
     if (due.length === 0) return null;
-    due.sort(function(a,b){ return msFor(b, now) - msFor(a, now); });
-    var benchSorted = state.onBench.slice().sort(function(a,b){ return benchElapsed(b, now) - benchElapsed(a, now); });
-    return { fieldId: due[0], benchId: benchSorted[0] };
+    var fieldId = pickByMetric(due, function(id){ return msFor(id, now); });
+    var benchId = state.swapSuggestionBenchMode === 'cumulative'
+      ? pickByMetric(state.onBench, function(id){ return msFor(id, now); }, true)
+      : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); });
+    if (!fieldId || !benchId) return null;
+    return { fieldId: fieldId, benchId: benchId };
   }
 
   /** @template T @param {T} value @returns {T} */
@@ -1653,6 +1715,8 @@
       wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative,
       reorgUsesLastMatch: !!state.reorgUsesLastMatch,
+      swapSuggestionBasis: state.swapSuggestionBasis === 'cumulative' ? 'cumulative' : 'match',
+      swapSuggestionBenchMode: state.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : 'waited',
       shareEditable: !!state.shareEditable,
       sessionOwnerDeviceId: state.sessionOwnerDeviceId,
       participants: cloneStateValue(state.participants || []),
@@ -1685,6 +1749,8 @@
     state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
     state.reorgUsesLastMatch = snap.reorgUsesLastMatch !== undefined ? !!snap.reorgUsesLastMatch : state.reorgUsesLastMatch;
+    state.swapSuggestionBasis = snap.swapSuggestionBasis === 'cumulative' ? 'cumulative' : (snap.swapSuggestionBasis === 'match' ? 'match' : state.swapSuggestionBasis);
+    state.swapSuggestionBenchMode = snap.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : (snap.swapSuggestionBenchMode === 'waited' ? 'waited' : state.swapSuggestionBenchMode);
     state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
     state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
     state.participants = cloneStateValue(snap.participants || state.participants || []);
@@ -3628,8 +3694,12 @@
     els.shareSessionToggle.checked = !!sessionCode;
     els.shareSessionRow.hidden = !master;
     els.rankCumulativeRow.hidden = !master;
+    els.swapSuggestionBasisRow.hidden = !master;
+    els.swapSuggestionBenchModeRow.hidden = !master;
     updateShareModeUI();
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
+    els.swapSuggestionBasisToggle.checked = state.swapSuggestionBasis === 'cumulative';
+    els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative';
     els.fieldSizeInput.disabled = !isFirstRun || !master;
     els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
     // "Bli med i delt økt" only makes sense when this device isn't already
@@ -3931,6 +4001,8 @@
     updateSettingsStepperUI();
     els.settingsDefaultRankCumulative.checked = d.rankByCumulative;
     els.settingsDefaultReorgLastMatch.checked = d.reorgUsesLastMatch;
+    els.settingsDefaultSwapBasisCumulative.checked = d.swapSuggestionBasis === 'cumulative';
+    els.settingsDefaultSwapBenchByPlaytime.checked = d.swapSuggestionBenchMode === 'cumulative';
     els.settingsSavedNote.hidden = true;
     updateSettingsStorageNote();
     els.settingsScreen.classList.add('open');
@@ -3949,7 +4021,9 @@
       defaultDurationMs: settingsDraftSwapDurationMin * 60000,
       fieldSize: settingsDraftFieldSize,
       rankByCumulative: els.settingsDefaultRankCumulative.checked,
-      reorgUsesLastMatch: els.settingsDefaultReorgLastMatch.checked
+      reorgUsesLastMatch: els.settingsDefaultReorgLastMatch.checked,
+      swapSuggestionBasis: els.settingsDefaultSwapBasisCumulative.checked ? 'cumulative' : 'match',
+      swapSuggestionBenchMode: els.settingsDefaultSwapBenchByPlaytime.checked ? 'cumulative' : 'waited'
     };
     // Local cache always gets written, signed in or not - see this
     // function's own doc comment above initAccountAndSettings.
@@ -4911,6 +4985,8 @@
     els.settingsFieldFormat = qs('settingsFieldFormat');
     els.settingsDefaultRankCumulative = qs('settingsDefaultRankCumulative');
     els.settingsDefaultReorgLastMatch = qs('settingsDefaultReorgLastMatch');
+    els.settingsDefaultSwapBasisCumulative = qs('settingsDefaultSwapBasisCumulative');
+    els.settingsDefaultSwapBenchByPlaytime = qs('settingsDefaultSwapBenchByPlaytime');
     els.settingsSaveBtn = qs('settingsSaveBtn');
     els.settingsSavedNote = qs('settingsSavedNote');
     els.settingsStorageNote = qs('settingsStorageNote');
@@ -4965,6 +5041,8 @@
     els.masterOnlyNote = qs('masterOnlyNote');
     els.shareSessionRow = qs('shareSessionRow');
     els.rankCumulativeRow = qs('rankCumulativeRow');
+    els.swapSuggestionBasisRow = qs('swapSuggestionBasisRow');
+    els.swapSuggestionBenchModeRow = qs('swapSuggestionBenchModeRow');
     els.transferOwnerRow = qs('transferOwnerRow');
     els.transferOwnerWrap = qs('transferOwnerWrap');
     els.transferOwnerBtn = qs('transferOwnerBtn');
@@ -5083,6 +5161,8 @@
     els.shareModeRow = qs('shareModeRow');
     els.shareModeSegmented = qs('shareModeSegmented');
     els.rankByCumulativeToggle = qs('rankByCumulativeToggle');
+    els.swapSuggestionBasisToggle = qs('swapSuggestionBasisToggle');
+    els.swapSuggestionBenchModeToggle = qs('swapSuggestionBenchModeToggle');
     els.joinExistingBtn = qs('joinExistingBtn');
     els.joinCodeModal = qs('joinCodeModal');
     els.joinCodeInput = qs('joinCodeInput');
@@ -5566,6 +5646,16 @@
       state.rankByCumulative = els.rankByCumulativeToggle.checked;
       saveState();
       renderAll();
+    });
+    els.swapSuggestionBasisToggle.addEventListener('change', function(){
+      if (!isMaster()){ els.swapSuggestionBasisToggle.checked = state.swapSuggestionBasis === 'cumulative'; return; }
+      state.swapSuggestionBasis = els.swapSuggestionBasisToggle.checked ? 'cumulative' : 'match';
+      saveState();
+    });
+    els.swapSuggestionBenchModeToggle.addEventListener('change', function(){
+      if (!isMaster()){ els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative'; return; }
+      state.swapSuggestionBenchMode = els.swapSuggestionBenchModeToggle.checked ? 'cumulative' : 'waited';
+      saveState();
     });
     els.transferOwnerBtn.addEventListener('click', function(){
       if (!isMaster()) return;
