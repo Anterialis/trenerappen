@@ -232,6 +232,8 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.1.17', text: 'Fikset at Forslag-knappen mistet markeringen med en gang - andre trykk (bekreft bytte) gjorde ingenting.' },
+    { version: '2.1.16', text: '"Forslag"-knappen bekrefter nå bytte med et andre trykk, akkurat som multiBytte - grønn med avbryt-kryss.' },
     { version: '2.1.15', text: 'Mer luft mellom midtforsvareren og keeperen ved 7v7/11v11 osv. - flyttet forsvarsraden opp i stedet for keeperen ned, så den ikke kommer nær målstreken.' },
     { version: '2.1.14', text: 'Målscorer-listen viser nå utespillerne øverst (sortert etter posisjon ved 6+ på banen, ellers alfabetisk) og innbyttere under en delelinje.' },
     { version: '2.1.13', text: 'Justert spillerinfo-vinduet: smalere, ryddigere tidsvisning, mer luft under navnet, og et rent rødt lukkesymbol uten sirkel.' },
