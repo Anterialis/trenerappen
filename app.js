@@ -231,7 +231,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2';
+  var APP_VERSION = '2.2.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -239,6 +239,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.1', text: 'Fikset skjev "telefon i nettleser"-ramme på desktop (viste kort og bred i stedet for høyreist). Innstillinger-vinduet før kamp henter nå alltid siste lagrede standardverdier. Redesignet scrollbar til å matche appen, og fjernet duplikat-tittel i endringsloggen.' },
     { version: '2.2', text: 'To nye valg for Bytteforslag: rangér etter kamp- eller total spilletid, og velg innbytter etter ventetid eller lavest spilletid. Ekte tilfeldig valg ved uavgjort.' },
     { version: '2.1.17', text: 'Fikset at Forslag-knappen mistet markeringen med en gang - andre trykk (bekreft bytte) gjorde ingenting.' },
     { version: '2.1.16', text: '"Forslag"-knappen bekrefter nå bytte med et andre trykk, akkurat som multiBytte - grønn med avbryt-kryss.' },
@@ -3664,6 +3665,23 @@
   /** @param {boolean} [isFirstRun] @param {boolean} [joinedEmpty] */
   function openSettings(isFirstRun, joinedEmpty){
     var master = isMaster();
+    // A blank, not-yet-configured match (no players registered yet) has
+    // nothing of its own to lose - re-pull the "Standardverdier for ny
+    // kamp" fields from Innstillinger/coachDefaults every time this screen
+    // opens, so a change made there shows up immediately instead of only
+    // on the NEXT genuinely fresh session (see resetMatch(), the only
+    // other place state gets these from coachDefaults). Once players exist,
+    // this state is "real" and is left alone - only resetMatch() replaces it.
+    if (isFirstRun && master && state.players.length === 0){
+      var coachDefaults = loadCoachDefaults();
+      state.matchDurationMs = coachDefaults.matchDurationMs;
+      state.defaultDurationMs = coachDefaults.defaultDurationMs;
+      state.fieldSize = coachDefaults.fieldSize;
+      state.rankByCumulative = coachDefaults.rankByCumulative;
+      state.reorgUsesLastMatch = coachDefaults.reorgUsesLastMatch;
+      state.swapSuggestionBasis = coachDefaults.swapSuggestionBasis;
+      state.swapSuggestionBenchMode = coachDefaults.swapSuggestionBenchMode;
+    }
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
     els.settingsCloseBtn.style.display = isFirstRun ? 'none' : '';
@@ -5173,11 +5191,9 @@
     els.launcherVersionBtn = qs('launcherVersionBtn');
     els.launcherVersionBtn.textContent = 'v' + APP_VERSION.split('.').slice(0, 2).join('.');
     els.versionHistoryModal = qs('versionHistoryModal');
-    els.versionHistoryTitle = qs('versionHistoryTitle');
     els.versionHistoryList = qs('versionHistoryList');
     els.versionHistoryCloseBtn = qs('versionHistoryCloseBtn');
     els.launcherVersionBtn.addEventListener('click', function(){
-      els.versionHistoryTitle.textContent = 'v' + APP_VERSION;
       els.versionHistoryList.innerHTML = VERSION_HISTORY.map(function(entry){
         return '<div class="version-history-entry">' +
           '<p class="version-history-entry-version">v' + escapeHtml(entry.version) + '</p>' +

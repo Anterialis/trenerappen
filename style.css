@@ -19,7 +19,58 @@
     --shadow-sm:0 2px 6px rgba(15,31,54,.16);
     --shadow-md:0 8px 22px rgba(15,31,54,.22);
     --glass-blur:24px;
+    --scrollbar-thumb: rgba(15,31,54,.25);
+    --scrollbar-thumb-hover: rgba(15,31,54,.4);
   }
+  /* Dark screens/cards swap to a light-on-dark thumb instead of the
+     default dark-on-light one - covers every dark surface that scrolls
+     (Historikk/Innstillinger/Register share .history-screen; the dark
+     modal cards - login, "Mitt lag", #settingsModal's own pre-match card -
+     share .modal-card-dark), so any scrollable content nested inside
+     picks up the right contrast automatically via inheritance, without
+     listing each inner list/textarea individually. */
+  .history-screen, .modal-card-dark, html, body{
+    --scrollbar-thumb: rgba(255,255,255,.28);
+    --scrollbar-thumb-hover: rgba(255,255,255,.45);
+  }
+  /* Global scrollbar restyle - thin, rounded, matches the app's own
+     palette instead of the browser's stock scrollbar (only visible on
+     desktop browsers; touch/iOS scrollbars are the system's own floating
+     overlay style regardless and ignore this). Firefox via scrollbar-*,
+     Chrome/Safari/Edge via the ::-webkit- pseudo-elements. */
+  *{
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  *::-webkit-scrollbar{ width:8px; height:8px; }
+  /* Chrome/Edge draw classic up/down (and left/right) arrow buttons at
+     each end of the track by default - straight-edged rectangles that
+     poke out past any rounded corner on the scrolling container (e.g.
+     Innstillinger's card), since the browser draws them flush with the
+     box's raw edge with no awareness of its border-radius. Hiding them
+     removes the only part of the scrollbar that actually overflowed the
+     curve - the thin track/thumb itself sitting a few px further in
+     already clears it. */
+  *::-webkit-scrollbar-button{ display:none; width:0; height:0; }
+  *::-webkit-scrollbar-track{ background:transparent; margin:4px 0; }
+  *::-webkit-scrollbar-thumb{
+    background:var(--scrollbar-thumb); border-radius:999px;
+  }
+  *::-webkit-scrollbar-thumb:hover{ background:var(--scrollbar-thumb-hover); }
+  *::-webkit-scrollbar-corner{ background:transparent; }
+  /* Chrome doesn't reliably apply ::-webkit-scrollbar rules matched only
+     via the universal selector to the ROOT/viewport scrollbar itself
+     (as opposed to an inner scrolling div) - html/body are what actually
+     scroll here on tall content (see the "Normal document flow" comment
+     below on #viewport-frame), so restate the same rules explicitly
+     targeting them to make sure that one definitely picks it up too. */
+  html::-webkit-scrollbar, body::-webkit-scrollbar{ width:8px; height:8px; }
+  html::-webkit-scrollbar-button, body::-webkit-scrollbar-button{ display:none; width:0; height:0; }
+  html::-webkit-scrollbar-track, body::-webkit-scrollbar-track{ background:transparent; margin:4px 0; }
+  html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb{
+    background:var(--scrollbar-thumb); border-radius:999px;
+  }
+  html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover{ background:var(--scrollbar-thumb-hover); }
 
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body{
@@ -103,17 +154,18 @@
     border:1px solid rgba(255,255,255,.14);
     box-shadow:0 0 60px rgba(0,0,0,.5);
   }
-  /* Rotated preview window: target the landscape version of the same
-     aspect ratio instead of staying portrait-shaped and letterboxing
-     the rotation away. */
-  @media (orientation: landscape){
-    #viewport-frame.desktop-preview #app{
-      width:min(100vw, calc((100vh) * 956 / 440));
-      width:min(100vw, calc((100dvh) * 956 / 440));
-      height:min(100vh, calc(100vw * 440 / 956));
-      height:min(100dvh, calc(100vw * 440 / 956));
-    }
-  }
+  /* No landscape override here (removed - see git history for the old
+     "rotated preview window" rule): `orientation: landscape` reflects the
+     BROWSER WINDOW's raw aspect ratio, which is true for virtually every
+     normal desktop window (wider than tall), not just an intentionally
+     rotated phone preview. That made the desktop-preview frame collapse
+     to a short, full-width strip in any ordinary browser window instead
+     of showing the normal upright phone mockup - real device rotation
+     testing goes through devtools' touch-emulated device toolbar instead,
+     which makes updateFrameFit() detect it as a touch device and drop
+     .desktop-preview entirely, using the real full-bleed CSS (which DOES
+     correctly respond to actual orientation) - so this rule's intended
+     case never actually reached it, only the broken one did. */
 
   /* ---------- Launcher (the very first screen) ---------- */
   .launcher-screen{
