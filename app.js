@@ -224,7 +224,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.16';
+  var APP_VERSION = '2.1.17';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -5483,7 +5483,12 @@
     document.addEventListener('click', function(e){
       if (!selected) return;
       var target = /** @type {HTMLElement} */ (e.target);
-      if (target.closest('.token') || target.closest('#selectionInfo')) return;
+      // .bench-actions (Forslag/multiBytte + their cancel ×) is excluded too -
+      // without this, arming a "Forslag" suggestion set `selected` and then
+      // this same click's bubble phase immediately treated the Forslag
+      // button itself as an "outside" tap and cleared it right back out,
+      // so the very next confirm tap found nothing left to swap.
+      if (target.closest('.token') || target.closest('#selectionInfo') || target.closest('.bench-actions')) return;
       selected = null;
       applySelectionStyles();
     });
