@@ -224,7 +224,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.1.15';
+  var APP_VERSION = '2.1.16';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -318,6 +318,7 @@
   var selected = null; // {id, zone} of the currently tap-selected token, if any
   /** @type {string|null} */
   var suggestedPartnerId = null; // bench player id a "Forslag" tap recommends completing the swap with - see computeSwapSuggestion()
+  var swapSuggestionArmed = false; // true once a suggestion is marked (selected+suggestedPartnerId set) and awaiting a 2nd "Forslag" tap to confirm - same 2-tap pattern as multiBytte, see onSwapSuggestionBtnClick()
   /** @type {string[]} */
   var roster = []; // remembered player names, alphabetical
   /** @type {AppState[]} */
@@ -1725,6 +1726,7 @@
     restoreState(snap);
     selected = null;
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
     saveState();
     updateUndoUI();
     renderAll();
@@ -1739,6 +1741,7 @@
     restoreState(snap);
     selected = null;
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
     saveState();
     updateUndoUI();
     renderAll();
@@ -2076,6 +2079,7 @@
     updateTimersOnly();
     updateUndoUI();
     updateMultiSelectUI();
+    updateSwapSuggestionUI();
     renderScore();
   }
 
@@ -2879,17 +2883,47 @@
     renderAll();
   }
 
-  // "Forslag" - marks (doesn't auto-perform) the swap computeSwapSuggestion()
-  // recommends, by driving the exact same selected+tap-to-confirm mechanism
-  // as a manual tap - see handleTap(). Shakes when multi-select mode is on
-  // (the two flows don't mix) or no suggestion is currently available.
+  // Same 2-tap pattern as multiBytte (see updateMultiSelectUI): 1st "Forslag"
+  // tap marks the pair (button turns green, cancel × appears beside it,
+  // both tokens highlight via selected/suggestedPartnerId), 2nd tap on the
+  // same button performs the swap immediately - no need to also tap the
+  // highlighted bench player, though doing so (or tapping any other token)
+  // still works via the normal handleTap() flow and disarms this.
+  function updateSwapSuggestionUI(){
+    els.swapSuggestionCancelBtn.classList.toggle('visible', swapSuggestionArmed);
+    els.swapSuggestionBtn.classList.toggle('ready', swapSuggestionArmed);
+    els.swapSuggestionBtnLabel.textContent = swapSuggestionArmed ? 'Bytt →' : 'Forslag';
+  }
+
+  function cancelSwapSuggestion(){
+    if (!swapSuggestionArmed) return;
+    selected = null;
+    suggestedPartnerId = null;
+    swapSuggestionArmed = false;
+    applySelectionStyles();
+    updateSwapSuggestionUI();
+  }
+
   function onSwapSuggestionBtnClick(){
     if (!canEdit() || multiMode){ shakeElement(els.swapSuggestionBtn); return; }
+    if (swapSuggestionArmed){
+      var fieldId = selected && selected.id;
+      var benchId = suggestedPartnerId;
+      selected = null;
+      suggestedPartnerId = null;
+      swapSuggestionArmed = false;
+      updateSwapSuggestionUI();
+      if (fieldId && benchId) animateAndPerformSwap(fieldId, benchId);
+      else applySelectionStyles();
+      return;
+    }
     var suggestion = computeSwapSuggestion(Date.now());
     if (!suggestion){ shakeElement(els.swapSuggestionBtn); return; }
     selected = { id: suggestion.fieldId, zone: 'field' };
     suggestedPartnerId = suggestion.benchId;
+    swapSuggestionArmed = true;
     applySelectionStyles();
+    updateSwapSuggestionUI();
   }
 
   function onMultiSelectBtnClick(){
@@ -2899,6 +2933,7 @@
       multiSelected = [];
       selected = null;
       suggestedPartnerId = null;
+      swapSuggestionArmed = false;
       updateMultiSelectUI();
       renderAll();
       return;
@@ -2956,6 +2991,8 @@
     // Any real tap - whether it confirms a "Forslag" suggestion or not -
     // drops that highlight before its own logic runs below.
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
+    updateSwapSuggestionUI();
     if (!selected){
       selected = {id:id, zone:zone};
       applySelectionStyles();
@@ -3158,6 +3195,7 @@
   function handleDrop(id, fromZone, clientX, clientY){
     selected = null;
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
     applySelectionStyles();
 
     // Dropped directly on top of another player -> act on them
@@ -4695,6 +4733,7 @@
     state.periodStartCumulative = cloneStateValue(state.cumulative);
     selected = null;
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
     undoStack = [];
     redoStack = [];
     multiMode = false;
@@ -4731,6 +4770,7 @@
     if (!isMaster()) return;
     selected = null;
     suggestedPartnerId = null;
+    swapSuggestionArmed = false;
     undoStack = [];
     redoStack = [];
     timeUpNotified = {};
@@ -4981,6 +5021,8 @@
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
     els.multiSelectCancelBtn = qs('multiSelectCancelBtn');
     els.swapSuggestionBtn = qs('swapSuggestionBtn');
+    els.swapSuggestionBtnLabel = qs('swapSuggestionBtnLabel');
+    els.swapSuggestionCancelBtn = qs('swapSuggestionCancelBtn');
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
     els.homeScoreBtn = qs('homeScoreBtn');
@@ -5362,6 +5404,7 @@
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
     els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
+    els.swapSuggestionCancelBtn.addEventListener('click', cancelSwapSuggestion);
     els.wakeLockToggle.addEventListener('change', function(){
       if (!canEdit()){ els.wakeLockToggle.checked = !!state.wakeLockEnabled; return; }
       state.wakeLockEnabled = els.wakeLockToggle.checked;

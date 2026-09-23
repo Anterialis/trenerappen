@@ -438,9 +438,12 @@
       <div class="bench-label-row">
         <div class="bench-label">Innbytterbenken</div>
         <div class="bench-actions">
-          <button type="button" id="swapSuggestionBtn" class="bench-action-btn" aria-label="Bytteforslag">
-            <span class="btn-icon" aria-hidden="true">⇄<span class="btn-badge">?</span></span><span class="btn-label">Forslag</span>
-          </button>
+          <div class="multi-select-group">
+            <button type="button" id="swapSuggestionBtn" class="bench-action-btn multi-select-btn" aria-label="Bytteforslag">
+              <span class="btn-icon" aria-hidden="true">⇄<span class="btn-badge">?</span></span><span class="btn-label" id="swapSuggestionBtnLabel">Forslag</span>
+            </button>
+            <button type="button" id="swapSuggestionCancelBtn" class="multi-cancel-btn" aria-label="Avbryt bytteforslag">×</button>
+          </div>
           <div class="multi-select-group">
             <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="multiBytte">
               <span class="btn-icon" aria-hidden="true">⇅<span class="btn-badge">×2</span></span><span class="btn-label" id="multiSelectBtnLabel">multiBytte</span>
