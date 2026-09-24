@@ -231,7 +231,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.1';
+  var APP_VERSION = '2.2.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -239,6 +239,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.2', text: '"Bytt" omdøpt til "Bytte?" i spillerinfo-boblen. Fikset at kamper "lagret" til delt Historikk siden v2.0.7 aldri faktisk ble lagret (manglende databasekolonne) - viser nå en synlig feilmelding hvis lagring skulle mislykkes igjen.' },
     { version: '2.2.1', text: 'Fikset skjev "telefon i nettleser"-ramme på desktop (viste kort og bred i stedet for høyreist). Innstillinger-vinduet før kamp henter nå alltid siste lagrede standardverdier. Redesignet scrollbar til å matche appen, og fjernet duplikat-tittel i endringsloggen.' },
     { version: '2.2', text: 'To nye valg for Bytteforslag: rangér etter kamp- eller total spilletid, og velg innbytter etter ventetid eller lavest spilletid. Ekte tilfeldig valg ved uavgjort.' },
     { version: '2.1.17', text: 'Fikset at Forslag-knappen mistet markeringen med en gang - andre trykk (bekreft bytte) gjorde ingenting.' },
@@ -934,10 +935,10 @@
   // enforced by Postgres row-level security, not just this client-side
   // check) can SELECT/UPDATE/DELETE. Parents/other coaches can never read
   // it without an admin's login - see PROSJEKT-OPPSUMMERING.md.
-  /** @param {HistoryMatchEntry} entry */
+  /** @param {HistoryMatchEntry} entry @returns {Promise<boolean>} */
   function saveMatchToHistory(entry){
-    if (!sb) return;
-    sb.from('match_history').insert({
+    if (!sb) return Promise.resolve(false);
+    return sb.from('match_history').insert({
       ended_at: new Date(entry.endedAt).toISOString(),
       opponent_name: entry.opponentName || '',
       opponent_abbr: entry.opponentAbbr || '',
@@ -947,7 +948,8 @@
       goals: entry.goals || [],
       origin: deviceOrigin
     }).then(function(res){
-      if (res.error) console.warn('Kunne ikke lagre kamp til historikk', res.error);
+      if (res.error){ console.warn('Kunne ikke lagre kamp til historikk', res.error); return false; }
+      return true;
     });
   }
 
@@ -2840,7 +2842,7 @@
               '<path d="M8 17V5M8 5L4.7 8.3M8 5L11.3 8.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
               '<path d="M16 7v12M16 19l-3.3-3.3M16 19l3.3-3.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
             '</svg>' +
-            '<span class="si-swap-label">Bytt</span>' +
+            '<span class="si-swap-label">Bytte?</span>' +
           '</button>' +
         '</div>';
       selectionInfoRenderedId = selected.id;
@@ -4643,7 +4645,20 @@
     var entry = buildHistoryArchiveEntry(now, calc);
     entry.durationMs = matchClockElapsed(now);
     lastMatchSummary = entry;
-    if (saveToHistory) saveMatchToHistory(entry);
+    // The insert resolves after showMatchSummaryThen() has already opened
+    // the popup below - a failure (e.g. a schema mismatch on match_history,
+    // network hiccup) used to only ever reach console.warn, so a coach who
+    // explicitly asked to save a match had no way of knowing it silently
+    // never made it to the shared Historikk. Surfaced here instead, in the
+    // same popup that's already on screen when the answer comes back.
+    if (saveToHistory){
+      if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
+      saveMatchToHistory(entry).then(function(ok){
+        if (ok || !els.matchSummaryHistoryNote) return;
+        els.matchSummaryHistoryNote.textContent = 'Kunne ikke lagre kampen til delt Historikk - sjekk nettforbindelsen, eller be admin sjekke databasen.';
+        els.matchSummaryHistoryNote.hidden = false;
+      });
+    }
   }
 
   /** @type {(() => void)|null} */
@@ -4661,6 +4676,10 @@
     var entry = lastMatchSummary;
     if (!entry){ if (next) next(); return; }
     matchSummaryNextFn = next || null;
+    // Cleared here (not just at the two saveMatchToHistory() call sites)
+    // so a stale failure note from a PREVIOUS match this popup showed never
+    // lingers onto a new one that didn't even ask to be saved this time.
+    if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
     var opponent = entry.opponentName || (entry.opponentAbbr ? entry.opponentAbbr : 'Ukjent motstander');
     els.matchSummaryHeadline.textContent =
       HOME_TEAM_NAME + ' vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore;
@@ -4779,7 +4798,12 @@
     // prompt shown right before this runs (see saveHistoryModal), not a
     // standing setting - a coach who always says no just doesn't add a row.
     if (saveToHistory){
-      saveMatchToHistory(summaryEntry);
+      if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
+      saveMatchToHistory(summaryEntry).then(function(ok){
+        if (ok || !els.matchSummaryHistoryNote) return;
+        els.matchSummaryHistoryNote.textContent = 'Kunne ikke lagre kampen til delt Historikk - sjekk nettforbindelsen, eller be admin sjekke databasen.';
+        els.matchSummaryHistoryNote.hidden = false;
+      });
     }
     state.goalLog = [];
     state.swapCount = 0;
@@ -5114,6 +5138,7 @@
     els.matchSummaryGoalsTitle = qs('matchSummaryGoalsTitle');
     els.matchSummaryGoals = qs('matchSummaryGoals');
     els.matchSummaryPlayers = qs('matchSummaryPlayers');
+    els.matchSummaryHistoryNote = qs('matchSummaryHistoryNote');
     els.matchSummaryCloseBtn = qs('matchSummaryCloseBtn');
     els.multiSelectBtn = qs('multiSelectBtn');
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');

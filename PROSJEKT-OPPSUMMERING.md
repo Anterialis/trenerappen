@@ -250,11 +250,25 @@ create table if not exists public.match_history (
   home_score integer not null default 0,
   away_score integer not null default 0,
   players jsonb not null default '[]'::jsonb,
+  goals jsonb not null default '[]'::jsonb,
+  visible_until timestamptz,
   origin text,
   created_at timestamptz not null default now()
 );
 alter table public.match_history enable row level security;
 
+-- `goals` (v2.0.7) og `visible_until` (v2.1) ble lagt til denne tabellen
+-- senere enn det opprinnelige oppsettet over, via `alter table ... add
+-- column if not exists ...` kjørt manuelt i Supabase - de har alltid stått
+-- her i selve create-table-blokken for at dette dokumentet skal vise
+-- gjeldende skjema, ikke den historiske rekkefølgen. VIKTIG: `goals` sto i
+-- praksis IKKE i databasen fra v2.0.7 til v2.2.2 (bare i denne kodekommentaren
+-- sin intensjon) - en insert med en ukjent kolonne feiler for HELE raden i
+-- Postgres/PostgREST, så ingen kamp lot seg lagre til delt Historikk i hele
+-- den perioden, uten noen synlig feilmelding (kun console.warn). Lærdom:
+-- når en ny kolonne tas i bruk i app.js, oppdater denne SQL-blokken OG kjør
+-- alter table-setningen i Supabase i samme slengen - ikke bare den ene.
+--
 -- Ingen policyer i det hele tatt her - default-deny, kun service_role
 -- (aldri klientkoden) kan lese/skrive. auth.uid() alene er IKKE nok til å
 -- regnes som admin - måtte også stått i denne tabellen - så et vanlig

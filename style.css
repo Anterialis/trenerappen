@@ -1565,6 +1565,16 @@
   .match-summary-player .match-summary-player-k,
   .match-summary-player .match-summary-player-t{ text-align:right; padding-right:2px; color:var(--ink-soft); }
 
+  /* Only shown when the coach said "lagre" but the shared-Historikk insert
+     actually failed (see archiveInProgressMatch/endMatchPeriod) - without
+     this, that failure only ever reached console.warn, so a match believed
+     saved could silently never make it to the database. */
+  .match-summary-history-note{
+    margin:10px 0 0; padding:9px 11px; border-radius:10px;
+    background:rgba(230,57,70,.09); border:1px solid rgba(230,57,70,.3);
+    color:#b53341; font-size:12.5px; line-height:1.4;
+  }
+
   /* #opponentModal's two fields - bigger and more considered than a bare
      .name-row input (that class needed its .name-row parent for styling,
      which these never had - the plain, unstyled browser input that left
