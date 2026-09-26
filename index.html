@@ -583,6 +583,18 @@
       <p id="transferOwnerNote" class="locked-note"></p>
     </div>
 
+    <!-- Glemt å avslutte kampen i tide, eller latt klokka gå for lenge? Begge
+         knappene trekker fra tid fra kampklokka og fra spillerne som er
+         aktive akkurat nå (fieldTimers/benchTimers) - se subtractDeadTime()
+         i app.js. Master-only, samme risikonivå som kampvarighet/byttetid
+         over. -->
+    <div id="correctTimeRow" hidden>
+      <label class="section-label">Korriger tid</label>
+      <p class="toggle-row-sub" style="margin:-4px 0 8px;">Glemte du å avslutte kampen, eller lot klokka gå for lenge? Fjern tiden i etterkant.</p>
+      <button type="button" id="removeDeadTimeBtn" class="export-link-btn" hidden>🕐 Fjern dødtid siden siste handling</button>
+      <button type="button" id="openCorrectTimeBtn" class="export-link-btn">⏱ Trekk fra valgfri tid</button>
+    </div>
+
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
     <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
     <button type="button" id="exportBtn" class="export-link-btn">📋 Eksporter spillerdata</button>
@@ -590,6 +602,36 @@
     <div class="modal-actions">
       <button type="button" id="settingsCancelBtn" class="secondary">Avbryt</button>
       <button type="button" id="settingsOkBtn" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- "Trekk fra valgfri tid" - a specific duration the coach types in
+     themselves, as opposed to #removeDeadTimeConfirmModal's automatic
+     "since the last real action" amount. -->
+<div id="correctTimeModal" class="modal modal-centered">
+  <div class="modal-card modal-card-dark">
+    <button type="button" id="correctTimeCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Trekk fra tid</h2>
+    <p class="sub">Fjerner tiden fra kampklokka og fra spillerne som er aktive akkurat nå (på banen eller benken).</p>
+    <div class="duration-input" style="justify-content:center;">
+      <input type="number" id="correctTimeMin" min="0" max="180" inputmode="numeric"><span>min</span>
+      <input type="number" id="correctTimeSec" min="0" max="59" inputmode="numeric"><span>sek</span>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="correctTimeCancelBtn" class="secondary">Avbryt</button>
+      <button type="button" id="correctTimeApplyBtn" class="primary">Trekk fra</button>
+    </div>
+  </div>
+</div>
+
+<div id="removeDeadTimeConfirmModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Fjerne dødtid?</h2>
+    <p class="sub" id="removeDeadTimeConfirmText"></p>
+    <div class="modal-actions">
+      <button type="button" id="removeDeadTimeCancelBtn" class="secondary">Avbryt</button>
+      <button type="button" id="removeDeadTimeConfirmBtn" class="primary">Fjern</button>
     </div>
   </div>
 </div>

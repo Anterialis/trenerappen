@@ -649,9 +649,18 @@
      "Avslutt", not the gap the request actually meant. */
   /* Rotated phone: the back button and the start/avslutt/settings group
      sit right at the screen's rounded outer corners otherwise - nudge both
-     inward from the safe area. Portrait is untouched. */
+     inward from the safe area. Portrait is untouched.
+     :not(.desktop-preview) - `orientation: landscape` reflects the real
+     BROWSER WINDOW's raw aspect ratio, true for virtually every ordinary
+     desktop window, not just a genuinely rotated phone. #app's own box
+     inside .desktop-preview is already always letterboxed upright (see
+     that rule's own comment) regardless of the window's shape, so this
+     "rotated phone" treatment must stay scoped OUT of it - otherwise the
+     content inside a correctly upright-shaped preview box still tried to
+     lay itself out as if landscape, which is exactly the "banen klemt inn
+     i en smal stripe" bug this comment is here to prevent regressing. */
   @media (orientation: landscape){
-    header{
+    #viewport-frame:not(.desktop-preview) header{
       padding-left: calc(14px + env(safe-area-inset-left) + 14px);
       padding-right: calc(14px + env(safe-area-inset-right) + 14px);
     }
@@ -872,11 +881,12 @@
   /* Rotated phone: bench moves to a left-hand column, pitch takes the rest
      of the width on the right - order swapped via flex `order`, source
      order (and therefore all the JS that reads/writes these elements)
-     stays untouched. */
+     stays untouched. :not(.desktop-preview) - see the identical guard on
+     the header padding-rule above for why. */
   @media (orientation: landscape){
-    #main{ flex-direction:row; }
-    #field-wrap{ flex:1 1 auto; order:2; }
-    #bench-wrap{
+    #viewport-frame:not(.desktop-preview) #main{ flex-direction:row; }
+    #viewport-frame:not(.desktop-preview) #field-wrap{ flex:1 1 auto; order:2; }
+    #viewport-frame:not(.desktop-preview) #bench-wrap{
       flex:0 0 36%;
       order:1;
       border-top:none;
@@ -971,16 +981,16 @@
      the smallest iPad landscape width is 1024px (mini), so 980px sits in
      the gap between them and keeps the text label on iPads. */
   @media (orientation: landscape) and (max-width: 980px){
-    .bench-action-btn{
+    #viewport-frame:not(.desktop-preview) .bench-action-btn{
       width:38px; height:38px; padding:0; border-radius:50%;
       justify-content:center;
     }
-    .bench-action-btn .btn-label{ display:none; }
-    .bench-action-btn .btn-icon{ width:19px; height:17px; font-size:16px; }
+    #viewport-frame:not(.desktop-preview) .bench-action-btn .btn-label{ display:none; }
+    #viewport-frame:not(.desktop-preview) .bench-action-btn .btn-icon{ width:19px; height:17px; font-size:16px; }
     /* Kept nearly as large as the portrait badge (14px), not shrunk down -
        this is the one place the badge has to carry the icon's meaning
        entirely on its own, since .btn-label is hidden right above. */
-    .btn-badge{ top:-13px; right:-7px; min-width:13px; height:13px; font-size:8.5px; }
+    #viewport-frame:not(.desktop-preview) .btn-badge{ top:-13px; right:-7px; min-width:13px; height:13px; font-size:8.5px; }
   }
   .multi-select-btn.active{ background:rgba(230,57,70,.12); color:var(--danger); }
   .multi-select-btn.ready{ background:rgba(31,157,76,.14); color:#1f9d4c; }

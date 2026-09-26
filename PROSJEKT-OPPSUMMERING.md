@@ -310,8 +310,14 @@ bærer automatisk med seg admin-brukerens token etter innlogging.
 - **"Siste skriving vinner"** — ingen konflikthåndtering utover det. Vurdert
   tilstrekkelig for en trener + evt. én assistent, ikke bygget for samtidig bruk
   av mange.
-- `createNewSession()` genererer en tilfeldig 3-sifret kode, prøver å sette den
-  inn, og prøver på nytt (inntil 5 ganger) ved kollisjon.
+- `createNewSession()` henter først alle koder som allerede er i bruk
+  (`pickFreeCode()`) og trekker tilfeldig blant de resterende ledige - lykkes i
+  ett forsøk helt til tabellen bokstavelig talt er 100 % full, i motsetning til
+  den gamle "gjett blindt og prøv igjen" (fortsatt med som fallback ved
+  nettverksfeil på oppslaget, eller det sjeldne kappløpet der to enheter
+  henter den samme "ledige" koden samtidig - da feiler selve innsettingen på
+  tabellens unike-constraint uansett, og det er da den blinde retry-loopen
+  (inntil 5 forsøk) faktisk redder situasjonen).
 - `joinSession(code, onOk, onFail)` henter raden, adopterer dataene som lokal
   `state`, og abonnerer på fremtidige endringer.
 

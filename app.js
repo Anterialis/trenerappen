@@ -231,7 +231,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.2';
+  var APP_VERSION = '2.2.6';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -239,6 +239,10 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.6', text: 'Ny «Korriger tid» i Innstillinger - fjern dødtid siden siste bytte/mål automatisk, eller trekk fra en valgfri tid, om klokka fikk gå for lenge.' },
+    { version: '2.2.5', text: 'Rangeringstrekantene vises nå bare når en spiller faktisk skiller seg fra snittet - bufferen strammes gradvis og jevnt inn gjennom kampen (10 % ved start → 5 % ved 10 min → 2,5 % ved 20 min), ingen brå hopp.' },
+    { version: '2.2.4', text: 'Fikset at appen i en vanlig Mac/PC-nettleser kunne klemmes inn i en smal, liggende stripe - viser nå alltid en stående telefonramme på desktop.' },
+    { version: '2.2.3', text: 'Delt kamp-kode velges nå blant faktisk ledige koder i stedet for å gjette blindt - unngår at det blir vanskeligere å opprette en økt etter hvert som flere koder er i bruk.' },
     { version: '2.2.2', text: '"Bytt" omdøpt til "Bytte?" i spillerinfo-boblen. Fikset at kamper "lagret" til delt Historikk siden v2.0.7 aldri faktisk ble lagret (manglende databasekolonne) - viser nå en synlig feilmelding hvis lagring skulle mislykkes igjen.' },
     { version: '2.2.1', text: 'Fikset skjev "telefon i nettleser"-ramme på desktop (viste kort og bred i stedet for høyreist). Innstillinger-vinduet før kamp henter nå alltid siste lagrede standardverdier. Redesignet scrollbar til å matche appen, og fjernet duplikat-tittel i endringsloggen.' },
     { version: '2.2', text: 'To nye valg for Bytteforslag: rangér etter kamp- eller total spilletid, og velg innbytter etter ventetid eller lavest spilletid. Ekte tilfeldig valg ved uavgjort.' },
@@ -841,6 +845,33 @@
     return String(Math.floor(Math.random()*1000)).padStart(3,'0');
   }
 
+  // Picks a random code that ISN'T already a row in `sessions`, by fetching
+  // every code currently in use and choosing uniformly among whatever's
+  // left out of the 1000 possible (000-999) - callback(code) with a
+  // genuinely free one, or callback(null) if the fetch itself failed or
+  // literally every code is taken right now. Blind random-and-hope-it's-
+  // free (see generateCode() above, still used as createNewSession()'s own
+  // fallback) degrades badly as the table fills up - at 90% full it's
+  // still fine, but well before 100% full its fixed 5-attempt retry budget
+  // starts failing outright even though free codes still exist elsewhere.
+  // Checking first instead succeeds in one shot for as long as any code at
+  // all remains free.
+  function pickFreeCode(callback){
+    if (!sb){ callback(null); return; }
+    sb.from('sessions').select('code').then(function(res){
+      if (!res || res.error || !Array.isArray(res.data)){ callback(null); return; }
+      var used = {};
+      res.data.forEach(function(row){ used[row.code] = true; });
+      var free = [];
+      for (var i = 0; i < 1000; i++){
+        var code = String(i).padStart(3, '0');
+        if (!used[code]) free.push(code);
+      }
+      if (free.length === 0){ callback(null); return; }
+      callback(free[Math.floor(Math.random() * free.length)]);
+    });
+  }
+
   // Shows/hides the "Redigering / Kun les" segmented control (only
   // meaningful while actually sharing) and reflects the current mode.
   function updateShareModeUI(){
@@ -857,24 +888,44 @@
     if (!sb){ callback(null); return; }
     state.sessionOwnerDeviceId = deviceId;
     ensureParticipant();
+
+    function onCreated(code){
+      sessionCode = code;
+      try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
+      subscribeToSession(code);
+      updateSessionCodeUI();
+      callback(code);
+    }
+
+    // Blind generate-and-retry - kept only as a fallback now, for the two
+    // cases pickFreeCode() below can't handle on its own: (1) its own
+    // select() failed (network hiccup - still worth trying blind rather
+    // than giving up outright), and (2) two devices fetching the free-code
+    // list at nearly the same moment and both landing on the same code -
+    // the insert fails on the table's own unique constraint either way, so
+    // this loop (not the free-code lookup) is what actually recovers from
+    // that rare race.
     var attempts = 0;
-    function tryInsert(){
+    function blindRetryInsert(){
       attempts++;
       var code = generateCode();
       sb.from('sessions').insert({ code: code, data: state, origin: deviceOrigin }).then(function(res){
         if (res && res.error){
-          if (attempts < 5) { tryInsert(); return; }
+          if (attempts < 5) { blindRetryInsert(); return; }
           callback(null);
           return;
         }
-        sessionCode = code;
-        try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
-        subscribeToSession(code);
-        updateSessionCodeUI();
-        callback(code);
+        onCreated(code);
       });
     }
-    tryInsert();
+
+    pickFreeCode(function(code){
+      if (!code){ blindRetryInsert(); return; }
+      sb.from('sessions').insert({ code: code, data: state, origin: deviceOrigin }).then(function(res){
+        if (res && res.error){ blindRetryInsert(); return; } // someone else grabbed it between our fetch and this insert
+        onCreated(code);
+      });
+    });
   }
 
   function joinSession(code, onSuccess, onNotFound){
@@ -1616,10 +1667,51 @@
     return Math.max(0, cumulativeBenchMs(id, now) - baseline);
   }
 
+  // Suppresses a rank triangle for anyone whose playtime sits within this
+  // fraction of the squad's average - purely a GUI decluttering choice
+  // (see computeRankBadges() below), never touches the actual numbers
+  // anything else reads. Without it, a badge was assigned by raw rank
+  // alone, so two players hovering right at a rank boundary (classically
+  // "2nd-least" vs "2nd-most") could flip their triangle from a
+  // practically meaningless few-second difference the instant the clock
+  // ticked past the other - comparing against the average instead of the
+  // immediate neighbor means a cluster of similar times near the middle
+  // just shows no badge at all rather than visibly flickering between two
+  // different ones.
+  //
+  // The buffer itself shrinks as the match clock (not any player's own
+  // playtime - the shared match clock, so it advances the same way
+  // regardless of who's on the field when) advances: a few seconds'
+  // difference is a huge relative swing in the first minutes (everyone's
+  // numbers are still tiny), so a wide 10% window keeps that from
+  // flickering, but the same 10% would hide genuinely meaningful gaps once
+  // real minutes have piled up later on - tightening it over the course of
+  // the match keeps the triangles just as decluttered early and just as
+  // informative late. Ramps linearly (0.5 percentage points/min for the
+  // first 10 minutes, then 0.25pp/min to minute 20, flat after that) -
+  // deliberately not three flat steps with hard jumps at 10/20 min, which
+  // would just relocate the original flicker problem to those two exact
+  // instants instead of actually fixing it.
+  /** @param {number} elapsedMin @param {number} fromMin @param {number} fromVal @param {number} toMin @param {number} toVal @returns {number} */
+  function lerp(elapsedMin, fromMin, fromVal, toMin, toVal){
+    var t = (elapsedMin - fromMin) / (toMin - fromMin);
+    return fromVal + t * (toVal - fromVal);
+  }
+  /** @param {number} now @returns {number} */
+  function rankBadgeBuffer(now){
+    var elapsedMin = matchClockElapsed(now) / 60000;
+    if (elapsedMin <= 0) return 0.10;
+    if (elapsedMin < 10) return lerp(elapsedMin, 0, 0.10, 10, 0.05);
+    if (elapsedMin < 20) return lerp(elapsedMin, 10, 0.05, 20, 0.025);
+    return 0.025;
+  }
+
   // Returns {playerId: 'most'|'most2'|'least2'|'least'} across the whole squad
   // (both zones), so it's easy to see who to start next match with. Basis is
   // either the current period only (default) or the full cross-match
-  // cumulative total, per the "Kumulert rangering" setting.
+  // cumulative total, per the "Kumulert rangering" setting. Swap
+  // suggestions (computeSwapSuggestion) are entirely separate and keep
+  // acting on real ms values regardless of what's badged here.
   function computeRankBadges(now){
     var badges = {};
     var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
@@ -1628,11 +1720,15 @@
     if (n < 2) return badges;
     all.sort(function(a,b){ return b.ms - a.ms; });
     if (all[0].ms === all[n-1].ms) return badges;
-    badges[all[0].id] = 'most';
-    badges[all[n-1].id] = 'least';
+    var mean = all.reduce(function(sum, x){ return sum + x.ms; }, 0) / n;
+    var buffer = rankBadgeBuffer(now);
+    var highCutoff = mean * (1 + buffer);
+    var lowCutoff = mean * (1 - buffer);
+    if (all[0].ms > highCutoff) badges[all[0].id] = 'most';
+    if (all[n-1].ms < lowCutoff) badges[all[n-1].id] = 'least';
     if (n >= 4){
-      badges[all[1].id] = 'most2';
-      badges[all[n-2].id] = 'least2';
+      if (all[1].ms > highCutoff) badges[all[1].id] = 'most2';
+      if (all[n-2].ms < lowCutoff) badges[all[n-2].id] = 'least2';
     }
     return badges;
   }
@@ -2554,7 +2650,20 @@
     }
     var vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
-    var targetRatio = vw > vh ? 956/440 : 440/956;
+    // Always the upright phone ratio now, never vw>vh's own landscape
+    // variant - matches #viewport-frame.desktop-preview #app's own CSS
+    // sizing (style.css), which already only ever computes the upright
+    // 440:956 box regardless of window shape. A desktop window that
+    // happened to be exactly phone-landscape-shaped used to skip
+    // .desktop-preview entirely here (this diff read as ~0) and fall
+    // through to the real full-bleed layout, which is where the actual
+    // landscape (row) CSS lives - fine for a genuinely rotated phone, but
+    // on a real desktop window there's no phone to rotate, so it just
+    // rendered the mobile "rotated" layout at full browser width instead
+    // of the upright mockup. Comparing against upright every time means
+    // any wide desktop window gets the same consistent letterboxed
+    // upright preview, no exceptions.
+    var targetRatio = 440/956;
     var actualRatio = vw/vh;
     var diff = Math.abs(actualRatio - targetRatio) / targetRatio;
     els.viewportFrame.classList.toggle('desktop-preview', diff >= 0.04);
@@ -3374,6 +3483,45 @@
     state.matchClock.sinceTs = ts;
   }
 
+  // Removes `ms` of elapsed time from the match clock and from every
+  // currently-open fieldTimers/benchTimers entry (both on-field and bench,
+  // whichever zone each player happens to be in right now) - the "someone
+  // forgot to press Kampslutt and the clock kept running" correction tool
+  // (see #correctTimeModal/#removeDeadTimeConfirmModal). Deliberately
+  // leaves state.cumulative untouched: that only holds STINTS THAT ALREADY
+  // COMMITTED (a real swap), which by definition can't be part of unwanted
+  // trailing dead time - only the still-open tail (the live timers this
+  // function touches) can be. freezeTimersAt(now) first normalizes
+  // baseElapsedMs to a real "as of now" value while running (same guard
+  // togglePlayPause uses - calling it while already paused would wrongly
+  // add a stale sinceTs gap), then every base gets clamped at 0 so this
+  // can never wrap negative; re-anchoring sinceTs to `now` afterward (only
+  // if still running) is what stops the trimmed amount from silently
+  // growing back the moment time keeps advancing.
+  /** @param {number} ms */
+  function subtractDeadTime(ms){
+    if (!(ms > 0)) return;
+    pushUndoSnapshot();
+    var now = Date.now();
+    if (state.globalRunning) freezeTimersAt(now);
+    state.matchClock.baseElapsedMs = Math.max(0, state.matchClock.baseElapsedMs - ms);
+    Object.keys(state.fieldTimers).forEach(function(id){
+      var t = state.fieldTimers[id];
+      t.baseElapsedMs = Math.max(0, t.baseElapsedMs - ms);
+    });
+    Object.keys(state.benchTimers).forEach(function(id){
+      var t = state.benchTimers[id];
+      t.baseElapsedMs = Math.max(0, t.baseElapsedMs - ms);
+    });
+    if (state.globalRunning){
+      state.matchClock.sinceTs = now;
+      Object.keys(state.fieldTimers).forEach(function(id){ state.fieldTimers[id].sinceTs = now; });
+      Object.keys(state.benchTimers).forEach(function(id){ state.benchTimers[id].sinceTs = now; });
+    }
+    saveState();
+    renderAll();
+  }
+
   function togglePlayPause(){
     if (!canEdit()) return;
     ensureAudioUnlocked();
@@ -3722,6 +3870,14 @@
     els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative';
     els.fieldSizeInput.disabled = !isFirstRun || !master;
     els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
+    // Meaningless before a real match/roster exists (isFirstRun) - nothing
+    // has been ticking yet. "Fjern dødtid" itself only shows once there's
+    // actually a meaningful gap (>1 min) since the last real action -
+    // otherwise it's just clutter for the completely normal case of
+    // opening settings moments after doing something.
+    els.correctTimeRow.hidden = !master || isFirstRun;
+    els.removeDeadTimeBtn.hidden = isFirstRun || !master ||
+      (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
     // "Bli med i delt økt" only makes sense when this device isn't already
     // in a session - once it is, leaving/closing is "Forlat økt" under
     // "Avslutt" instead, not a re-labelled join button (that used to say
@@ -5091,6 +5247,19 @@
     els.transferOwnerDivider = qs('transferOwnerDivider');
     els.transferOwnerCancelBtn = qs('transferOwnerCancelBtn');
     els.transferOwnerNote = qs('transferOwnerNote');
+    els.correctTimeRow = qs('correctTimeRow');
+    els.removeDeadTimeBtn = qs('removeDeadTimeBtn');
+    els.openCorrectTimeBtn = qs('openCorrectTimeBtn');
+    els.correctTimeModal = qs('correctTimeModal');
+    els.correctTimeCloseBtn = qs('correctTimeCloseBtn');
+    els.correctTimeMin = qs('correctTimeMin');
+    els.correctTimeSec = qs('correctTimeSec');
+    els.correctTimeCancelBtn = qs('correctTimeCancelBtn');
+    els.correctTimeApplyBtn = qs('correctTimeApplyBtn');
+    els.removeDeadTimeConfirmModal = qs('removeDeadTimeConfirmModal');
+    els.removeDeadTimeConfirmText = qs('removeDeadTimeConfirmText');
+    els.removeDeadTimeCancelBtn = qs('removeDeadTimeCancelBtn');
+    els.removeDeadTimeConfirmBtn = qs('removeDeadTimeConfirmBtn');
     els.leaveMatchBtn = qs('leaveMatchBtn');
     els.closeSessionRow = qs('closeSessionRow');
     els.closeSessionBtn = qs('closeSessionBtn');
@@ -5542,6 +5711,45 @@
     els.exportBtn.addEventListener('click', function(){
       els.exportText.value = buildExportText();
       els.exportModal.classList.add('open');
+    });
+    els.removeDeadTimeBtn.addEventListener('click', function(){
+      if (!isMaster()) return;
+      var ms = Date.now() - (state.lastActivityAt || Date.now());
+      if (ms < 1000) return; // button is hidden well before this in practice - just a safety guard
+      els.removeDeadTimeConfirmText.textContent =
+        'Fjerner ' + formatCumulative(ms) + ' fra kampklokka og fra spillerne som er aktive akkurat nå (siden siste registrerte handling - bytte, mål, e.l.).';
+      els.removeDeadTimeConfirmModal.classList.add('open');
+    });
+    els.removeDeadTimeCancelBtn.addEventListener('click', function(){
+      els.removeDeadTimeConfirmModal.classList.remove('open');
+    });
+    els.removeDeadTimeConfirmBtn.addEventListener('click', function(){
+      els.removeDeadTimeConfirmModal.classList.remove('open');
+      if (!isMaster()) return;
+      // Re-read now, right before applying - the confirm modal may have sat
+      // open for a while, and the amount should reflect the actual gap at
+      // the moment of the tap, not whatever it measured when the modal opened.
+      var ms = Date.now() - (state.lastActivityAt || Date.now());
+      subtractDeadTime(ms);
+      els.removeDeadTimeBtn.hidden = true;
+    });
+    els.openCorrectTimeBtn.addEventListener('click', function(){
+      if (!isMaster()) return;
+      els.correctTimeMin.value = '0';
+      els.correctTimeSec.value = '0';
+      els.correctTimeModal.classList.add('open');
+    });
+    els.correctTimeCloseBtn.addEventListener('click', function(){ els.correctTimeModal.classList.remove('open'); });
+    els.correctTimeCancelBtn.addEventListener('click', function(){ els.correctTimeModal.classList.remove('open'); });
+    els.correctTimeApplyBtn.addEventListener('click', function(){
+      if (!isMaster()) return;
+      var min = Math.max(0, parseInt(els.correctTimeMin.value, 10) || 0);
+      var sec = Math.max(0, Math.min(59, parseInt(els.correctTimeSec.value, 10) || 0));
+      var ms = (min * 60 + sec) * 1000;
+      els.correctTimeModal.classList.remove('open');
+      if (ms <= 0) return;
+      subtractDeadTime(ms);
+      els.removeDeadTimeBtn.hidden = (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
     });
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
