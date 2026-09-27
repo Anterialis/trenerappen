@@ -89,7 +89,7 @@
    * @property {MatchClock} matchClock
    * @property {boolean} wakeLockEnabled
    * @property {number} fieldSize
-   * @property {string[]|null} fieldSlotAssignment - index = formation slot (see fieldSlotList()), value = the onField player id standing there; null when fieldHasPositions() is false (fieldSize < 5, no fixed positions) or not yet reconciled - see syncFieldSlots()
+   * @property {(string|null)[]|null} fieldSlotAssignment - index = formation slot (see fieldSlotList()), value = the onField player id standing there, or null for a not-yet-filled slot (see renderField()'s `if (!id) continue`); the whole array is null when fieldHasPositions() is false (fieldSize < 5, no fixed positions) or not yet reconciled - see syncFieldSlots()
    * @property {boolean} globalRunning
    * @property {number} defaultDurationMs
    * @property {number} matchDurationMs
@@ -168,6 +168,7 @@
     // Matches today's actual defaultState() values exactly, except
     // matchDurationMs - explicitly asked to be 15 min instead of the old
     // 20 min baseline, for anyone who's never touched Settings too.
+    /** @type {CoachDefaults} */
     var fallback = {
       homeTeamName: 'Nøtterøy', homeTeamAbbr: 'NØT',
       matchDurationMs: 900000, defaultDurationMs: 180000, fieldSize: 3,
@@ -231,7 +232,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.6';
+  var APP_VERSION = '2.2.7';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -239,6 +240,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.7', text: 'Fikset at «Avslutt og nullstill» i delt økt kunne bli usynlig for andre enheter etter mange bytter i økten. Fikset at «Angre» i delt økt kunne viske ut en medspillers bytte uten varsel. Mindre stabilitets- og ytelsesforbedringer.' },
     { version: '2.2.6', text: 'Ny «Korriger tid» i Innstillinger - fjern dødtid siden siste bytte/mål automatisk, eller trekk fra en valgfri tid, om klokka fikk gå for lenge.' },
     { version: '2.2.5', text: 'Rangeringstrekantene vises nå bare når en spiller faktisk skiller seg fra snittet - bufferen strammes gradvis og jevnt inn gjennom kampen (10 % ved start → 5 % ved 10 min → 2,5 % ved 20 min), ingen brå hopp.' },
     { version: '2.2.4', text: 'Fikset at appen i en vanlig Mac/PC-nettleser kunne klemmes inn i en smal, liggende stripe - viser nå alltid en stående telefonramme på desktop.' },
@@ -342,6 +344,21 @@
   /** @type {AppState[]} */
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
   var UNDO_MAX = 3;
+  // Call whenever `state` is replaced WHOLESALE by data from somewhere else
+  // (joining a session, adopting an incoming realtime update, adopting the
+  // server's row on reconnect) rather than by a local, well-scoped
+  // mutation. Without this, undoStack/redoStack keep holding snapshots
+  // taken from a `state` that's no longer the ancestor of the one now
+  // live - pressing "Angre" afterwards would restore that stale snapshot
+  // wholesale, silently discarding whatever arrived in the meantime (e.g. a
+  // co-editor's own edit, or the entire session just joined). Undo simply
+  // doesn't make sense across a boundary like that, so the safest thing is
+  // to make there be nothing to undo, rather than undo the wrong thing.
+  function clearUndoHistory(){
+    undoStack = [];
+    redoStack = [];
+    updateUndoUI();
+  }
   var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
   // Draft values for the new Innstillinger screen's steppers - only written
   // to COACH_DEFAULTS_KEY when "Lagre" is pressed (see saveSettingsScreen()).
@@ -809,6 +826,7 @@
           if (!isNewerRevision(normalized)){ console.warn('Ignorerte en foreldet delt tilstand (rev ' + normalized.rev + ' < ' + state.rev + ')'); return; }
           var wasMaster = isMaster();
           state = normalized;
+          clearUndoHistory(); // see its own comment - this device's undo history predates whatever just arrived
           saveStateLocally();
           resyncTimeUpNotified();
           renderAll();
@@ -935,6 +953,7 @@
       var normalized = normalizeState(res.data.data);
       if (!normalized){ console.warn('Økten fantes, men data var ugyldig'); onNotFound(); return; }
       state = normalized;
+      clearUndoHistory(); // this device's own pre-join history (if any) has nothing to do with the session it's adopting now
       sessionCode = code;
       try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
       // Register as a participant before the very first save so the owner
@@ -1425,7 +1444,11 @@
       var goalsBlock = goalRows
         ? '<div class="history-row-goals-title">Mål</div><div class="history-row-goals">' + goalRows + '</div>'
         : '';
-      var daysLeft = visible ? Math.max(1, Math.ceil((m.visibleUntil - Date.now()) / 86400000)) : 0;
+      // `|| 0` is unreachable in practice (visible already means visibleUntil
+      // is truthy) - it's here only so the type checker can see visibleUntil
+      // is used as a number, since it can't narrow that from the separate
+      // `visible` boolean above.
+      var daysLeft = visible ? Math.max(1, Math.ceil(((m.visibleUntil || 0) - Date.now()) / 86400000)) : 0;
       // Only ever rendered for isHistoryAdmin() - a non-admin signed-in
       // viewer only ever sees matches the admin already chose to share
       // (see the RLS policy in the visibility migration), with no controls
@@ -1739,12 +1762,20 @@
   // identical until something changes one of them) is broken by a genuine
   // random pick among the tied ids, rather than always favoring whichever
   // one happened to sort first.
-  /** @param {string[]} ids @param {function(string):number} metricFor @param {boolean} [lowest] @returns {string|null} */
+  /** @param {string[]} ids @param {(id: string) => number} metricFor @param {boolean} [lowest] @returns {string|null} */
   function pickByMetric(ids, metricFor, lowest){
-    var best = null, bestVal = null, tied = [];
+    /** @type {string|null} */
+    var best = null;
+    /** @type {number|null} */
+    var bestVal = null;
+    /** @type {string[]} */
+    var tied = [];
     ids.forEach(function(id){
       var val = metricFor(id);
-      if (best === null || (lowest ? val < bestVal : val > bestVal)){
+      // Checked on bestVal (not best) so the type checker can narrow it to
+      // non-null on the ternary just after - the two are always set
+      // together below, so this is the same condition either way.
+      if (bestVal === null || (lowest ? val < bestVal : val > bestVal)){
         best = id; bestVal = val; tied = [id];
       } else if (val === bestVal){
         tied.push(id);
@@ -2163,6 +2194,9 @@
   function syncFieldSlots(){
     if (!fieldHasPositions()){ state.fieldSlotAssignment = null; return; }
     var totalSlots = fieldSlotList(state.fieldSize).length;
+    // (string|null)[], not string[] - an empty slot is a real, meaningful
+    // value here (see the null-filling/mapping right below), not an absence.
+    /** @type {(string|null)[]} */
     var arr = Array.isArray(state.fieldSlotAssignment) ? state.fieldSlotAssignment.slice(0, totalSlots) : [];
     while (arr.length < totalSlots) arr.push(null);
     var seen = {};
@@ -2510,6 +2544,7 @@
     // Where to insert the "these are substitutes" divider, in the
     // interactive (add/remove) modes only - null means no divider (view
     // mode's own sort below doesn't group by field/bench at all).
+    /** @type {number|null} */
     var dividerBeforeIndex = null;
     if (goalPlayerMode === 'view'){
       rows = rows.filter(function(p){ return (goalBadges.counts[p.id] || 0) > 0; });
@@ -2774,6 +2809,12 @@
       // replaced, and dragging one on-field player onto another trades
       // their two positions directly without touching anyone else.
       syncFieldSlots();
+      // syncFieldSlots() always leaves this as a real array once
+      // fieldHasPositions() is true (only the !fieldHasPositions() branch
+      // sets it to null) - re-read into a local so the type checker can see
+      // that too, same pattern as fieldPositionTagFor()/performPositionSwap().
+      var slots = state.fieldSlotAssignment;
+      if (!slots) return;
       var slotIdx = 0;
       formation.rows.forEach(function(count, rowIndex){
         var rowEl = document.createElement('div');
@@ -2785,7 +2826,11 @@
           // keeper's own negative margin.
           (formation.hasKeeper && rowIndex === 1 ? ' field-row-pre-keeper' : '');
         for (var k = 0; k < count; k++, slotIdx++){
-          var id = state.fieldSlotAssignment[slotIdx];
+          // `slots ? ... : null` (not a bare slots[slotIdx]) only because the
+          // type checker won't carry the `if (!slots) return;` narrowing
+          // above into this forEach callback's closure - slots can't
+          // actually be null here.
+          var id = slots ? slots[slotIdx] : null;
           if (!id) continue;
           var el = buildFieldTokenEl(id, now, rankBadges, goalBadges, singleLetter);
           if (el) rowEl.appendChild(el);
@@ -2856,6 +2901,19 @@
   }
 
   function updateTimersOnly(){
+    // Every value this touches (fieldElapsed/benchElapsed/matchClockElapsed
+    // etc.) is frozen while paused - baseElapsedMs doesn't move without a
+    // running sinceTs to measure from - so re-walking every field/bench
+    // token's DOM and rewriting text/classes 4x/second (this runs on a
+    // 250ms setInterval - see init()) produced byte-identical output the
+    // entire time the match sits paused, which a cup day spends a lot of
+    // (halftime, between matches, waiting for kickoff). Skipping the whole
+    // pass then is a pure efficiency win, not a behavior change - nothing
+    // in here can produce a different result without globalRunning being
+    // true, and updateSelectionInfo (the one non-timer thing called at the
+    // bottom) is already re-invoked directly by whatever actually changes
+    // the selection while paused (see applySelectionStyles).
+    if (!state.globalRunning) return;
     var now = Date.now();
     Array.prototype.forEach.call(els.field.querySelectorAll('.field-token'), function(el){
       var id = el.dataset.id;
@@ -5057,6 +5115,21 @@
     // isMaster()-gated controls for the rest of the shared session.
     var keepOwnerDeviceId = state.sessionOwnerDeviceId;
     var keepParticipants = state.participants;
+    // Same reasoning as sessionOwnerDeviceId/participants above, for a
+    // different failure mode: defaultState() starts state.rev back at 0,
+    // but every OTHER device still connected to this session has already
+    // seen this session's real rev count (however high a match's worth of
+    // swaps/goals pushed it to). isNewerRevision() on their end rejects
+    // anything with a lower rev than what they've already got as stale -
+    // so without carrying this over, the reset itself (pushed at rev 1)
+    // would be silently ignored by every other device, leaving them stuck
+    // showing the just-ended match forever (found by actually running a
+    // shared session through several swaps and then "Avslutt og
+    // nullstill" in the test harness - the reset never reached the other
+    // device, logging exactly the "foreldet delt tilstand" warning
+    // isNewerRevision's own comment describes, just triggered by this
+    // instead of the dormant-tab case it was written for).
+    var keepRev = state.rev;
     // defaultDurationMs/matchDurationMs/fieldSize/rankByCumulative are
     // deliberately NOT carried over from the old state here (they used to
     // be) - defaultState() above already reads them fresh from
@@ -5070,6 +5143,7 @@
     state.wakeLockEnabled = keepWakeLock;
     state.sessionOwnerDeviceId = keepOwnerDeviceId;
     state.participants = keepParticipants;
+    state.rev = keepRev;
     saveState();
     updateUndoUI();
     updateMultiSelectUI();
@@ -6287,6 +6361,7 @@
             console.warn('Beholder lokal tilstand, server-kopien var ikke nyere (rev ' + normalized.rev + ' < ' + state.rev + ')');
           } else {
             state = normalized;
+            clearUndoHistory(); // harmless no-op this early (nothing's been done yet this load), kept for consistency with the other two "state = normalized" sites
             if (ensureParticipant()) pushRemoteState();
             if (!wasMaster && isMaster()) showOwnerTransferredNotice();
             saveStateLocally();
