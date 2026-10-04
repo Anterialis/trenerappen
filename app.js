@@ -232,7 +232,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.8';
+  var APP_VERSION = '2.2.9';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -240,6 +240,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.9', text: 'Når du svarer «Kampslutt»/«Nullstill» på «har du glemt kampen?», settes klokka og spillertidene tilbake til kampvarigheten. Fikset også at spilletid kunne telles dobbelt i kampresultatet hvis klokka hadde vært pauset.' },
     { version: '2.2.8', text: 'Fikset at klokka og nedtellingen viste feil tid (f.eks. «+11519:14») når kampen var pauset og du endret innstillinger eller startet ny økt.' },
     { version: '2.2.7', text: 'Fikset at «Avslutt og nullstill» i delt økt kunne bli usynlig for andre enheter etter mange bytter i økten. Fikset at «Angre» i delt økt kunne viske ut en medspillers bytte uten varsel. Mindre stabilitets- og ytelsesforbedringer.' },
     { version: '2.2.6', text: 'Ny «Korriger tid» i Innstillinger - fjern dødtid siden siste bytte/mål automatisk, eller trekk fra en valgfri tid, om klokka fikk gå for lenge.' },
@@ -3552,6 +3553,17 @@
   function subtractDeadTime(ms){
     if (!(ms > 0)) return;
     pushUndoSnapshot();
+    trimElapsedTime(ms);
+    saveState();
+    renderAll();
+  }
+
+  // The mutation half of subtractDeadTime() - no undo snapshot, save or
+  // render of its own, so a caller that is about to do its own (e.g.
+  // clampMatchToDuration() right before endMatchPeriod()) isn't pushing
+  // redundant intermediate states.
+  /** @param {number} ms */
+  function trimElapsedTime(ms){
     var now = Date.now();
     if (state.globalRunning) freezeTimersAt(now);
     state.matchClock.baseElapsedMs = Math.max(0, state.matchClock.baseElapsedMs - ms);
@@ -3568,8 +3580,24 @@
       Object.keys(state.fieldTimers).forEach(function(id){ state.fieldTimers[id].sinceTs = now; });
       Object.keys(state.benchTimers).forEach(function(id){ state.benchTimers[id].sinceTs = now; });
     }
-    saveState();
-    renderAll();
+  }
+
+  // How far past kampvarighet the match clock has run (0 if it hasn't).
+  /** @returns {number} */
+  function matchOvertimeMs(){
+    return Math.max(0, matchClockElapsed(Date.now()) - state.matchDurationMs);
+  }
+
+  // For "Kampslutt"/"Nullstill" after the idle prompt ("du har glemt
+  // kampen") - rolls the match clock AND every live player timer back to
+  // kampvarighet, so the summary and cumulative totals come out as if the
+  // coach had pressed Kampslutt exactly when time ran out, instead of
+  // crediting hours of forgotten running clock to whoever happened to be on
+  // the field/bench. Only the still-open tail (live timers) is trimmed -
+  // same scope as subtractDeadTime(), see its comment.
+  function clampMatchToDuration(){
+    var excess = matchOvertimeMs();
+    if (excess > 0) trimElapsedTime(excess);
   }
 
   function togglePlayPause(){
@@ -3700,7 +3728,8 @@
       els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over 30 timer. Vil du nullstille kampen?';
       els.idleSuggestConfirmBtn.textContent = 'Nullstill';
     } else {
-      els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over en time. Vil du avslutte perioden (Kampslutt)?';
+      els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over en time. Vil du avslutte perioden (Kampslutt)?' +
+        (matchOvertimeMs() > 0 ? ' Tiden settes tilbake til kampvarigheten (' + Math.round(state.matchDurationMs / 60000) + ' min).' : '');
       els.idleSuggestConfirmBtn.textContent = 'Kampslutt';
     }
     els.idleSuggestModal.classList.add('open');
@@ -4950,13 +4979,19 @@
     // starting a match, waiting a few seconds and ending it, nothing
     // exotic. Advancing sinceTs here too closes the window: a fieldElapsed
     // call an instant later correctly reads ~0 additional.
+    // baseElapsedMs has to be zeroed too, not just sinceTs: once the clock has
+    // ever been paused (e.g. at halftime, or paused right before pressing
+    // Kampslutt) the stint's time lives in baseElapsedMs, not in the
+    // (now - sinceTs) part - leaving it in place made computeMatchScoreAnd-
+    // PlayerMs() below add the same stint a second time (a 10 min match
+    // showed as 20 min in the summary/history).
     state.onField.forEach(function(id){
       commitFieldStint(id, now);
-      if (state.fieldTimers[id]) state.fieldTimers[id].sinceTs = now;
+      if (state.fieldTimers[id]) state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now };
     });
     state.onBench.forEach(function(id){
       commitBenchStint(id, now);
-      if (state.benchTimers[id]) state.benchTimers[id].sinceTs = now;
+      if (state.benchTimers[id]) state.benchTimers[id] = { baseElapsedMs: 0, sinceTs: now };
     });
 
     // Archive this match before wiping its scoreboard - "Kampslutt" means
@@ -5730,12 +5765,14 @@
       idleSuggestKind = null;
       if (kind === 'reset'){
         askSaveToHistory(function(saveToHistory){
+          clampMatchToDuration();
           archiveInProgressMatch(saveToHistory);
           resetMatch();
           showMatchSummaryThen();
         });
       } else if (kind === 'endPeriod'){
         askSaveToHistory(function(saveToHistory){
+          clampMatchToDuration();
           endMatchPeriod(false, saveToHistory);
           renderAll();
           showMatchSummaryThen();
