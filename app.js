@@ -232,7 +232,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.7';
+  var APP_VERSION = '2.2.8';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -240,6 +240,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.2.8', text: 'Fikset at klokka og nedtellingen viste feil tid (f.eks. «+11519:14») når kampen var pauset og du endret innstillinger eller startet ny økt.' },
     { version: '2.2.7', text: 'Fikset at «Avslutt og nullstill» i delt økt kunne bli usynlig for andre enheter etter mange bytter i økten. Fikset at «Angre» i delt økt kunne viske ut en medspillers bytte uten varsel. Mindre stabilitets- og ytelsesforbedringer.' },
     { version: '2.2.6', text: 'Ny «Korriger tid» i Innstillinger - fjern dødtid siden siste bytte/mål automatisk, eller trekk fra en valgfri tid, om klokka fikk gå for lenge.' },
     { version: '2.2.5', text: 'Rangeringstrekantene vises nå bare når en spiller faktisk skiller seg fra snittet - bufferen strammes gradvis og jevnt inn gjennom kampen (10 % ved start → 5 % ved 10 min → 2,5 % ved 20 min), ingen brå hopp.' },
@@ -2900,20 +2901,11 @@
     applySelectionStyles();
   }
 
+  // Full refresh of every time-dependent display (tokens, bench, match clock,
+  // countdown). Called on every render AND by the 250ms tick below while
+  // running - it must NOT early-return when paused: renderAll()/settings/
+  // picker changes while paused still need the clock + countdown redrawn.
   function updateTimersOnly(){
-    // Every value this touches (fieldElapsed/benchElapsed/matchClockElapsed
-    // etc.) is frozen while paused - baseElapsedMs doesn't move without a
-    // running sinceTs to measure from - so re-walking every field/bench
-    // token's DOM and rewriting text/classes 4x/second (this runs on a
-    // 250ms setInterval - see init()) produced byte-identical output the
-    // entire time the match sits paused, which a cup day spends a lot of
-    // (halftime, between matches, waiting for kickoff). Skipping the whole
-    // pass then is a pure efficiency win, not a behavior change - nothing
-    // in here can produce a different result without globalRunning being
-    // true, and updateSelectionInfo (the one non-timer thing called at the
-    // bottom) is already re-invoked directly by whatever actually changes
-    // the selection while paused (see applySelectionStyles).
-    if (!state.globalRunning) return;
     var now = Date.now();
     Array.prototype.forEach.call(els.field.querySelectorAll('.field-token'), function(el){
       var id = el.dataset.id;
@@ -6319,7 +6311,10 @@
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
       checkLongIdleSuggestion();
       stampLastAlive();
-      setInterval(updateTimersOnly, 250);
+      // Only the running clock needs the 250ms tick - while paused, every
+      // value is frozen, and any real change already calls renderAll() ->
+      // updateTimersOnly() directly.
+      setInterval(function(){ if (state.globalRunning) updateTimersOnly(); }, 250);
       // Local-only: this used to call saveState() (which also pushes to
       // Supabase) unconditionally every 8s. In a shared session that's a
       // last-write-wins race waiting to happen - if this fires on one
