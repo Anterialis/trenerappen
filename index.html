@@ -432,6 +432,7 @@
         <button type="button" id="awayTeamLabel" class="away-team-label" aria-label="Angi motstanderlag">?</button>
       </div>
       <div id="field"></div>
+      <div id="clockHint" aria-hidden="true"><span class="clock-hint-arrow">↑</span> Endre kampens lengde (kamptid) ved å trykke på klokka</div>
       <div id="selectionInfo"></div>
       <div id="dropHint" aria-hidden="true"></div>
       <div id="multiSwapWarning"></div>
@@ -557,8 +558,9 @@
     <div id="correctTimeRow" hidden>
       <label class="section-label">Korriger tid</label>
       <p class="toggle-row-sub" style="margin:-4px 0 8px;">Glemte du å avslutte kampen, eller lot klokka gå for lenge? Fjern tiden i etterkant.</p>
+      <button type="button" id="rollBackBtn" class="export-link-btn" hidden>⏪ Still klokka tilbake til kampslutt</button>
       <button type="button" id="removeDeadTimeBtn" class="export-link-btn" hidden>🕐 Fjern dødtid siden siste handling</button>
-      <button type="button" id="openCorrectTimeBtn" class="export-link-btn">⏱ Trekk fra valgfri tid</button>
+      <button type="button" id="openCorrectTimeBtn" class="export-link-btn">⏱ Still klokka manuelt</button>
     </div>
 
     <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
@@ -572,21 +574,41 @@
   </div>
 </div>
 
-<!-- "Trekk fra valgfri tid" - a specific duration the coach types in
-     themselves, as opposed to #removeDeadTimeConfirmModal's automatic
-     "since the last real action" amount. -->
-<div id="correctTimeModal" class="modal modal-centered">
-  <div class="modal-card modal-card-dark">
-    <button type="button" id="correctTimeCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
-    <h2>Trekk fra tid</h2>
-    <p class="sub">Fjerner tiden fra kampklokka og fra spillerne som er aktive akkurat nå (på banen eller benken).</p>
-    <div class="duration-input" style="justify-content:center;">
-      <input type="number" id="correctTimeMin" min="0" max="180" inputmode="numeric"><span>min</span>
-      <input type="number" id="correctTimeSec" min="0" max="59" inputmode="numeric"><span>sek</span>
+<!-- Glemt kampslutt: arket som kommer når kamptiden er ute og det har vært stille lenge nok
+     (se forgottenMatchInfo() i app.js), og som også kan åpnes manuelt (trykk på
+     overtidsklokka, eller Korriger tid). Klokka går videre i bakgrunnen mens det vises. -->
+<div id="forgottenModal" class="modal">
+  <div class="modal-card modal-card-dark forgotten-card">
+    <h2 id="forgottenTitle">⏸ Kampen er satt på pause</h2>
+    <p class="sub" id="forgottenInfo"></p>
+    <div class="forgotten-prev" id="forgottenPreview"></div>
+    <div class="forgotten-actions">
+      <button type="button" id="forgottenResetBtn" class="primary">Tilbakestill til kampslutt</button>
+      <div class="forgotten-row">
+        <button type="button" id="forgottenContinueBtn" class="secondary">Fortsett</button>
+        <button type="button" id="forgottenManualBtn" class="secondary">Still manuelt …</button>
+      </div>
     </div>
+  </div>
+</div>
+
+<!-- Still klokka manuelt: enten trekk fra en tid, eller si hva klokka skal vise. -->
+<div id="manualClockModal" class="modal modal-centered">
+  <div class="modal-card modal-card-dark">
+    <button type="button" id="manualClockCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Still klokka manuelt</h2>
+    <div class="segmented dark" id="manualClockTabs">
+      <button type="button" class="segmented-btn active" data-tab="sub">Trekk fra tid</button>
+      <button type="button" class="segmented-btn" data-tab="set">Sett klokka til</button>
+    </div>
+    <div class="manual-steps">
+      <div class="manual-step"><span class="manual-step-label" id="manualMinLabel">min fjernes</span><div id="manualMinStep"></div></div>
+      <div class="manual-step"><span class="manual-step-label" id="manualSecLabel">sek fjernes</span><div id="manualSecStep"></div></div>
+    </div>
+    <p class="sub manual-preview" id="manualClockPreview"></p>
     <div class="modal-actions">
-      <button type="button" id="correctTimeCancelBtn" class="secondary">Avbryt</button>
-      <button type="button" id="correctTimeApplyBtn" class="primary">Trekk fra</button>
+      <button type="button" id="manualClockCancelBtn" class="secondary">Avbryt</button>
+      <button type="button" id="manualClockApplyBtn" class="primary">Bruk</button>
     </div>
   </div>
 </div>

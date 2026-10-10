@@ -102,6 +102,8 @@
    * @property {GoalEntry[]} goalLog
    * @property {number} swapCount - count of field<->bench swaps in the match/period in progress right now, reset alongside goalLog (see endMatchPeriod/resetMatch)
    * @property {number} lastActivityAt
+   * @property {number} lastPlayAt - stamped by real play actions only (swap, goal, move, undo/redo, start/pause, Fortsett) - NOT settings; drives forgottenMatchInfo()
+   * @property {number} continueCount - how many times «Fortsett» was answered on the forgotten-match prompt this match; each one lengthens the quiet time required before it asks again
    * @property {string} opponentName
    * @property {string} opponentAbbr
    * @property {MatchHistoryEntry[]} matchHistory
@@ -233,7 +235,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.3.3';
+  var APP_VERSION = '2.3.4';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -241,6 +243,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.3.4', text: 'Glemt kampslutt: når kamptiden er ute og det har vært stille en stund, kommer et ark med «Tilbakestill til kampslutt», «Fortsett» og «Still manuelt». Etter «Fortsett» lyser klokka og viser hvor kamptiden endres. Du kan også stille klokka tilbake fra overtidsklokka og fra Korriger tid.' },
     { version: '2.3.3', text: 'Rangeringstrekantene oppdateres nå av seg selv mens klokka går (første gang etter 30 sekunder), ikke bare når noe annet tegnes på nytt. Når du drar en spiller over en annen vises «Slipp for å bytte» med navnene på de to. Fikset at navneforslagene i spillerlisten ble klippet av.' },
     { version: '2.3.2', text: 'Ryddigere innstillinger: Kamptid og Byttetid justeres med store knapper (hele minutter), symboler ved titlene, «Bytt om» kan nå endres under kampen, og Kampoppførsel kan foldes sammen. Skjerm-våken ligger under Innstillinger på hjemskjermen og gjelder bare din enhet.' },
     { version: '2.3.1', text: 'Symbolforklaringen finnes nå også under Innstillinger på hjemskjermen, og teksten om hva som finnes hvor er oppdatert. Regellinjen under Kampoppførsel nevner at «alle kamper i økten» gjelder under en cup.' },
@@ -558,6 +561,8 @@
       goalLog: [],
       swapCount: 0,
       lastActivityAt: Date.now(),
+      lastPlayAt: Date.now(),
+      continueCount: 0,
       opponentName: '',
       opponentAbbr: '',
       matchHistory: [],
@@ -602,6 +607,8 @@
     if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
     if (typeof raw.swapCount !== 'number') raw.swapCount = 0;
     if (typeof raw.lastActivityAt !== 'number') raw.lastActivityAt = Date.now();
+    if (typeof raw.lastPlayAt !== 'number') raw.lastPlayAt = raw.lastActivityAt;
+    if (typeof raw.continueCount !== 'number') raw.continueCount = 0;
     if (typeof raw.opponentName !== 'string') raw.opponentName = '';
     if (typeof raw.opponentAbbr !== 'string') raw.opponentAbbr = '';
     if (!Array.isArray(raw.matchHistory)) raw.matchHistory = [];
@@ -1879,6 +1886,8 @@
       goalLog: cloneStateValue(state.goalLog || []),
       swapCount: typeof state.swapCount === 'number' ? state.swapCount : 0,
       lastActivityAt: state.lastActivityAt,
+      lastPlayAt: state.lastPlayAt,   // not restored by restoreState() - an undo is itself a play action
+      continueCount: state.continueCount || 0,
       opponentName: state.opponentName || '',
       opponentAbbr: state.opponentAbbr || '',
       matchHistory: cloneStateValue(state.matchHistory || []),
@@ -1923,6 +1932,7 @@
   // A genuine new action invalidates any pending redo (standard undo/redo
   // semantics), so this also clears redoStack.
   function pushUndoSnapshot(){
+    state.lastPlayAt = Date.now(); // every undoable action is a real play action - see forgottenMatchInfo()
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -1944,6 +1954,7 @@
     if (!canEdit()) return;
     var snap = undoStack.pop();
     if (!snap) return;
+    state.lastPlayAt = Date.now();
     redoStack.push(snapshotState());
     if (redoStack.length > UNDO_MAX) redoStack.shift();
     restoreState(snap);
@@ -1959,6 +1970,7 @@
     if (!canEdit()) return;
     var snap = redoStack.pop();
     if (!snap) return;
+    state.lastPlayAt = Date.now();
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     restoreState(snap);
@@ -3656,28 +3668,245 @@
     }
   }
 
-  // How far past kampvarighet the match clock has run (0 if it hasn't).
-  /** @returns {number} */
-  function matchOvertimeMs(){
-    return Math.max(0, matchClockElapsed(Date.now()) - state.matchDurationMs);
+  /* ---------------- Glemt kampslutt ---------------- */
+
+  // "Du glemte å avslutte kampen": regelen, uttrykt i klokketid (ikke
+  // veggklokke, så den også stemmer for en pauset klokke):
+  //   - Kamptiden er ute (klokka >= kamplengden).
+  //   - Det har vært KONTINUERLIG stille (ingen spillhandling - bytte, mål,
+  //     flytting, angre, start/pause, Fortsett) i minst
+  //     (1 + continueCount) x 20 % av kamplengden, regnet fra det SENESTE av
+  //     «kamptiden gikk ut» og «siste spillhandling». Hver handling starter
+  //     altså tellingen på nytt, og hver «Fortsett» krever lenger stille
+  //     neste gang (1x, 2x, 3x ...), slik at en kamp med feil innstilt
+  //     kamptid ikke maser. Klokka over 120 % følger av dette av seg selv.
+  //   - Målet er det SENESTE av kamplengden og siste spillhandling: et bytte
+  //     etter full tid var ekte og blir stående.
+  var FORGOTTEN_QUIET_FRACTION = 0.2;
+
+  // Klokkeverdien (ms) da siste spillhandling skjedde. Går klokka, er det
+  // nå minus tiden siden handlingen (start/pause er selv en handling, så
+  // en pause kan ikke ligge «mellom»); står den, er det bare nå-verdien.
+  /** @param {number} now @returns {number} */
+  function clockAtLastPlay(now){
+    var elapsed = matchClockElapsed(now);
+    if (!state.globalRunning) return elapsed;
+    var lp = typeof state.lastPlayAt === 'number' ? state.lastPlayAt : now;
+    return Math.max(0, elapsed - Math.max(0, now - lp));
   }
 
-  // For "Kampslutt"/"Nullstill" after the idle prompt ("du har glemt
-  // kampen") - rolls the match clock AND every live player timer back to
-  // kampvarighet, so the summary and cumulative totals come out as if the
-  // coach had pressed Kampslutt exactly when time ran out, instead of
-  // crediting hours of forgotten running clock to whoever happened to be on
-  // the field/bench. Only the still-open tail (live timers) is trimmed -
-  // same scope as subtractDeadTime(), see its comment.
-  function clampMatchToDuration(){
-    var excess = matchOvertimeMs();
+  // Hvor klokka stilles tilbake til: det seneste av kamplengden og siste
+  // spillhandling (aldri forbi nå-verdien).
+  /** @param {number} now @returns {number} */
+  function matchEndTargetMs(now){
+    return Math.min(matchClockElapsed(now), Math.max(state.matchDurationMs, clockAtLastPlay(now)));
+  }
+
+  // Hvor mye som kan fjernes for å komme tilbake til kampslutt (0 om ingenting).
+  /** @returns {number} */
+  function matchOvertimeMs(){
+    var now = Date.now();
+    return Math.max(0, matchClockElapsed(now) - matchEndTargetMs(now));
+  }
+
+  // Null når regelen ikke er oppfylt; ellers hvor klokka stilles tilbake til og hvor lenge det har vært stille.
+  /** @param {number} now @returns {{target:number, trim:number, quiet:number}|null} */
+  function forgottenMatchInfo(now){
+    var d = state.matchDurationMs, clock = matchClockElapsed(now);
+    if (!(d > 0) || clock < d) return null;
+    var quiet = clock - Math.max(d, clockAtLastPlay(now));
+    var need = (1 + (state.continueCount || 0)) * FORGOTTEN_QUIET_FRACTION * d;
+    if (quiet < need) return null;
+    var target = matchEndTargetMs(now);
+    return { target: target, trim: clock - target, quiet: quiet };
+  }
+
+  // Mutasjonen alene (ingen angre-snapshot, lagring eller tegning) - for
+  // kallere som gjør sitt eget, f.eks. rett før endMatchPeriod().
+  // `excess` kan regnes ut på forhånd: pushUndoSnapshot() stempler lastPlayAt, og da ville
+  // «siste handling» plutselig være nå og ingenting bli trukket fra.
+  /** @param {number} [excess] */
+  function rollBackToMatchEnd(excess){
+    if (excess === undefined){
+      var now = Date.now();
+      excess = matchClockElapsed(now) - matchEndTargetMs(now);
+    }
     if (excess > 0) trimElapsedTime(excess);
+  }
+
+  function pauseClock(){
+    if (!state.globalRunning) return;
+    freezeTimersAt(Date.now());
+    state.globalRunning = false;
+  }
+
+  // Kort melding øverst (samme felt som auto-pause-varselet, bare med egen tekst).
+  var autoPauseDefaultText = '';
+  /** @param {string} text */
+  function showNotice(text){
+    if (!els.autoPauseNotice) return;
+    if (!autoPauseDefaultText) autoPauseDefaultText = els.autoPauseNotice.textContent || '';
+    els.autoPauseNotice.textContent = text;
+    els.autoPauseNotice.classList.add('show');
+    clearTimeout(autoPauseNoticeTimer);
+    autoPauseNoticeTimer = setTimeout(function(){
+      els.autoPauseNotice.classList.remove('show');
+      els.autoPauseNotice.textContent = autoPauseDefaultText;
+    }, 4500);
+  }
+
+  // Hintet etter «Fortsett»: klokka lyser og en boble peker på den i 10 s -
+  // oftest er det kamptiden som er stilt for kort, og den endres ved å trykke på klokka.
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  var clockHintTimer;
+  function showClockHint(){
+    els.clockHint.classList.add('visible');
+    els.matchClock.classList.add('clock-halo');
+    clearTimeout(clockHintTimer);
+    clockHintTimer = setTimeout(hideClockHint, 10000);
+  }
+  function hideClockHint(){
+    clearTimeout(clockHintTimer);
+    els.clockHint.classList.remove('visible');
+    els.matchClock.classList.remove('clock-halo');
+  }
+
+  /** @type {{auto:boolean, thenEnd:boolean}} */
+  var forgottenCtx = { auto: true, thenEnd: false };
+  var forgottenOpen = false;
+
+  /** @param {{auto:boolean, thenEnd:boolean}} ctx */
+  function openForgottenSheet(ctx){
+    forgottenCtx = ctx;
+    forgottenOpen = true;
+    fillForgottenSheet();
+    els.forgottenModal.classList.add('open');
+  }
+  function closeForgottenSheet(){
+    forgottenOpen = false;
+    els.forgottenModal.classList.remove('open');
+  }
+  // Tegnes på nytt hvert sekund mens arket er åpent - klokka går videre i bakgrunnen.
+  function fillForgottenSheet(){
+    var now = Date.now(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
+    var trim = Math.max(0, clock - target);
+    els.forgottenTitle.textContent = forgottenCtx.auto ? '⏸ Kampen er satt på pause' : 'Still klokka tilbake til kampslutt';
+    els.forgottenInfo.textContent = (forgottenCtx.auto
+        ? 'Kamptiden gikk ut for ' + formatMs(Math.max(0, clock - state.matchDurationMs)) + ' siden, og det har ikke skjedd noe på en stund. '
+        : 'Fjerner ' + formatMs(trim) + ' fra klokka og spillerne. ') +
+      'Alle spillernes tider tilbakestilles til det de var ved kampslutt (' + formatMs(target) + ').';
+    /** @type {Array<[string, number]>} */
+    var rows = [['Klokka', clock]];
+    state.onField.slice(0, 2).forEach(function(id){ var p = playerById(id); if (p) rows.push([p.name + ' (på banen)', fieldElapsed(id, now)]); });
+    state.onBench.slice(0, 1).forEach(function(id){ var p = playerById(id); if (p) rows.push([p.name + ' (innbytter)', benchElapsed(id, now)]); });
+    els.forgottenPreview.innerHTML = rows.map(function(r){
+      return '<div><span>' + escapeHtml(r[0]) + '</span><span class="fp-to">' + formatMs(r[1]) + ' → ' + formatMs(Math.max(0, r[1] - trim)) + '</span></div>';
+    }).join('');
+    els.forgottenContinueBtn.textContent = forgottenCtx.auto ? 'Fortsett' : 'Avbryt';
+  }
+
+  function forgottenReset(){
+    var thenEnd = forgottenCtx.thenEnd;
+    closeForgottenSheet();
+    if (!canEdit()) return;
+    var excess = matchOvertimeMs(); // før pushUndoSnapshot() stempler lastPlayAt
+    pushUndoSnapshot();
+    rollBackToMatchEnd(excess);
+    pauseClock(); // kampen er over - uten pause ville klokka bare begynt å telle overtid på nytt
+    state.continueCount = 0;
+    saveState();
+    renderAll();
+    showNotice('Klokka er stilt tilbake til kampslutt (' + formatMs(matchClockElapsed(Date.now())) + '). Du kan angre.');
+    if (thenEnd) els.endBtn.click();
+  }
+
+  function forgottenContinue(){
+    var ctx = forgottenCtx;
+    closeForgottenSheet();
+    if (!ctx.auto) return;
+    if (canEdit()){
+      state.continueCount = (state.continueCount || 0) + 1; // neste spørsmål krever lenger stille
+      state.lastPlayAt = Date.now();
+      saveState();
+    }
+    if (ctx.thenEnd) els.endBtn.click(); else showClockHint();
+  }
+
+  // Aktiveres bare når appen er åpen og brukeren ikke er midt i noe: ingen
+  // åpne vinduer/skjermer, ingen markering, ingen dra. Returnerer true om
+  // arket ble åpnet.
+  /** @returns {boolean} */
+  function checkForgottenMatch(){
+    if (forgottenOpen || state.players.length === 0 || !canEdit()) return false;
+    if (document.querySelector('.modal.open, .history-screen.open')) return false;
+    if (!els.launcherScreen.classList.contains('hidden')) return false;
+    if (selected || multiMode || document.querySelector('.ghost-token')) return false;
+    if (!forgottenMatchInfo(Date.now())) return false;
+    openForgottenSheet({ auto: true, thenEnd: false });
+    return true;
+  }
+  // Hvert sekund: oppdater arket hvis det er åpent (lukk det om en annen
+  // enhet allerede har svart), ellers se om regelen er oppfylt.
+  function forgottenTick(){
+    if (forgottenOpen){
+      if (forgottenCtx.auto && !forgottenMatchInfo(Date.now())) closeForgottenSheet();
+      else fillForgottenSheet();
+      return;
+    }
+    checkForgottenMatch();
+  }
+
+  /* ---- manuell justering: «Trekk fra tid» eller «Sett klokka til» ---- */
+  var manual = { tab: 'sub', sub: 0, set: 0, clockSec: 0, thenEnd: false };
+  /** @type {{match: any, swap: any}} */
+  var manualSteps = { match: null, swap: null };
+  function manualSecs(){ return manual.tab === 'sub' ? manual.sub : manual.set; }
+  /** @param {number} sec */
+  function setManualSecs(sec){
+    var v = Math.max(0, Math.min(manual.clockSec, sec));
+    if (manual.tab === 'sub') manual.sub = v; else manual.set = v;
+    updateManualClockUI();
+  }
+  function updateManualClockUI(){
+    Array.prototype.forEach.call(els.manualClockTabs.children, function(/** @type {HTMLElement} */ b){
+      b.classList.toggle('active', b.dataset.tab === manual.tab);
+    });
+    els.manualMinLabel.textContent = manual.tab === 'sub' ? 'min fjernes' : 'min';
+    els.manualSecLabel.textContent = manual.tab === 'sub' ? 'sek fjernes' : 'sek';
+    manualSteps.match.refresh(); manualSteps.swap.refresh();
+    var subSec = manual.tab === 'sub' ? manual.sub : manual.clockSec - manual.set;
+    els.manualClockPreview.innerHTML = 'Klokka blir <b>' + formatMs((manual.clockSec - subSec) * 1000) + '</b> · fjerner <b>' + formatMs(subSec * 1000) + '</b> fra klokka og spillerne.';
+  }
+  /** @param {string} tab @param {boolean} [thenEnd] */
+  function openManualClock(tab, thenEnd){
+    var now = Date.now(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
+    manual.clockSec = Math.floor(clock / 1000);
+    manual.sub = Math.max(0, Math.floor((clock - target) / 1000));
+    manual.set = Math.floor(target / 1000);
+    manual.tab = tab;
+    manual.thenEnd = !!thenEnd;
+    updateManualClockUI();
+    els.manualClockModal.classList.add('open');
+  }
+  function applyManualClock(){
+    els.manualClockModal.classList.remove('open');
+    if (!canEdit()) return;
+    var clock = matchClockElapsed(Date.now());
+    var subMs = manual.tab === 'sub' ? manual.sub * 1000 : clock - manual.set * 1000;
+    subMs = Math.max(0, Math.min(clock, subMs));
+    if (subMs > 0){
+      state.continueCount = 0; // årsaken er rettet - neste gang kan det spørres som vanlig
+      subtractDeadTime(subMs);
+    }
+    els.removeDeadTimeBtn.hidden = (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
+    if (manual.thenEnd) els.endBtn.click();
   }
 
   function togglePlayPause(){
     if (!canEdit()) return;
     ensureAudioUnlocked();
     var now = Date.now();
+    state.lastPlayAt = now;
     if (state.globalRunning){
       freezeTimersAt(now);
       state.globalRunning = false;
@@ -3786,7 +4015,7 @@
       return;
     }
     var hasElapsedTime = state.globalRunning || matchClockElapsed(Date.now()) > 0;
-    if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime){
+    if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime && !forgottenMatchInfo(Date.now())){
       if (isIdleSuggestSnoozed('endPeriod')) return;
       idleSuggestShown = true;
       openIdleSuggestModal('endPeriod');
@@ -3803,7 +4032,7 @@
       els.idleSuggestConfirmBtn.textContent = 'Nullstill';
     } else {
       els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over en time. Vil du avslutte perioden (Kampslutt)?' +
-        (matchOvertimeMs() > 0 ? ' Tiden settes tilbake til kampvarigheten (' + Math.round(state.matchDurationMs / 60000) + ' min).' : '');
+        (matchOvertimeMs() > 0 ? ' Klokka settes tilbake til kampslutt (' + formatMs(matchEndTargetMs(Date.now())) + ').' : '');
       els.idleSuggestConfirmBtn.textContent = 'Kampslutt';
     }
     els.idleSuggestModal.classList.add('open');
@@ -3899,12 +4128,14 @@
 
   function commitDurationPickerValue(){
     state.matchDurationMs = durationPickerValue * 60000;
+    state.continueCount = 0; // kamptiden er rettet - årsaken til «Fortsett» er borte
     saveState();
     renderAll();
   }
 
   function openDurationPicker(){
     if (!canEdit()) return;
+    hideClockHint();
     setDurationPickerDisplay(Math.max(1, Math.round(state.matchDurationMs / 60000)));
     els.matchDurationPickerModal.classList.add('open');
   }
@@ -4038,6 +4269,9 @@
     // otherwise it's just clutter for the completely normal case of
     // opening settings moments after doing something.
     els.correctTimeRow.hidden = !master || isFirstRun;
+    var rollBackMs = matchOvertimeMs();
+    els.rollBackBtn.hidden = !master || isFirstRun || rollBackMs <= 0;
+    els.rollBackBtn.textContent = '⏪ Still klokka tilbake til kampslutt (fjerner ' + formatMs(rollBackMs) + ')';
     els.removeDeadTimeBtn.hidden = isFirstRun || !master ||
       (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
     // "Bli med i delt økt" only makes sense when this device isn't already
@@ -4736,7 +4970,7 @@
     addNamesToRoster(newPlayers.map(function(p){ return p.name; }));
 
     // Only overwritten when actually changed - see modalDraft.
-    if (modalDraft.matchMin !== modalDraft.matchMinInit) state.matchDurationMs = modalDraft.matchMin * 60000;
+    if (modalDraft.matchMin !== modalDraft.matchMinInit){ state.matchDurationMs = modalDraft.matchMin * 60000; state.continueCount = 0; }
     if (modalDraft.swapMin !== modalDraft.swapMinInit) state.defaultDurationMs = modalDraft.swapMin * 60000;
     if (modalDraft.fieldSize !== modalDraft.fieldSizeInit) state.fieldSize = modalDraft.fieldSize;
 
@@ -5110,6 +5344,7 @@
     }
     state.goalLog = [];
     state.swapCount = 0;
+    state.continueCount = 0;
     // Next match likely means a next opponent (cup format) - clearing this
     // brings the "?" back on the scoreboard and re-arms the opponent prompt
     // (see openOpponentModal's call sites) rather than silently keeping the
@@ -5532,7 +5767,7 @@
   // etter at koden har satt den utenfra.
   /**
    * @param {HTMLElement} host
-   * @param {{label:string, unit:string, min:number, max:number, get:() => number, set:(v:number) => void}} cfg
+   * @param {{label:string, unit:string, min:number, max:number, step?:number, get:() => number, set:(v:number) => void}} cfg
    * @returns {{refresh: () => void, setLocked: (locked: boolean) => void}}
    */
   function setupNumStep(host, cfg){
@@ -5560,7 +5795,7 @@
     /** @param {number} d @returns {boolean} */
     function step(d){
       if (locked) return false;
-      var before = cfg.get(), next = Math.max(cfg.min, Math.min(cfg.max, before + d));
+      var before = cfg.get(), next = Math.max(cfg.min, Math.min(cfg.max, before + d * (cfg.step || 1)));
       if (next === before) return false;
       cfg.set(next);
       draw(d);
@@ -5616,6 +5851,16 @@
       label: 'Byttetid', unit: 'min', min: 1, max: 30,
       get: function(){ return settingsDraftSwapDurationMin; },
       set: function(v){ settingsDraftSwapDurationMin = v; }
+    });
+    manualSteps.match = setupNumStep(els.manualMinStep, {
+      label: 'Minutter', unit: 'min', min: 0, max: 180,
+      get: function(){ return Math.floor(manualSecs() / 60); },
+      set: function(v){ setManualSecs(v * 60 + (manualSecs() % 60)); }
+    });
+    manualSteps.swap = setupNumStep(els.manualSecStep, {
+      label: 'Sekunder', unit: 'sek', min: 0, max: 50, step: 10,
+      get: function(){ return manualSecs() % 60; },
+      set: function(v){ setManualSecs(Math.floor(manualSecs() / 60) * 60 + v); }
     });
     Array.prototype.forEach.call(els.fieldFormatSeg.children, function(/** @type {HTMLElement} */ btn){
       btn.addEventListener('click', function(){
@@ -5763,12 +6008,25 @@
     els.correctTimeRow = qs('correctTimeRow');
     els.removeDeadTimeBtn = qs('removeDeadTimeBtn');
     els.openCorrectTimeBtn = qs('openCorrectTimeBtn');
-    els.correctTimeModal = qs('correctTimeModal');
-    els.correctTimeCloseBtn = qs('correctTimeCloseBtn');
-    els.correctTimeMin = qs('correctTimeMin');
-    els.correctTimeSec = qs('correctTimeSec');
-    els.correctTimeCancelBtn = qs('correctTimeCancelBtn');
-    els.correctTimeApplyBtn = qs('correctTimeApplyBtn');
+    els.rollBackBtn = qs('rollBackBtn');
+    els.forgottenModal = qs('forgottenModal');
+    els.forgottenTitle = qs('forgottenTitle');
+    els.forgottenInfo = qs('forgottenInfo');
+    els.forgottenPreview = qs('forgottenPreview');
+    els.forgottenResetBtn = qs('forgottenResetBtn');
+    els.forgottenContinueBtn = qs('forgottenContinueBtn');
+    els.forgottenManualBtn = qs('forgottenManualBtn');
+    els.manualClockModal = qs('manualClockModal');
+    els.manualClockCloseBtn = qs('manualClockCloseBtn');
+    els.manualClockTabs = qs('manualClockTabs');
+    els.manualMinLabel = qs('manualMinLabel');
+    els.manualSecLabel = qs('manualSecLabel');
+    els.manualMinStep = qs('manualMinStep');
+    els.manualSecStep = qs('manualSecStep');
+    els.manualClockPreview = qs('manualClockPreview');
+    els.manualClockCancelBtn = qs('manualClockCancelBtn');
+    els.manualClockApplyBtn = qs('manualClockApplyBtn');
+    els.clockHint = qs('clockHint');
     els.removeDeadTimeConfirmModal = qs('removeDeadTimeConfirmModal');
     els.removeDeadTimeConfirmText = qs('removeDeadTimeConfirmText');
     els.removeDeadTimeCancelBtn = qs('removeDeadTimeCancelBtn');
@@ -6089,6 +6347,11 @@
       els.settingsCloseConfirmModal.classList.remove('open');
     });
     els.endBtn.addEventListener('click', function(){
+      // Glemt kampslutt? Spør først (klokka stilles tilbake før noe arkiveres/avsluttes), og fortsett så til vanlig Avslutt.
+      if (canEdit() && state.players.length > 0 && forgottenMatchInfo(Date.now())){
+        openForgottenSheet({ auto: true, thenEnd: true });
+        return;
+      }
       // No canEdit() gate here anymore - "Forlat kampen"/"Forlat delt økt"
       // below need to stay reachable even for a read-only viewer (see
       // .view-only's comment in style.css), so the modal itself opens for
@@ -6186,14 +6449,14 @@
       idleSuggestKind = null;
       if (kind === 'reset'){
         askSaveToHistory(function(saveToHistory){
-          clampMatchToDuration();
+          rollBackToMatchEnd();
           archiveInProgressMatch(saveToHistory);
           resetMatch();
           showMatchSummaryThen();
         });
       } else if (kind === 'endPeriod'){
         askSaveToHistory(function(saveToHistory){
-          clampMatchToDuration();
+          rollBackToMatchEnd();
           endMatchPeriod(false, saveToHistory);
           renderAll();
           showMatchSummaryThen();
@@ -6247,23 +6510,36 @@
       subtractDeadTime(ms);
       els.removeDeadTimeBtn.hidden = true;
     });
+    els.rollBackBtn.addEventListener('click', function(){
+      if (!isMaster() || matchOvertimeMs() <= 0) return;
+      els.settingsModal.classList.remove('open');
+      openForgottenSheet({ auto: false, thenEnd: false });
+    });
     els.openCorrectTimeBtn.addEventListener('click', function(){
       if (!isMaster()) return;
-      els.correctTimeMin.value = '0';
-      els.correctTimeSec.value = '0';
-      els.correctTimeModal.classList.add('open');
+      els.settingsModal.classList.remove('open');
+      openManualClock('sub');
     });
-    els.correctTimeCloseBtn.addEventListener('click', function(){ els.correctTimeModal.classList.remove('open'); });
-    els.correctTimeCancelBtn.addEventListener('click', function(){ els.correctTimeModal.classList.remove('open'); });
-    els.correctTimeApplyBtn.addEventListener('click', function(){
-      if (!isMaster()) return;
-      var min = Math.max(0, parseInt(els.correctTimeMin.value, 10) || 0);
-      var sec = Math.max(0, Math.min(59, parseInt(els.correctTimeSec.value, 10) || 0));
-      var ms = (min * 60 + sec) * 1000;
-      els.correctTimeModal.classList.remove('open');
-      if (ms <= 0) return;
-      subtractDeadTime(ms);
-      els.removeDeadTimeBtn.hidden = (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
+    els.manualClockCloseBtn.addEventListener('click', function(){ els.manualClockModal.classList.remove('open'); });
+    els.manualClockCancelBtn.addEventListener('click', function(){ els.manualClockModal.classList.remove('open'); });
+    els.manualClockApplyBtn.addEventListener('click', applyManualClock);
+    els.manualClockTabs.addEventListener('click', function(e){
+      var b = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('.segmented-btn'));
+      if (!b || !b.dataset.tab) return;
+      manual.tab = b.dataset.tab;
+      updateManualClockUI();
+    });
+    els.forgottenResetBtn.addEventListener('click', forgottenReset);
+    els.forgottenContinueBtn.addEventListener('click', forgottenContinue);
+    els.forgottenManualBtn.addEventListener('click', function(){
+      var thenEnd = forgottenCtx.thenEnd;
+      closeForgottenSheet();
+      openManualClock('sub', thenEnd);
+    });
+    // Overtidsklokka under hovedklokka er trykkbar når det er noe å stille tilbake.
+    els.matchCountdown.addEventListener('click', function(){
+      if (forgottenOpen || !canEdit() || matchOvertimeMs() <= 0) return;
+      openForgottenSheet({ auto: false, thenEnd: false });
     });
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
@@ -6763,12 +7039,13 @@
 
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
-      checkLongIdleSuggestion();
+      if (!checkForgottenMatch()) checkLongIdleSuggestion();
       stampLastAlive();
       // Only the running clock needs the 250ms tick - while paused, every
       // value is frozen, and any real change already calls renderAll() ->
       // updateTimersOnly() directly.
       setInterval(function(){ if (state.globalRunning) updateTimersOnly(); }, 250);
+      setInterval(forgottenTick, 1000);
       // Local-only: this used to call saveState() (which also pushes to
       // Supabase) unconditionally every 8s. In a shared session that's a
       // last-write-wins race waiting to happen - if this fires on one
@@ -6785,7 +7062,7 @@
           flushState();
         } else {
           checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
-          checkLongIdleSuggestion();
+          if (!checkForgottenMatch()) checkLongIdleSuggestion();
           stampLastAlive();
           updateTimersOnly();
           requestWakeLock();
