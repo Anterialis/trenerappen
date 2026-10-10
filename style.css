@@ -1818,6 +1818,14 @@
   .segmented.dark .segmented-btn{ color:rgba(255,255,255,.55); flex:1; text-align:center; }
   .segmented.dark .segmented-btn.active{ background:var(--accent); color:var(--accent-ink); box-shadow:none; }
 
+  .link-row{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
+    background:none; border:0; padding:13px 14px; color:#fff; font-family:inherit;
+    font-size:13.5px; font-weight:600; text-align:left; cursor:pointer;
+  }
+  .link-row span:last-child{ color:rgba(255,255,255,.4); font-size:18px; }
+  .link-row:active{ background:rgba(255,255,255,.06); }
+
   /* ---------- Kampoppførsel: to-knapps-valg (initChoices() i app.js) ----------
      Et valg mellom to likeverdige alternativer, ikke av/på: en markering
      (.choice-thumb) glir mellom de to knappene, og hjelpeteksten under
@@ -2364,7 +2372,8 @@
   .ems-time{ color:var(--ink-soft); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:12px; }
   #endMatchModal{ z-index:110; }
   #exportModal{ z-index:110; }
-  #legendModal{ z-index:110; }
+  /* 320: åpnes også fra Innstillinger-skjermen (.history-screen, z-index:310) - lavere havnet bak den. */
+  #legendModal{ z-index:320; }
   #settingsCloseConfirmModal{ z-index:110; }
   #joinCodeModal{ z-index:120; }
   #infoPopupModal{ z-index:130; }

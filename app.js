@@ -234,7 +234,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.3.0';
+  var APP_VERSION = '2.3.1';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -242,6 +242,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.3.1', text: 'Symbolforklaringen finnes nå også under Innstillinger på hjemskjermen, og teksten om hva som finnes hvor er oppdatert. Regellinjen under Kampoppførsel nevner at «alle kamper i økten» gjelder under en cup.' },
     { version: '2.3.0', text: 'Nye, tydeligere valg under Kampoppførsel: to knapper med forklaring i stedet for av/på-brytere (alle står til venstre som standard). Bytteforslag for innbytter velger nå enten den som har ventet lengst siden forrige bytte, eller den med minst spilletid i denne kampen - aldri total spilletid.' },
     { version: '2.2.9', text: 'Når du svarer «Kampslutt»/«Nullstill» på «har du glemt kampen?», settes klokka og spillertidene tilbake til kampvarigheten. Fikset også at spilletid kunne telles dobbelt i kampresultatet hvis klokka hadde vært pauset.' },
     { version: '2.2.8', text: 'Fikset at klokka og nedtellingen viste feil tid (f.eks. «+11519:14») når kampen var pauset og du endret innstillinger eller startet ny økt.' },
@@ -5671,6 +5672,7 @@
     els.exportCloseBtn = qs('exportCloseBtn');
     els.exportCopyBtn = qs('exportCopyBtn');
     els.legendBtn = qs('legendBtn');
+    els.settingsLegendBtn = qs('settingsLegendBtn');
     els.legendModal = qs('legendModal');
     els.legendCloseBtn = qs('legendCloseBtn');
     els.infoPopupModal = qs('infoPopupModal');
@@ -6078,6 +6080,7 @@
     });
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
+    els.settingsLegendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
     els.legendCloseBtn.addEventListener('click', function(){ els.legendModal.classList.remove('open'); });
     // Kampslutt/Avslutt og nullstill repurpose their info-btn as a cancel
     // "×" while armed (see kampsluttConfirm/avsluttConfirm's onArm above) -

@@ -353,7 +353,7 @@
 
       <div class="settings-group">
         <p class="settings-group-title">Kampoppførsel</p>
-        <p class="choice-rule"><b>Venstre:</b> kun aktuell kamp. <b>Høyre:</b> alle kamper i økten.</p>
+        <p class="choice-rule"><b>Venstre:</b> kun aktuell kamp. <b>Høyre:</b> alle kamper i økten (under en cup).</p>
         <div class="settings-group-card">
           <!-- Hver rad bygges av initChoices() i app.js (tittel, to knapper, hjelpetekst) -
                avkryssingsboksen under er bare tilstandsbæreren: avkrysset = høyre knapp
@@ -362,6 +362,12 @@
           <div class="choice-row" data-choice="reorg"><input type="checkbox" id="settingsDefaultReorgLastMatch" hidden></div>
           <div class="choice-row" data-choice="basis"><input type="checkbox" id="settingsDefaultSwapBasisCumulative" hidden></div>
           <div class="choice-row" data-choice="bench"><input type="checkbox" id="settingsDefaultSwapBenchByPlaytime" hidden></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-card">
+          <button type="button" id="settingsLegendBtn" class="link-row"><span>❔ Symbolforklaring og om appen</span><span aria-hidden="true">›</span></button>
         </div>
       </div>
 
@@ -751,7 +757,7 @@
       </div>
       <div class="func-item">
         <p class="func-title">Innstillinger ⚙ og del økt</p>
-        <p class="func-text">Spillernavn, banestørrelse, kampvarighet, byttetid, skjerm-våken, rangeringsmodus, og deling av økten med en tresifret kode (du velger om andre kan redigere eller bare se).</p>
+        <p class="func-text">Under kampen endrer du spillernavn, byttetid, valgene under Kampoppførsel (trekanter, «Bytt om» og bytteforslag) og deling av økten med en tresifret kode (du velger om andre kan redigere eller bare se). Lagnavn, standardverdier for ny kamp og skjerm-våken finner du under Innstillinger på hjemskjermen.</p>
       </div>
       <div class="func-item">
         <p class="func-title">Myntkast</p>
