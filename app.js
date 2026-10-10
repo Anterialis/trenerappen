@@ -96,7 +96,7 @@
    * @property {boolean} rankByCumulative
    * @property {boolean} reorgUsesLastMatch
    * @property {'match'|'cumulative'} swapSuggestionBasis - which spilletid measure "Forslag" ranks field/bench candidates by: 'match' (this match/period only) or 'cumulative' (lifetime, across matches) - see computeSwapSuggestion()
-   * @property {'waited'|'cumulative'} swapSuggestionBenchMode - which bench player "Forslag" picks: 'waited' (longest current bench stint, ties random) or 'cumulative' (least spilletid by swapSuggestionBasis, ties random) - see computeSwapSuggestion()
+   * @property {'waited'|'cumulative'} swapSuggestionBenchMode - which bench player "Forslag" picks: 'waited' (longest current bench stint, ties random) or 'cumulative' (least spilletid in this match/period only, ties random) - see computeSwapSuggestion()
    * @property {boolean} shareEditable
    * @property {string|null} sessionOwnerDeviceId
    * @property {Participant[]} participants
@@ -172,7 +172,9 @@
     var fallback = {
       homeTeamName: 'Nøtterøy', homeTeamAbbr: 'NØT',
       matchDurationMs: 900000, defaultDurationMs: 180000, fieldSize: 3,
-      rankByCumulative: false, reorgUsesLastMatch: false,
+      // Alle valg står til venstre i Kampoppførsel som standard - for «Bytt om» er
+      // venstre «Kun forrige kamp», altså reorgUsesLastMatch = true (se CHOICES.reorg).
+      rankByCumulative: false, reorgUsesLastMatch: true,
       swapSuggestionBasis: 'match', swapSuggestionBenchMode: 'waited'
     };
     try {
@@ -232,7 +234,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.2.9';
+  var APP_VERSION = '2.3.0';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -240,6 +242,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.3.0', text: 'Nye, tydeligere valg under Kampoppførsel: to knapper med forklaring i stedet for av/på-brytere (alle står til venstre som standard). Bytteforslag for innbytter velger nå enten den som har ventet lengst siden forrige bytte, eller den med minst spilletid i denne kampen - aldri total spilletid.' },
     { version: '2.2.9', text: 'Når du svarer «Kampslutt»/«Nullstill» på «har du glemt kampen?», settes klokka og spillertidene tilbake til kampvarigheten. Fikset også at spilletid kunne telles dobbelt i kampresultatet hvis klokka hadde vært pauset.' },
     { version: '2.2.8', text: 'Fikset at klokka og nedtellingen viste feil tid (f.eks. «+11519:14») når kampen var pauset og du endret innstillinger eller startet ny økt.' },
     { version: '2.2.7', text: 'Fikset at «Avslutt og nullstill» i delt økt kunne bli usynlig for andre enheter etter mange bytter i økten. Fikset at «Angre» i delt økt kunne viske ut en medspillers bytte uten varsel. Mindre stabilitets- og ytelsesforbedringer.' },
@@ -392,18 +395,6 @@
     share: {
       title: 'Del økt med andre',
       text: 'Slår på sanntidsdeling med en tresifret kode. Du velger om andre får redigeringsrettighet (standard) - alle i økten kan gjøre byttinger og styre kampen - eller kun "les", hvor andre kun kan se hovedskjermen (kampen) live, uten å kunne gjøre endringer selv.'
-    },
-    rankCumulative: {
-      title: 'Kumulert rangering (trekanter)',
-      text: 'Gjelder kun trekant-symbolene som viser mest/minst spilletid - selve tidene kumuleres alltid uansett, se «i» i spillerboblen. AV: trekantene ser kun på inneværende kamp. PÅ: trekantene ser på kumulert spilletid på tvers av kamper, siden siste nullstilling (Avslutt og nullstill).'
-    },
-    swapSuggestionBasis: {
-      title: 'Bytteforslag: kumulert spilletid',
-      text: 'Styrer hvilken utespiller "Forslag" foreslår byttet ut, blant de som har passert byttetiden sin. AV: den med mest spilletid kun i denne kampen. PÅ: den med mest spilletid totalt, på tvers av alle kamper siden siste nullstilling.'
-    },
-    swapSuggestionBenchMode: {
-      title: 'Bytteforslag: innbytter etter lavest spilletid',
-      text: 'Styrer hvilken innbytter "Forslag" foreslår byttet inn. AV (standard): alltid den som har ventet lengst sammenhengende på benken akkurat nå. PÅ: alltid den med lavest spilletid (samme grunnlag som bryteren over) - selv om det betyr at spilleren som nettopp ble byttet ut kommer inn igjen før andre som har ventet lenger denne kampen.'
     },
     endPeriod: {
       title: 'Kampslutt, ny kamp',
@@ -1799,12 +1790,14 @@
   //
   // Bench player (who to sub IN): per state.swapSuggestionBenchMode -
   // 'waited' (default) always picks whoever's current bench stint has run
-  // longest, regardless of their own playtime. 'cumulative' instead picks
-  // whoever has the LEAST spilletid (same swapSuggestionBasis measure as
-  // the field pick) - a fairness-by-total-minutes strategy the coach opts
-  // into knowingly, since it can mean the player just subbed off gets put
-  // straight back on ahead of someone who's waited longer on the bench,
-  // if that someone already has more minutes this match/lifetime.
+  // longest, i.e. whoever has been waiting longest since their own last
+  // swap - so nobody subbed off after you comes in before you. 'cumulative'
+  // (stored name kept for saved settings/Supabase rows) instead picks
+  // whoever has the LEAST spilletid in THIS match/period only - never the
+  // lifetime total, and independent of swapSuggestionBasis (which only
+  // governs who goes OUT). The coach opts into it knowingly, since it can
+  // put the player who was just subbed off straight back on ahead of
+  // someone who has waited longer, if they happen to have played least.
   //
   // Returns null when nobody on the field is actually due yet, or the
   // bench is empty.
@@ -1816,7 +1809,7 @@
     if (due.length === 0) return null;
     var fieldId = pickByMetric(due, function(id){ return msFor(id, now); });
     var benchId = state.swapSuggestionBenchMode === 'cumulative'
-      ? pickByMetric(state.onBench, function(id){ return msFor(id, now); }, true)
+      ? pickByMetric(state.onBench, function(id){ return currentPeriodFieldMs(id, now); }, true)
       : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); });
     if (!fieldId || !benchId) return null;
     return { fieldId: fieldId, benchId: benchId };
@@ -3947,6 +3940,7 @@
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
     els.swapSuggestionBasisToggle.checked = state.swapSuggestionBasis === 'cumulative';
     els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative';
+    refreshChoices();
     els.fieldSizeInput.disabled = !isFirstRun || !master;
     els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
     // Meaningless before a real match/roster exists (isFirstRun) - nothing
@@ -4258,6 +4252,7 @@
     els.settingsDefaultReorgLastMatch.checked = d.reorgUsesLastMatch;
     els.settingsDefaultSwapBasisCumulative.checked = d.swapSuggestionBasis === 'cumulative';
     els.settingsDefaultSwapBenchByPlaytime.checked = d.swapSuggestionBenchMode === 'cumulative';
+    refreshChoices();
     els.settingsSavedNote.hidden = true;
     updateSettingsStorageNote();
     els.settingsScreen.classList.add('open');
@@ -5214,6 +5209,232 @@
 
   /* ---------------- Init ---------------- */
 
+  /* ---------------- Kampoppførsel: to-knapps-valg ---------------- */
+
+  // Fire (tre i pre-kamp-innstillingene) valg mellom to likeverdige
+  // alternativer - venstre = kun aktuell kamp, høyre = alle kamper i økten
+  // (unntatt bytteforslag-innbytter, som er et eget valg: ventetid mot
+  // minst spilletid). Hver `.choice-row[data-choice]` i index.html har én
+  // skjult avkryssingsboks som tilstandsbærer: avkrysset = høyre knapp, så
+  // all eksisterende kode som leser/skriver `.checked` og lytter på
+  // 'change' virker uendret. `invert` snur det for «Bytt om», der lagret
+  // reorgUsesLastMatch=true betyr VENSTRE («Kun forrige kamp») - slik at
+  // lagrede innstillinger og Supabase-rader ikke trenger migrering.
+  /** @type {Object<string, {title:string, q:string, l:string, r:string, hl:string, hr:string, invert?:boolean}>} */
+  var CHOICES = {
+    rank: {
+      title: 'Trekantsymboler', q: 'Rangering på spilletid',
+      l: 'Kun denne kampen', r: 'Alle kamper i økten',
+      hl: 'Trekantene viser spilletid i denne kampen.',
+      hr: 'Trekantene viser spilletid over alle kamper i økten.'
+    },
+    reorg: {
+      title: '«Bytt om» ved Kampslutt', q: 'Hvem settes opp først neste kamp',
+      l: 'Kun forrige kamp', r: 'Alle kamper i økten',
+      hl: 'De som spilte minst i forrige kamp settes på banen først.',
+      hr: 'De som har spilt minst over alle kamper settes på banen først.',
+      invert: true
+    },
+    basis: {
+      title: 'Bytteforslag, utespiller', q: 'Hvem foreslås ut',
+      l: 'Mest spilt denne kampen', r: 'Mest spilt over alle kamper',
+      hl: 'Foreslår den som har spilt mest i denne kampen.',
+      hr: 'Foreslår den som har spilt mest over alle kamper.'
+    },
+    bench: {
+      title: 'Bytteforslag, innbytter', q: 'Hvem foreslås inn',
+      l: 'Lengst ventetid siden forrige bytte', r: 'Minst spilletid denne kampen',
+      hl: 'Den som har sittet lengst på benken siden forrige bytte kommer inn først. Ingen som ble byttet ut etter deg kommer inn før deg.',
+      hr: 'Den med minst spilletid i kampen kommer inn først, også om hen nettopp ble byttet ut.'
+    }
+  };
+
+  /** @type {Array<() => void>} */
+  var choiceSyncs = [];
+  var CHOICE_REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  // Web Animations API (tekstbyttet): finnes i alle nåværende nettlesere, men en
+  // manglende støtte skal aldri velte oppstarten - da byttes teksten bare direkte.
+  var CHOICE_CAN_ANIMATE = typeof Element.prototype.animate === 'function' && typeof Element.prototype.getAnimations === 'function';
+  /** @param {number} ms @returns {number} */
+  function choiceMs(ms){ return CHOICE_REDUCED_MOTION ? 0 : ms; }
+
+  // Felles begynnelse (minst to hele ord) står stille når hjelpeteksten
+  // bytter - bare resten tones ut og inn. Beregnes ut fra tekstene selv, så
+  // en senere tekstendring følger med uten at noe må oppdateres her.
+  /** @param {string} a @param {string} b @returns {{pre:string, sufs:string[]}} */
+  function splitCommonWords(a, b){
+    var wa = a.split(' '), wb = b.split(' '), i = 0;
+    while (i < wa.length - 1 && i < wb.length - 1 && wa[i] === wb[i]) i++;
+    var pre = i >= 2 ? wa.slice(0, i).join(' ') + ' ' : '';
+    return { pre: pre, sufs: [a.slice(pre.length), b.slice(pre.length)] };
+  }
+
+  /** @param {HTMLElement} row */
+  function setupChoice(row){
+    var cfg = CHOICES[row.dataset.choice || ''];
+    var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
+    if (!cfg || !input) return;
+    var sp = splitCommonWords(cfg.hl, cfg.hr);
+    row.insertAdjacentHTML('afterbegin',
+      '<p class="choice-title">' + escapeHtml(cfg.title) + '</p>' +
+      '<p class="choice-q">' + escapeHtml(cfg.q) + '</p>' +
+      '<div class="choice-seg" role="radiogroup" aria-label="' + escapeHtml(cfg.title) + '">' +
+        '<div class="choice-thumb"><div class="choice-pill"></div></div>' +
+        '<button type="button" role="radio" aria-checked="true" class="act">' + escapeHtml(cfg.l) + '</button>' +
+        '<button type="button" role="radio" aria-checked="false">' + escapeHtml(cfg.r) + '</button>' +
+      '</div>' +
+      '<div class="choice-help" aria-live="polite">' +
+        '<div class="choice-measure" aria-hidden="true"><span>' + escapeHtml(cfg.hl) + '</span><span>' + escapeHtml(cfg.hr) + '</span></div>' +
+        '<div class="choice-live"><span class="choice-pre">' + escapeHtml(sp.pre) + '</span><span class="choice-suf">' + escapeHtml(sp.sufs[0]) + '</span></div>' +
+      '</div>');
+    var seg = /** @type {HTMLElement} */ (row.querySelector('.choice-seg'));
+    var thumb = /** @type {HTMLElement} */ (row.querySelector('.choice-thumb'));
+    var btns = seg.querySelectorAll('button');
+    var sufEl = /** @type {HTMLElement} */ (row.querySelector('.choice-suf'));
+    var value = 0;      // 0 = venstre, 1 = høyre
+    var p = 0;          // markeringens posisjon 0..1 (mellomverdier under animasjon/drag)
+    /** @type {{dead:boolean, raf:number}|null} */
+    var anim = null;
+    /** @type {{id:number, x0:number, moved:boolean, lastT:number, v:number}|null} */
+    var drag = null;
+    var helpToken = 0;
+
+    function inputValue(){ return (cfg.invert ? !input.checked : input.checked) ? 1 : 0; }
+
+    /** @param {number} pos */
+    function paint(pos){
+      thumb.style.transform = 'translateX(' + (pos * 100) + '%)';
+      var right = pos > 0.5;
+      btns[0].classList.toggle('act', !right);
+      btns[1].classList.toggle('act', right);
+    }
+    function stop(){ if (anim){ anim.dead = true; cancelAnimationFrame(anim.raf); anim = null; } }
+
+    // Rask, myk glidning (0,17 s, ease-out) - samme som godkjent i forslag A.
+    /** @param {number} from @param {number} to */
+    function run(from, to){
+      stop();
+      if (choiceMs(1) === 0 || from === to){ p = to; paint(p); return; }
+      var a = { dead: false, raf: 0 };
+      anim = a;
+      var t0 = performance.now();
+      /** @param {number} now */
+      var frame = function(now){
+        if (a.dead) return;
+        var t = Math.min(1, (now - t0) / choiceMs(170));
+        p = from + (to - from) * (1 - Math.pow(1 - t, 4));
+        paint(p);
+        if (t < 1){ a.raf = requestAnimationFrame(frame); } else { p = to; paint(to); anim = null; }
+      };
+      a.raf = requestAnimationFrame(frame);
+    }
+
+    // Bare den delen av setningen som faktisk er ulik animeres: gammel slutt
+    // tones ut, ny tones inn (fill:'forwards' + cancel i samme tick, så den
+    // gamle teksten aldri blinker tilbake et bilde).
+    function swapHelp(){
+      var my = ++helpToken, target = sp.sufs[value];
+      if (!CHOICE_CAN_ANIMATE || choiceMs(1) === 0){ sufEl.textContent = target; return; }
+      sufEl.getAnimations().forEach(function(x){ x.cancel(); });
+      var cur = parseFloat(getComputedStyle(sufEl).opacity);
+      var out = sufEl.animate([{ opacity: isNaN(cur) ? 1 : cur }, { opacity: 0 }], { duration: choiceMs(90), easing: 'ease-out', fill: 'forwards' });
+      out.onfinish = function(){
+        if (my !== helpToken) return;
+        sufEl.textContent = target;
+        out.cancel();
+        sufEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: choiceMs(140), easing: 'ease-out' });
+      };
+    }
+    /** @param {number} nv */
+    function setValue(nv){
+      if (nv === value) return;
+      value = nv;
+      btns[0].setAttribute('aria-checked', nv === 0 ? 'true' : 'false');
+      btns[1].setAttribute('aria-checked', nv === 1 ? 'true' : 'false');
+      swapHelp();
+    }
+
+    // Brukeren har valgt en side: skriv til tilstandsbæreren og la den
+    // vanlige 'change'-lytteren gjøre jobben (lagre, eller - for en ikke-eier
+    // - rette boksen tilbake). Står boksen annerledes etterpå, følger
+    // knappene med den.
+    /** @param {number} target */
+    function choose(target){
+      setValue(target);
+      input.checked = cfg.invert ? !target : !!target;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      var actual = inputValue();
+      if (actual !== target) setValue(actual);
+      run(p, actual);
+    }
+
+    // Hent tilstand fra avkrysningsboksen uten animasjon (kode har satt
+    // .checked direkte, f.eks. når et vindu åpnes).
+    function sync(){
+      stop();
+      value = inputValue();
+      p = value;
+      paint(p);
+      btns[0].setAttribute('aria-checked', value === 0 ? 'true' : 'false');
+      btns[1].setAttribute('aria-checked', value === 1 ? 'true' : 'false');
+      if (CHOICE_CAN_ANIMATE) sufEl.getAnimations().forEach(function(x){ x.cancel(); });
+      sufEl.textContent = sp.sufs[value];
+    }
+    choiceSyncs.push(sync);
+
+    function geom(){ var r = seg.getBoundingClientRect(); return { r: r, W: (r.width - 8) / 2 }; }
+    /** @param {number} x @returns {number} */
+    function posFromX(x){ var g = geom(); return Math.max(0, Math.min(1, (x - g.r.left - 4 - g.W / 2) / g.W)); }
+
+    seg.addEventListener('pointerdown', function(e){
+      if (e.button) return;
+      stop();
+      drag = { id: e.pointerId, x0: e.clientX, moved: false, lastT: performance.now(), v: 0 };
+      seg.classList.add('press');
+      try { seg.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    seg.addEventListener('pointermove', function(e){
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved && Math.abs(e.clientX - drag.x0) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      var raw = posFromX(e.clientX), now = performance.now();
+      var dt = Math.max(1, now - drag.lastT);
+      drag.v = drag.v * 0.6 + ((raw - p) / (dt / 1000)) * 0.4;
+      drag.lastT = now;
+      p = raw;
+      paint(p);
+    });
+    /** @param {PointerEvent} e */
+    function release(e){
+      if (!drag || e.pointerId !== drag.id) return;
+      var d = drag; drag = null;
+      seg.classList.remove('press');
+      try { seg.releasePointerCapture(e.pointerId); } catch (err) {}
+      var target;
+      if (d.moved){ target = (p + d.v * 0.12) > 0.5 ? 1 : 0; }
+      else { var g = geom(); target = e.clientX < g.r.left + g.r.width / 2 ? 0 : 1; }
+      choose(target);
+    }
+    seg.addEventListener('pointerup', release);
+    seg.addEventListener('pointercancel', release);
+    seg.addEventListener('keydown', function(e){
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      choose(e.key === 'ArrowLeft' ? 0 : 1);
+    });
+    Array.prototype.forEach.call(btns, function(b, i){
+      b.addEventListener('click', function(e){ if (e.detail === 0) choose(i); }); // tastatur - berøring/mus går via pointer-hendelsene over
+    });
+    sync();
+  }
+
+  function initChoices(){
+    Array.prototype.forEach.call(document.querySelectorAll('.choice-row[data-choice]'), setupChoice);
+  }
+  // Kall etter at kode har satt avkrysningsboksene direkte (åpning av
+  // Innstillinger / pre-kamp-vinduet).
+  function refreshChoices(){ choiceSyncs.forEach(function(f){ f(); }); }
+
   function init(){
     els.field = qs('field');
     els.fieldWrap = qs('field-wrap');
@@ -5515,6 +5736,7 @@
       updateSessionCodeUI();
     });
 
+    initChoices();
     checkForUpdate();
     window.addEventListener('pageshow', function(e){
       if (e.persisted) checkForUpdate();

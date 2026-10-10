@@ -1818,6 +1818,47 @@
   .segmented.dark .segmented-btn{ color:rgba(255,255,255,.55); flex:1; text-align:center; }
   .segmented.dark .segmented-btn.active{ background:var(--accent); color:var(--accent-ink); box-shadow:none; }
 
+  /* ---------- Kampoppførsel: to-knapps-valg (initChoices() i app.js) ----------
+     Et valg mellom to likeverdige alternativer, ikke av/på: en markering
+     (.choice-thumb) glir mellom de to knappene, og hjelpeteksten under
+     forklarer hva som gjelder nå. Brukes både i Innstillinger-skjermen og
+     i pre-kamp-innstillingene (#settingsModal). */
+  .choice-row{ display:block; }
+  .choice-row[hidden]{ display:none; } /* samme author-display-slår-[hidden]-felle som .settings-row */
+  .settings-group-card .choice-row{ padding:13px 14px; }
+  .settings-group-card .choice-row + .choice-row{ border-top:1px solid rgba(255,255,255,.08); }
+  #settingsModal .choice-row{ margin-top:18px; }
+  .choice-rule{ font-size:11.5px; color:rgba(255,255,255,.5); margin:0 4px 10px; }
+  .choice-rule b{ color:#fff; font-weight:600; }
+  .choice-title{ font-size:13.5px; font-weight:600; color:#fff; margin:0 0 2px; }
+  .choice-q{ font-size:11.5px; color:rgba(255,255,255,.5); line-height:1.4; margin:0; }
+  .choice-seg{
+    position:relative; display:grid; grid-template-columns:1fr 1fr; margin-top:10px; padding:4px;
+    background:rgba(255,255,255,.07); border-radius:12px;
+    touch-action:pan-y; user-select:none; -webkit-user-select:none;
+  }
+  .choice-thumb{ position:absolute; top:4px; bottom:4px; left:4px; width:calc(50% - 4px); z-index:1; pointer-events:none; will-change:transform; }
+  .choice-pill{
+    position:absolute; inset:0; background:#2f4a86; border:1px solid #6a90e0; border-radius:9px;
+    transition:transform .14s cubic-bezier(.2,.9,.3,1);
+  }
+  .choice-seg.press .choice-pill{ transform:scale(.97); }
+  .choice-seg button{
+    position:relative; z-index:2; background:transparent; border:0; color:rgba(255,255,255,.55);
+    padding:8px 6px; min-height:44px; font-family:inherit; font-size:11.5px; font-weight:600; line-height:1.2; cursor:pointer;
+    transition:color .14s ease-out; -webkit-tap-highlight-color:transparent;
+  }
+  .choice-seg button.act{ color:#fff; }
+  .choice-seg:focus-within{ outline:2px solid #6a90e0; outline-offset:2px; }
+  .choice-seg button:focus{ outline:none; }
+  /* Hjelpeteksten: den usynlige .choice-measure holder av plass til den
+     lengste av de to tekstene, så raden under ikke hopper når teksten
+     bytter mellom én og to linjer. */
+  .choice-help{ display:grid; margin-top:8px; font-size:11.5px; line-height:1.35; color:rgba(255,255,255,.55); }
+  .choice-measure, .choice-live{ grid-area:1 / 1; }
+  .choice-measure{ display:grid; visibility:hidden; }
+  .choice-measure span{ grid-area:1 / 1; }
+
   /* ---------- "Mitt lag": register screen + Innstillinger screen ----------
      See #registerScreen/#settingsScreen in index.html and the accompanying
      app.js handlers - both are placeholders backed by localStorage only

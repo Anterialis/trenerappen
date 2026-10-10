@@ -353,47 +353,15 @@
 
       <div class="settings-group">
         <p class="settings-group-title">Kampoppførsel</p>
+        <p class="choice-rule"><b>Venstre:</b> kun aktuell kamp. <b>Høyre:</b> alle kamper i økten.</p>
         <div class="settings-group-card">
-          <div class="toggle-row">
-            <div class="toggle-row-text">
-              <p class="toggle-row-label">Kumulert rangering</p>
-              <p class="toggle-row-sub">Trekant-merkene rangerer på total spilletid, ikke bare denne kampen</p>
-            </div>
-            <label class="toggle dark">
-              <input type="checkbox" id="settingsDefaultRankCumulative">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <div class="toggle-row-text">
-              <p class="toggle-row-label">"Bytt om" bruker siste kamp</p>
-              <p class="toggle-row-sub">Ved Kampslutt: sett opp de som spilte minst i forrige kamp, ikke totalt</p>
-            </div>
-            <label class="toggle dark">
-              <input type="checkbox" id="settingsDefaultReorgLastMatch">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <div class="toggle-row-text">
-              <p class="toggle-row-label">Bytteforslag: kumulert spilletid</p>
-              <p class="toggle-row-sub">AV: rangerer på spilletid kun denne kampen. PÅ: rangerer på total spilletid gjennom alle kamper</p>
-            </div>
-            <label class="toggle dark">
-              <input type="checkbox" id="settingsDefaultSwapBasisCumulative">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <div class="toggle-row-text">
-              <p class="toggle-row-label">Bytteforslag: velg innbytter etter lavest spilletid</p>
-              <p class="toggle-row-sub">AV: alltid den som har ventet lengst på benken. PÅ: alltid den med lavest spilletid, selv om det er den som nettopp ble byttet ut</p>
-            </div>
-            <label class="toggle dark">
-              <input type="checkbox" id="settingsDefaultSwapBenchByPlaytime">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
+          <!-- Hver rad bygges av initChoices() i app.js (tittel, to knapper, hjelpetekst) -
+               avkryssingsboksen under er bare tilstandsbæreren: avkrysset = høyre knapp
+               (unntatt «Bytt om», som er snudd, se CHOICES.reorg). -->
+          <div class="choice-row" data-choice="rank"><input type="checkbox" id="settingsDefaultRankCumulative" hidden></div>
+          <div class="choice-row" data-choice="reorg"><input type="checkbox" id="settingsDefaultReorgLastMatch" hidden></div>
+          <div class="choice-row" data-choice="basis"><input type="checkbox" id="settingsDefaultSwapBasisCumulative" hidden></div>
+          <div class="choice-row" data-choice="bench"><input type="checkbox" id="settingsDefaultSwapBenchByPlaytime" hidden></div>
         </div>
       </div>
 
@@ -541,38 +509,10 @@
       </div>
     </div>
 
-    <div class="settings-row" id="rankCumulativeRow">
-      <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Kumulert rangering (trekanter)</span>
-        <button type="button" class="info-btn" data-info="rankCumulative" aria-label="Om kumulert rangering">i</button>
-      </span>
-      <label class="toggle">
-        <input type="checkbox" id="rankByCumulativeToggle">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="settings-row" id="swapSuggestionBasisRow">
-      <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Bytteforslag: kumulert spilletid</span>
-        <button type="button" class="info-btn" data-info="swapSuggestionBasis" aria-label="Om bytteforslagets spilletid-grunnlag">i</button>
-      </span>
-      <label class="toggle">
-        <input type="checkbox" id="swapSuggestionBasisToggle">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="settings-row" id="swapSuggestionBenchModeRow">
-      <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Bytteforslag: innbytter etter lavest spilletid</span>
-        <button type="button" class="info-btn" data-info="swapSuggestionBenchMode" aria-label="Om bytteforslagets innbytter-valg">i</button>
-      </span>
-      <label class="toggle">
-        <input type="checkbox" id="swapSuggestionBenchModeToggle">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
+    <!-- Bygges av initChoices() i app.js, se CHOICES. -->
+    <div class="choice-row" id="rankCumulativeRow" data-choice="rank"><input type="checkbox" id="rankByCumulativeToggle" hidden></div>
+    <div class="choice-row" id="swapSuggestionBasisRow" data-choice="basis"><input type="checkbox" id="swapSuggestionBasisToggle" hidden></div>
+    <div class="choice-row" id="swapSuggestionBenchModeRow" data-choice="bench"><input type="checkbox" id="swapSuggestionBenchModeToggle" hidden></div>
 
     <div id="transferOwnerRow" hidden>
       <div class="confirm-wrap" id="transferOwnerWrap">
