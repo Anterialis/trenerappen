@@ -1,366 +1,116 @@
-# Trenerappen — prosjektoppsummering
+# Trenerappen - prosjektoppsummering
 
-## Hva dette er
+Webapp for André, trener for et guttelag (barnefotball, cup). Holder styr på hvem som er på banen/benken, hvor lenge, og gir rettferdige bytteforslag. Brukes på iPhone som PWA ("Legg til på Hjemskjerm"), live under kamp.
 
-En enkel-fil webapp for André, trener for et gutte-G6-lag, som skal hjelpe ham holde
-styr på hvem som er ute på banen, hvem som sitter på benken, og hvor lenge — under
-en fotballcup. Bygget iterativt gjennom en samtale med Claude (uten Claude Code /
-IDE), og skal nå videreføres i VS Code med Claude Code.
+**Drift:** GitHub `Anterialis/trenerappen` → Netlify (auto-deploy ved push til `main`, `trenerappen.netlify.app`). Supabase for deling, historikk og kontoer. Arbeidsregler (versjon, sjekker, push) står i `CLAUDE.md`.
 
-**Filer:** `index.html` (markup), `style.css` (all CSS) og `app.js` (all JavaScript) -
-delt opp fra én fil til tre i v1.8.4, da index.html hadde vokst forbi 4000 linjer og
-ble tungvint å navigere. Fortsatt **ingen build-steg, ingen node_modules, ingen
-bundler** - `style.css`/`app.js` er vanlige statiske filer koblet inn med
-`<link rel="stylesheet">`/`<script src>`, akkurat som eksterne CDN-scripts allerede
-var. Netlify serverer dem uendret, ingen kompilering. Repoet pushes til
-`https://github.com/Anterialis/trenerappen.git` → Netlify (auto-deploy), hostet på
-`trenerappen.netlify.app`, og brukes på iPhone via "Legg til på Hjemskjerm" (fungerer
-som en enkel PWA).
+## Arkitektur (bevisste valg - respekter dem)
 
-**Nåværende versjon:** v1.8.4 (vises nederst i innstillinger-vinduet i appen selv).
+- **Ingen build, ingen npm, ingen bundler.** Statiske filer som Netlify serverer uendret. TypeScript/rammeverk er vurdert og avvist: feilene har vært CSS/arkitektur, ikke typer. I stedet `// @ts-check` + JSDoc i `app.js` (se `CLAUDE.md` for sjekken).
+- **Vanlig JavaScript i ES5-stil, én IIFE.** Ingen `class`, moduler eller `async/await` (Supabase bruker `.then()`).
+- **Tidsbasert state, ikke tellere.** Alle klokker lagrer `{baseElapsedMs, sinceTs}` og regner ut nåverdien ved hver tegning. Derfor overlever de at iOS fryser JS i bakgrunnen. Pause = flytt `sinceTs` inn i `baseElapsedMs` (`freezeTimersAt`).
+- **`localStorage` er primærlagring** (nøkkel `spillerbytte_v4`), lagret ved hver endring + hvert 8. sekund lokalt + når appen skjules. Endres formen på `state` uten bakoverkompatibilitet, bump `STORAGE_KEY`; ellers løses det i `normalizeState()`.
+- **Fast telefonramme** (`#viewport-frame`/`#app`, 440×956): fyller skjermen på iPhone, letterboxet "telefon" på desktop. Siden skal ikke kunne scrolles (`touch-action:none` + `touchmove`-sperre, unntatt scrollbare elementer); høyden settes fra `visualViewport` (`applyRealViewportHeight`) pga. iOS-feil ved kaldstart. Begrunnelsene står som kommentarer i `style.css`.
+- **`hidden`-fellen:** en klasse som setter `display` ubetinget slår `[hidden]`. Legg til `.klasse[hidden]{display:none}` ved alle nye elementer som veksles med `el.hidden`, og test begge tilstander.
 
----
+## Filer
 
-## Hvorfor arkitekturen er som den er
+| Fil | Innhold |
+|---|---|
+| `index.html` | Markup: launcher, bane/benk, alle vinduer/modaler. Henter supabase-js fra CDN. |
+| `style.css` | All CSS. |
+| `app.js` | All logikk (~7000 linjer), delt i seksjoner under. |
+| `sw.js` | Service worker: nettverk først, cachet skall som fallback offline. `CACHE_NAME` må følge `APP_VERSION`. |
+| `manifest.json`, `icon-*.png` | PWA. |
+| `supabase/migrations/` | `team_settings` og `visible_until` (resten av skjemaet: se under). |
+| `.github/workflows/keep-supabase-alive.yml` | Man/tor: pinger Supabase (hindrer pause av gratisprosjektet) og sletter `sessions`-rader eldre enn 60 dager. |
 
-Dette er bevisste valg gjort tidlig i prosjektet, ikke tilfeldigheter — verdt å
-respektere om dere fortsetter å bygge videre:
+**`app.js` i grove trekk:** konfig/konstanter og typedefs → state (`defaultState`, `normalizeState`, lagring, `pushRemoteState`) → delt økt (`createNewSession`, `joinSession`, `subscribeToSession`, `canEdit`, `isMaster`) → konto/historikk/Mitt lag → tidsfunksjoner og rangering → undo/redo → tegning (`renderField/Bench/All`, `updateTimersOnly`) → trykk/dra/bytte → play/pause og glemt kampslutt → innstillinger (modal + skjerm) → mål/kampresultat/Kampslutt/nullstill → `init()` med alle lyttere.
 
-- **Én fil, ingen build-verktøy.** André redigerer aldri koden selv — han ber Claude
-  om endringer og drar den ferdige filen inn på Netlify. Et build-steg (f.eks.
-  TypeScript, bundling) ble vurdert og eksplisitt avvist, siden det ville krevd
-  verktøy han ikke har/vil ha, uten å adressere de faktiske feilene som har dukket
-  opp underveis (se "Feil vi har funnet" nedenfor — ingen av dem var type-feil).
-- **Vanlig JavaScript (ES5-aktig stil), IIFE-innpakket.** Ingen `class`, ingen
-  moduler, ingen `async/await` (kun `.then()`-kjeder for Supabase-kall). Dette er et
-  bevisst, konsekvent valg gjennom hele filen — ikke inkonsekvens.
-- **Tidsbasert tilstand, ikke tellere.** Alle klokker (byttetid, benktid, kampklokke)
-  lagrer et `sinceTs`-tidsstempel + en akkumulert base, og regner ut "nåværende verdi"
-  live ved hvert render. Dette er *grunnen til* at klokkene overlever at iOS fryser
-  JavaScript når skjermen låses eller appen legges i bakgrunnen — når appen våkner
-  igjen, regnes riktig forløpt tid ut umiddelbart fra tidsstemplene, uten drift.
-- **`localStorage` som primær lagring**, med periodisk lagring (hvert 8. sekund) og
-  lagring når appen skjules, som ekstra sikkerhet.
-- **Fast sideforhold-ramme** (`#viewport-frame` / `#app`), matchet mot iPhone 17 Pro
-  Max (440×956pt). Fyller skjermen kant-til-kant på faktiske iPhoner; på andre
-  skjermformer (Mac-nettleser) vises en avrundet, "letterboxed" ramme i stedet for å
-  strekke innholdet ut av form.
-- **Siden skal helst ikke kunne scrolles** (verken vertikalt eller horisontalt),
-  selv om `html`/`body` fortsatt bruker vanlig dokumentflyt og ikke
-  `position:fixed`+`overflow:hidden` (se "hvorfor ikke `position:fixed`" nederst
-  i dette punktet).
-  - `touch-action:none` på `html,body` i `style.css`, med `touch-action:pan-y`
-    eksplisitt satt tilbake på hvert reelt scrollbart element (`#field`, `#bench`,
-    `.modal-card`, `.suggest-list`, `.history-list`, `.version-history-list`,
-    `.goal-player-list`, `.end-match-summary`) - stopper nettleserens *standard*
-    panorerings-/zoom-håndtering av touch. Denne står fast.
-  - En `touchmove`-listener på `document` som selv kaller `preventDefault()`
-    (med mindre trykket startet inni et reelt scrollbart element - `#field`,
-    `#bench`, `.modal-card`, `.suggest-list`, osv., samme liste som over).
-    `touch-action:none` alene lot header midlertidig gli opp under iPhone sin
-    halvtransparente statuslinje-overlay under selve draget (leste som
-    "diffuse ikoner" helt øverst - ikke noe tegnet av oss, det var iOS sin
-    egen live status-bar-dimming som traff header mens den var i bevegelse).
-    **Testet fjernet én gang (2026-09-20)** for å se om `touch-action:none`
-    alene var nok, nå som header har mer klaring - det var det ikke: André
-    fikk fortsatt en vedvarende forskyvning som ikke sprettet tilbake, så
-    denne er lagt tilbake for godt.
-  - **Hvorfor ikke `position:fixed` på `#app`/`html`/`body` i stedet** (ville
-    løst scroll-problemet mer direkte): `#app`/`#viewport-frame` sin høyde er
-    `100dvh`, og på iOS i standalone-PWA-modus har det ved kaldstart forekommet
-    at `100dvh` måles feil et lite øyeblikk før layouten regnes om - kombinert
-    med `position:fixed`+`overflow:hidden` ville et slikt øyeblikk usynlig
-    *kuttet av bunnen av appen* ("black bar"-bugen) i stedet for at det bare
-    ble en kort, ufarlig scroll-mulighet. Se kommentaren over `#viewport-frame`
-    i `style.css` for den fulle begrunnelsen. Scroll-låsen (touch-action +
-    touchmove-sperre) løser selve scroll-opplevelsen uten å røre ved den
-    avveiningen.
-  - **Denne kaldstart-avveiningen slo faktisk ut i praksis (2026-09-20):** et
-    synlig blått (navy `body`-bakgrunn) felt under innbytterbenken ved aller
-    første åpning i portrettmodus, som forsvant etter å ha rotert til
-    landskap og tilbake. `applyRealViewportHeight()` i `app.js` fikser dette
-    aktivt nå - setter en eksplisitt, JS-målt pikselhøyde
-    (`visualViewport.height`) på `#viewport-frame`/`#app` i stedet for å
-    stole blindt på at ren CSS `100dvh` korrigerer seg selv. Kjøres på de
-    samme "Safari-chrome har satt seg"-signalene som `renderPitchMarkings()`
-    allerede lyttet på (visualViewport-resize, vanlig resize/orientationchange,
-    og en 400ms-fallback ved oppstart) - se `updateFrameFit()`-kommentaren i
-    `app.js`. Hoppes bevisst over på ikke-touch (desktop-preview-modus), så
-    den aldri kolliderer med den letterboxede rammens egen bredde/høyde-utregning.
+## State (`state`, versjonert i `STORAGE_KEY`)
 
----
+`players[{id,name}]`, `onField[]`, `onBench[]`, `fieldTimers/benchTimers{id:{baseElapsedMs,sinceTs}}`, `cumulative{id:{fieldMs,benchMs}}` (total på tvers av kamper i økten), `periodStartCumulative` (baseline for "denne kampen"), `matchClock`, `globalRunning`, `matchDurationMs`, `defaultDurationMs` (byttetid), `fieldSize`, `fieldSlotAssignment` (posisjon per plass), `goalLog`, `swapCount`, `opponentName/Abbr`, `matchHistory` (kamper i økten), innstillinger (`rankByCumulative`, `reorgUsesLastMatch`, `swapSuggestionBasis`, `swapSuggestionBenchMode`), deling (`shareEditable`, `sessionOwnerDeviceId`, `participants`), og `rev`, `lastActivityAt`, `lastPlayAt`, `continueCount`.
 
-## Datamodell (hovedtilstanden, `state`)
+Andre `localStorage`-nøkler: `*_session_code_v1`, `*_device_id_v1` (stabil enhets-id), `*_coach_defaults_v1`, `*_roster_v1` (navnehistorikk), `*_coinflip_colors_v1`, `*_wakelock_v1` (per enhet), `*_history_login_lock_v1`, `spillerbytte_last_alive` (hjerteslag).
 
-```js
-{
-  players: [{id, name}],           // hele stallen
-  onField: [id, id, ...],          // ordnet array, rekkefølge har ingen visuell betydning lenger
-  onBench: [id, id, ...],
-  fieldTimers: { [id]: {baseElapsedMs, sinceTs} },     // stoppeklokke for utespillere (teller oppover)
-  benchTimers: { [id]: {baseElapsedMs, sinceTs} },     // stoppeklokke for benkespillere
-  cumulative:  { [id]: {fieldMs, benchMs} },           // livstids-total, tvers av bytter og "Kampslutt"
-  matchClock:  { baseElapsedMs, sinceTs },             // overordnet kampklokke
-  globalRunning: bool,              // Play/Pause-tilstand, styrer ALLE klokker samtidig
-  defaultDurationMs: number,        // standard byttetid, brukervalgt
-  fieldSize: number,                // antall utespillere samtidig, låst under aktiv kamp
-  wakeLockEnabled: bool             // bruker-valg for skjerm-våken-funksjonen
-}
-```
+## Funksjoner
 
-Persisteres i `localStorage` under nøkkelen `spillerbytte_v4`. Nøkkelen er
-versjonert — den er bumpet manuelt fire ganger tidligere når datastrukturen endret
-seg på en måte som ikke var bakoverkompatibel (f.eks. da `onField` gikk fra objekt
-med koordinater til et rent array, og senest da `fieldTimers` gikk fra nedtelling
-til stoppeklokke). **Viktig regel å videreføre:** enhver endring som endrer formen
-på `state` bør bumpe `STORAGE_KEY`, ellers kan gamle lagrede tilstander krasje
-appen ved oppstart.
+**Bane og bytter**
+- Fotballbane (SVG tegnes dynamisk) med utespillere; innbytterbenk under. 1-11 på banen: 1-5 uten posisjoner, fra 6 med keeper og linjer (7: 1-3-2-1 osv.). Fra 5 har plassene faste posisjoner (K/B/M/S + venstre/midt/høyre); en innbytter arver plassen til den som går ut, og to utespillere kan bytte plass.
+- Bytte: dra over en annen spiller, eller trykk én og så en i motsatt sone. «Slipp for å bytte»-kort (navn + pulserende grønn tekst) vises mens du drar over en gyldig partner. **multiBytte** (flere ut/inn samtidig) og **Forslag** (appen foreslår hvem som går ut/inn, bekreftes med nytt trykk).
+- Spillerinfo-popup ved trykk: posisjon, spilletid og innbyttertid som K (denne kampen) og T (totalt), og forklaring.
+- **Angre/Gjenta** (3 trinn, kun lokalt), nås fra ↩ øverst til venstre sammen med «Gå til hovedmeny».
 
-To andre localStorage-nøkler ved siden av:
-- `spillerbytte_roster_v1` — historikk over alle navn noensinne brukt (for
-  hurtigvalg/autocomplete i innstillinger), uavhengig av `state`.
-- `spillerbytte_session_code_v1` — hvilken delt økt-kode (om noen) denne enheten er
-  koblet til (se server-delen under).
+**Tid**
+- Stoppeklokke per spiller (alltid oppover), kampklokke (fryser på kamptiden) med nedtelling/overtid ved siden av. ▶/⏸ styrer alle klokker. Trykk på klokka: velg kamptid (hjul). Byttemerke ⇅: oransje når byttetiden er nådd, rødt og pulserende ved 150 %, med lyd.
+- **Rangeringstrekanter** (rød ▲▲/▲ mest, blå ▼/▼▼ minst) etter denne kampen eller total, med buffer mot jevne tider (10 % → 2,5 % utover kampen). Oppdateres på klokketikket (første gang etter 30 s), på plass uten ny tegning.
+- **Forslag** velger utespiller (blant dem som har passert byttetiden) etter mest spilletid denne kampen/totalt, og innbytter etter lengst ventetid siden forrige bytte eller minst spilletid denne kampen.
+- **Auto-pause** av en gående klokke etter 60 min uten hjerteslag (appen lukket), uten å kreditere gapet som spilletid. Skjerm-våken (per enhet, Innstillinger på hjemskjermen).
 
----
+**Mål og resultat**
+- Hjemme-mål krever spiller (liste: banen først, så innbyttere, gruppert etter posisjon fra 6 på banen), borte-mål er anonyme. Tallene ved klokka: trykk = legg til, langt trykk = fjern. Bekreftelse ved nytt mål innen 30 s og ved mål på innbytter. Målmerke på spiller, målliste per spiller.
+- Motstander (navn + forkortelse) spørres ved ny kamp. **Kampresultat**-popup ved Kampslutt/Avslutt: score, mål, spilletid per spiller (K og T), antall bytter.
+- **Kampslutt:** beholder lag og kumulert tid, nullstiller periode, mål og klokke; spør om lagring til historikk og om automatisk omrokkering (de som har spilt minst først, etter siste kamp eller totalt). **Avslutt og nullstill:** full reset (eier). **Forlat kampen/økten** er ren navigasjon.
+- «Eksporter spillerdata»: kopierbar tekst med kumulert tid og kamper i økten.
 
-## Full funksjonsliste
+**Glemt kampslutt** (`forgottenMatchInfo`): kamptiden er ute og det har vært *kontinuerlig* stille (ingen spillhandling: bytte, mål, flytting, angre, start/pause) i (1 + antall «Fortsett») × 20 % av kamplengden, regnet fra det seneste av full tid og siste handling. Da vises arket «Kampen er satt på pause» (klokka går videre i bakgrunnen) mens appen er i bruk, ved Avslutt og når appen åpnes igjen:
+- **Tilbakestill til kampslutt**: klokka og alles live-tider settes til det seneste av kamplengden og siste handling, klokka pauses, kan angres. Allerede avsluttede stints (bytter i overtiden) røres ikke.
+- **Fortsett**: neste spørsmål krever 2×, 3× … så lang stille tid; klokka lyser og en boble peker på den i 10 s. Telleren nullstilles ved endret kamptid, manuell justering og Kampslutt.
+- **Still manuelt**: «Trekk fra tid» eller «Sett klokka til». Samme vindu fra Korriger tid og overtidsklokka. «Fjern dødtid siden siste handling» ligger i Korriger tid.
+- Gammelt spørsmål etter 1 t uten aktivitet («avslutt perioden?»), og 30 t («nullstill?»), bruker samme mål.
 
-**Kjernefunksjon**
-- Fotballbane øverst (dynamisk tegnet SVG — sirkel og 16-meter beholder alltid
-  riktig form uansett skjermhøyde, se `renderPitchMarkings()`), innbytterbenk
-  nederst.
-- Dra-og-slipp spillere mellom bane/benk.
-- Trykk-trykk-bytte: marker én spiller, trykk en i motsatt sone, de bytter og
-  tidene resettes.
-- Stoppeklokke på både ute- og benkespillere (teller alltid oppover fra 0, aldri
-  nedtelling). Utespillere: rødt utropstegn + lyd + rød skrift på klokka når
-  standard byttetid er nådd — klokka fortsetter å telle etter det, ikke stopp.
-- Global Play/Pause som fryser/gjenopptar *alle* klokker samtidig (inkl.
-  kampklokke).
-- Utespillere sortert automatisk: lengst til høyre = spilt lengst (klar for
-  bytte). Benkespillere: lengst til høyre = ventet lengst.
+**Innstillinger**
+- *Hjemskjermen (Innstillinger):* standardverdier for ny økt (lagnavn/forkortelse, kamptid, byttetid, kampformat 3/5/7/11, fire Kampoppførsel-valg), «Denne enheten» (skjerm-våken), symbolforklaring. Lagres lokalt, og i `team_settings` for innlogget konto.
+- *Under kampen (⚙):* spillere, byttetid, Kampoppførsel for denne økten (sammenleggbar), deling, Korriger tid, eksport. Kamptid og kampformat kun ved oppsett av ny økt. Eier-valg er låst for andre deltakere.
+- **Kampoppførsel** = fire to-knapps-valg (venstre = kun aktuell kamp, høyre = alle kamper i økten): trekantsymboler, «Bytt om» ved Kampslutt, bytteforslag utespiller, bytteforslag innbytter. Lagres som boolske flagg (skjult avkryssingsboks er tilstandsbærer; «Bytt om» er snudd i visningen). Tallvalg (kamptid/byttetid) er knapper i hele minutter, ikke tastatur. Titlene har samme symboler som banen.
 
-**Historikk og rettferdighet**
-- Kumulert spillertid/innbyttertid per spiller, på tvers av alle bytter og
-  "Kampslutt".
-- Fire rangeringssymboler (▲▲ mest, ▲ nest mest, ▼ nest minst, ▼▼ minst) vist på
-  riktig spiller uansett sone, for å velge rettferdig neste kamp-oppstilling.
-- "Angre"-knapp (ett nivå), gjenoppretter *nøyaktig* forrige tilstand inkl.
-  tidsforløp som skjedde mens feilen sto (se `snapshotState`/`restoreState`).
-- "Eksporter spillerdata" — kopierbar tekstoppsummering, manuell backup.
+**Launcher (hjemskjerm):** Trenerappen (Fortsett / Ny økt / Bli med med kode), Myntkast (lagfarger + kast), Innstillinger, Historikk (kun innlogget), konto-ikon (Mitt lag), versjon nederst (trykk: endringslogg `VERSION_HISTORY`).
 
-**Kampstyring**
-- "Avslutt"-knapp (rød) → to valg:
-  - **Kampslutt**: beholder lag og kumulerte tall, nullstiller kun aktuell
-    periode-tid. Spør i tillegg om å automatisk sette opp neste kamp med de som
-    har spilt minst på banen (animert omrokkering, ~2 sek, se
-    `animateReorganization`).
-  - **Avslutt og nullstill**: full reset, tilbake til navneregistrering.
-- "Antall utespillere"-innstilling, låst (grået) under aktiv kamp — kun
-  redigerbar rett etter full nullstilling.
-- Kampklokke (stadion-look, øverst på banen).
+**Oppdatering/offline:** appen henter `/app.js` uten cache, sammenligner `APP_VERSION` og laster seg selv på nytt ved ny versjon (maks ett forsøk per versjon). Service worker gir offline-oppstart.
 
-**Robusthet for live bruk**
-- Screen Wake Lock (av/på-bryter i innstillinger) — hindrer skjermlås under kamp.
-- Lyd ved tid-ute (Web Audio, ingen ekstern fil).
-- Periodisk + hendelsesbasert lagring, gjenoppretting ved retur fra bakgrunn.
-- Systematisk fuzz-testet bytte-/dra-logikk (Node-simuleringer under utvikling)
-  for å luke ut duplisering/data-tap.
+## Delt økt (Supabase `sessions`)
 
-**Deling mellom enheter (se egen seksjon under)**
-- Ingen valg ved oppstart lenger — appen går alltid rett til navneregistrering
-  (lokal, ikke delt, som standard). Deling styres av en av/på-bryter ("Del økt
-  med andre") i innstillinger: PÅ oppretter en ny delt økt (tresifret kode vises
-  under headeren), AV forlater økten lokalt (raden slettes ikke server-side).
-  En egen knapp i innstillinger ("🔗 Bli med i delt økt") lar deg i stedet koble
-  til en økt noen andre allerede har startet, via koden deres. Sanntidssynk via
-  Supabase.
+- Tresifret kode = eneste "nøkkel" (RLS er åpen, ingen innlogging). **Eier** = enheten som opprettet økten (`sessionOwnerDeviceId`, stabil enhets-id); eier styrer spillere, tider, Kampoppførsel, deling, nullstilling og kan overføre eierskap til den som har vært med lengst. Tilgang for andre: Redigering eller Kun les (`canEdit()`/`isMaster()`).
+- `saveState()` → lokalt + `pushRemoteState()` (update av raden). Hver enhet har en `deviceOrigin` per sideinnlasting for å ignorere eget ekko fra realtime.
+- **Konflikt:** siste skriving vinner. `state.rev` øker ved hver push og forkaster *foreldede* oppdateringer (en sovende fane kan ikke overskrive en pågående kamp); `resetMatch` bevarer `rev`. Lesere skriver aldri. Angre/Gjenta-historikken tømmes når en enhet får state utenfra.
+- Kode velges blant ledige (`pickFreeCode`). Synk-prikk i kodefeltet viser nett/kanal-status.
 
-**Utseende**
-- Apple-glasseffekter (`backdrop-filter: blur`) på modaler og info-boble.
-- Fast sideforhold-ramme, avrundet/med kant kun når skjermformen ikke matcher
-  iPhone.
-- Eget PWA-ikon (generert med Pillow, embedet som base64 — se
-  `apple-touch-icon`), full web manifest embedet som data-URI.
-- Symbolforklaring i innstillinger, forklarer alle badges/symboler i appen.
+## Kontoer og historikk
 
----
+- **Mitt lag:** e-post/passord via Supabase Auth (registrering i appen). Innlogget konto synkroniserer standardverdiene til `team_settings`.
+- **Historikk** (delt, varig): ferdige kamper lagres til `match_history` etter spørsmål ved Kampslutt/Avslutt (motstander, resultat, mål med scorer og tid, spilletid og mål per spiller; navn lagres som tekst). Uten innlogging kan enhver enhet *legge til*; kun admin leser/endrer/sletter (RLS mot `admins`). Admin kan dele en kamp med andre innloggede i et antall dager (`visible_until`). Innloggingsforsøk begrenses lokalt (`history_login_lock`). Brukernavnet "Anterialis" er et klientalias for admin-e-posten.
 
-## Server-funksjonen: Supabase (deling mellom enheter)
+### SQL som ikke ligger i `supabase/migrations/` (kjørt manuelt)
 
-Dette er det eneste elementet som *ikke* er 100% klient-side. Vi bruker
-**Supabase** (Postgres + sanntids-API) som en ren datalagring-i-bakgrunnen — ingen
-egen backend-kode, ingen server vi drifter selv.
-
-**Tilkobling** (i `app.js`, øverst):
-```js
-var SUPABASE_URL = 'https://nueguoxkynwgmynccaro.supabase.co';
-var SUPABASE_KEY = 'sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV'; // offentlig nøkkel, trygg i klientkode
-```
-Lastes via CDN (`@supabase/supabase-js@2` UMD-bygg) — ingen npm-installasjon.
-
-**SQL som er kjørt i Supabase sin SQL Editor** (finnes ikke som fil i repoet — kun
-kjørt manuelt av André i Supabase-dashbordet):
 ```sql
-create table if not exists sessions (
-  code text primary key,
-  data jsonb not null,
-  origin text,
-  updated_at timestamptz not null default now()
-);
-
+create table if not exists sessions (code text primary key, data jsonb not null, origin text, updated_at timestamptz not null default now());
 alter table sessions enable row level security;
-
-create policy "Public read access" on sessions
-  for select using (true);
-
-create policy "Public insert access" on sessions
-  for insert with check (true);
-
-create policy "Public update access" on sessions
-  for update using (true);
-
+create policy "Public read access"   on sessions for select using (true);
+create policy "Public insert access" on sessions for insert with check (true);
+create policy "Public update access" on sessions for update using (true);
+create policy "Public delete access" on sessions for delete using (true);   -- trengs av opprydding-jobben
 alter publication supabase_realtime add table sessions;
-```
-Merk: helt åpne RLS-policyer — koden (tresifret) er den eneste "nøkkelen" til en
-økt, siden appen ikke har brukerinnlogging. Bevisst forenkling for et lite,
-uformelt bruksområde.
 
-**Delete-policy** (kjør denne manuelt om den ikke allerede finnes — kreves for at
-opprydding-jobben i `.github/workflows/keep-supabase-alive.yml` faktisk skal
-kunne slette noe, se den filen for detaljer):
-```sql
-create policy "Public delete access" on sessions
-  for delete using (true);
-```
-
-**`match_history` / `admins`** (satt opp 2026-09-19, samme Supabase-prosjekt som
-`sessions` men et helt annet tillitsmodell): den delte, varige "Historikk" på
-hjemskjermen — motstander, resultat, spilletid per spiller — lagret i databasen
-i stedet for `localStorage`, slik at den overlever på tvers av enheter. Enhver
-enhet kan lagre et ferdig kamp-resultat uten innlogging, men **kun en admin kan
-lese, endre eller slette** — håndhevet av Postgres RLS, ikke av klientkoden:
-```sql
 create table if not exists public.match_history (
-  id uuid primary key default gen_random_uuid(),
-  ended_at timestamptz not null,
-  opponent_name text not null default '',
-  opponent_abbr text not null default '',
-  home_score integer not null default 0,
-  away_score integer not null default 0,
-  players jsonb not null default '[]'::jsonb,
-  goals jsonb not null default '[]'::jsonb,
-  visible_until timestamptz,
-  origin text,
-  created_at timestamptz not null default now()
-);
+  id uuid primary key default gen_random_uuid(), ended_at timestamptz not null,
+  opponent_name text not null default '', opponent_abbr text not null default '',
+  home_score integer not null default 0, away_score integer not null default 0,
+  players jsonb not null default '[]', goals jsonb not null default '[]',
+  visible_until timestamptz, origin text, created_at timestamptz not null default now());
 alter table public.match_history enable row level security;
-
--- `goals` (v2.0.7) og `visible_until` (v2.1) ble lagt til denne tabellen
--- senere enn det opprinnelige oppsettet over, via `alter table ... add
--- column if not exists ...` kjørt manuelt i Supabase - de har alltid stått
--- her i selve create-table-blokken for at dette dokumentet skal vise
--- gjeldende skjema, ikke den historiske rekkefølgen. VIKTIG: `goals` sto i
--- praksis IKKE i databasen fra v2.0.7 til v2.2.2 (bare i denne kodekommentaren
--- sin intensjon) - en insert med en ukjent kolonne feiler for HELE raden i
--- Postgres/PostgREST, så ingen kamp lot seg lagre til delt Historikk i hele
--- den perioden, uten noen synlig feilmelding (kun console.warn). Lærdom:
--- når en ny kolonne tas i bruk i app.js, oppdater denne SQL-blokken OG kjør
--- alter table-setningen i Supabase i samme slengen - ikke bare den ene.
---
--- Ingen policyer i det hele tatt her - default-deny, kun service_role
--- (aldri klientkoden) kan lese/skrive. auth.uid() alene er IKKE nok til å
--- regnes som admin - måtte også stått i denne tabellen - så et vanlig
--- Supabase Auth-signup (om det noensinne åpnes) gir ikke automatisk tilgang.
-create table if not exists public.admins (
-  user_id uuid primary key references auth.users(id) on delete cascade
-);
-alter table public.admins enable row level security;
-
-create policy "Public insert access" on public.match_history
-  for insert with check (true);
-create policy "Admin select access" on public.match_history
-  for select using (exists (select 1 from public.admins where user_id = auth.uid()));
-create policy "Admin update access" on public.match_history
-  for update using (exists (select 1 from public.admins where user_id = auth.uid()));
-create policy "Admin delete access" on public.match_history
-  for delete using (exists (select 1 from public.admins where user_id = auth.uid()));
+create table if not exists public.admins (user_id uuid primary key references auth.users(id) on delete cascade);
+alter table public.admins enable row level security;   -- ingen policyer: kun service_role
+create policy "Public insert access" on public.match_history for insert with check (true);
+create policy "Admin select access" on public.match_history for select using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin update access" on public.match_history for update using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin delete access" on public.match_history for delete using (exists (select 1 from public.admins where user_id = auth.uid()));
+-- admin: insert into public.admins (user_id) values ((select id from auth.users where email = '...'));
 ```
-Admin-kontoen(e) opprettes manuelt i Supabase-dashbordet (Authentication →
-Users) — appen har ingen selvregistrering. Etter å ha opprettet en bruker der,
-legg dem til i `admins`:
-```sql
-insert into public.admins (user_id)
-values ((select id from auth.users where email = 'the-admins-email@example.com'));
-```
-Klienten (`app.js`) logger inn via `sb.auth.signInWithPassword(...)` i
-Historikk-skjermen; samme `sb`-klient som gjør de åpne `sessions`-kallene
-bærer automatisk med seg admin-brukerens token etter innlogging.
 
-**Hvordan synkroniseringen fungerer:**
-- `saveState()` er delt i `saveStateLocally()` (alltid) + `pushRemoteState()` (kun
-  hvis enheten er koblet til en økt) — `pushRemoteState` gjør en Supabase
-  `update()` på raden med riktig `code`.
-- Hver enhet har en tilfeldig generert `deviceOrigin`-streng (per sideinnlasting).
-  Denne sendes med hver skriving, og brukes til å **ignorere egne ekko** når
-  sanntids-oppdateringer kommer tilbake via `subscribeToSession()` — uten dette
-  ville en enhet trigget en unødvendig re-render av sin egen nettopp-sendte
-  endring.
-- **"Siste skriving vinner"** — ingen konflikthåndtering utover det. Vurdert
-  tilstrekkelig for en trener + evt. én assistent, ikke bygget for samtidig bruk
-  av mange.
-- `createNewSession()` henter først alle koder som allerede er i bruk
-  (`pickFreeCode()`) og trekker tilfeldig blant de resterende ledige - lykkes i
-  ett forsøk helt til tabellen bokstavelig talt er 100 % full, i motsetning til
-  den gamle "gjett blindt og prøv igjen" (fortsatt med som fallback ved
-  nettverksfeil på oppslaget, eller det sjeldne kappløpet der to enheter
-  henter den samme "ledige" koden samtidig - da feiler selve innsettingen på
-  tabellens unike-constraint uansett, og det er da den blinde retry-loopen
-  (inntil 5 forsøk) faktisk redder situasjonen).
-- `joinSession(code, onOk, onFail)` henter raden, adopterer dataene som lokal
-  `state`, og abonnerer på fremtidige endringer.
+**Når en ny kolonne tas i bruk i `app.js`:** legg den til i SQL/migrasjon *og* kjør `alter table` i Supabase samtidig (en insert med ukjent kolonne feiler hele raden; slik ble ingen kamp lagret til historikk i en periode). Admin-kontoer opprettes manuelt i Supabase.
 
-**`sessions`-sanntidssynkroniseringen er ikke testet mot ekte Supabase av
-Claude** — kun testet grundig med en simulert/mocket backend (se
-utviklingshistorikk); bør verifiseres live (åpne appen i to faner/enheter, gjør
-en endring i den ene, se at den dukker opp i den andre). `match_history`/`admins`
-derimot *er* satt opp og verifisert direkte mot den ekte databasen (Supabase
-CLI, `supabase db query --linked`, koblet til prosjektet via `supabase link`) —
-tabellene, RLS-policyene og selve lagre/hente/slette-flyten fra appen er alle
-bekreftet å faktisk virke, inkludert at en anonym `select`/`delete` blir
-blokkert av RLS (tomt resultat, ingen rader slettet).
+## Kjente begrensninger
 
----
-
-## Kjente begrensninger / ting å huske på videre
-
-- **Ingen ekte felt-for-felt konflikthåndtering** i delt økt fortsatt - to
-  ekte, samtidige redigeringer (to medtrenere som begge gjør et bytte i
-  samme sekund) avgjøres fortsatt av hvem sin skriving ankommer sist, ikke
-  en smart sammenslåing. Det som **er** fikset (2026-09-20, se `state.rev`
-  og `isNewerRevision()` i `app.js`): en *foreldet* skriving fra en enhet
-  som har ligget lenge inaktiv (f.eks. en leser-enhets nettleserfane som lå
-  suspendert i timevis, våknet, og gjenoppfrisket tilkoblingen) kan ikke
-  lenger overskrive en aktivt pågående kamp - dette var årsaken til en reell
-  hendelse der en leser-enhet (som aldri skulle kunne skrive i det hele tatt)
-  plutselig erstattet fjerde kamps korrekte, ferske spilletider med en
-  "spøkelses"-tilstand fra kamp 2, flere titalls minutter for gammel. To lag
-  beskyttelse nå: (1) leser-enheter (`!canEdit()`) hindres fra å skrive i det
-  hele tatt ved gjentilkobling/bakgrunnslegging (`flushState()`,
-  `subscribeToSession()`s reconnect, `online`-eventet), og (2) et stigende
-  `state.rev`-tall (økes ved hver faktiske skriving) gjør at *enhver* enhet
-  kan avvise en innkommende tilstand som er eldre enn den de allerede har -
-  fungerer uavhengig av rettigheter, så selv en skrive-enhet som selv har
-  ligget inaktiv lenge nok blir fanget opp.
-- **Ingen splash-screens** for PWA-oppstart (kun ikon + manifest, ikke egne
-  oppstartsbilder per skjermstørrelse) — vurdert, men nedprioritert som lav verdi
-  for innsatsen.
-- Et forslag som ble diskutert men **ikke bygget**: et gult "snart tid ute"-varsel
-  (f.eks. når under 30 sek gjenstår), som et forvarsel før det røde
-  utropstegnet.
-
-## Foreslått, ikke bygget
-
-- 30-sekunders forvarsel (nevnt over).
-- Splash-screens for PWA.
+- Ingen felt-for-felt-sammenslåing: to samtidige redigeringer avgjøres av hvem som skriver sist. Gjelder også bytter etter full tid som allerede er lagt til spillernes totaltid (rulles ikke tilbake av «Tilbakestill til kampslutt»).
+- Sanntidssynk er testet med en mocket backend og i bruk, ikke med automatiske tester mot ekte Supabase.
+- Ingen splash-screens for PWA. Ikke bygget: 30-sekunders forvarsel (gult) før byttemerket.
