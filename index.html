@@ -323,21 +323,13 @@
       <div class="settings-group">
         <p class="settings-group-title">Standardverdier for ny kamp</p>
         <div class="settings-group-card">
-          <div class="stepper-row">
-            <span class="settings-row-label">Kamptid</span>
-            <div class="stepper">
-              <button type="button" class="stepper-btn" id="settingsMatchDurationMinus" aria-label="Reduser kamptid">–</button>
-              <span class="stepper-value" id="settingsMatchDurationValue"></span>
-              <button type="button" class="stepper-btn" id="settingsMatchDurationPlus" aria-label="Øk kamptid">+</button>
-            </div>
+          <div class="step-row">
+            <div class="step-text"><p class="choice-title">Kamptid <span class="sym-lcd" aria-hidden="true">10:00</span></p><p class="choice-q">Lengde på hele kampen</p></div>
+            <div id="settingsMatchDurationStep"></div>
           </div>
-          <div class="stepper-row">
-            <span class="settings-row-label">Byttetid</span>
-            <div class="stepper">
-              <button type="button" class="stepper-btn" id="settingsSwapDurationMinus" aria-label="Reduser byttetid">–</button>
-              <span class="stepper-value" id="settingsSwapDurationValue"></span>
-              <button type="button" class="stepper-btn" id="settingsSwapDurationPlus" aria-label="Øk byttetid">+</button>
-            </div>
+          <div class="step-row">
+            <div class="step-text"><p class="choice-title">Byttetid <span class="sym-warn" aria-hidden="true">⇅</span></p><p class="choice-q">Tid før en utespiller er klar for bytte</p></div>
+            <div id="settingsSwapDurationStep"></div>
           </div>
           <div class="stepper-row settings-field-col">
             <span class="settings-row-label">Kampformat</span>
@@ -362,6 +354,22 @@
           <div class="choice-row" data-choice="reorg"><input type="checkbox" id="settingsDefaultReorgLastMatch" hidden></div>
           <div class="choice-row" data-choice="basis"><input type="checkbox" id="settingsDefaultSwapBasisCumulative" hidden></div>
           <div class="choice-row" data-choice="bench"><input type="checkbox" id="settingsDefaultSwapBenchByPlaytime" hidden></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <p class="settings-group-title">Denne enheten</p>
+        <div class="settings-group-card">
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <p class="toggle-row-label">Hold skjermen våken</p>
+              <p class="toggle-row-sub">Hindrer at skjermen låser seg selv mens appen er åpen, slik at klokkene alltid er synlige. Gjelder bare denne enheten.</p>
+            </div>
+            <label class="toggle dark">
+              <input type="checkbox" id="settingsWakeLockToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -455,47 +463,63 @@
     <button type="button" id="settingsHomeBtn" class="info-popup-close settings-home-btn" aria-label="Til hovedmeny">⌂</button>
     <button type="button" id="settingsCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
     <h2>Innstillinger</h2>
-    <p class="sub">Skriv inn navn på spillerne og standard byttetid.</p>
+    <p class="settings-intro"><b>Gjelder denne økten.</b> Lagnavn, standardverdier og skjerm-våken finner du under Innstillinger på hjemskjermen.</p>
     <p id="joinedEmptyNote" class="joined-empty-note" hidden>Denne økten har ingen registrerte spillere ennå. Stemmer koden? Om du prøvde å bli med i en pågående kamp, sjekk koden og prøv igjen - ellers kan du fortsette å sette opp laget her.</p>
     <p id="masterOnlyNote" class="master-only-note" hidden>Du er med i en økt noen andre opprettet. Kun den som opprettet økten kan endre spillernavn, kampvarighet, byttetid og delingsinnstillinger.</p>
 
-    <label class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-      <span>Antall utespillere</span>
-      <span id="fieldSizeLockedNote" class="locked-note">Låst under kamp</span>
-    </label>
-    <div class="duration-input">
-      <input type="number" id="fieldSizeInput" min="1" max="11" inputmode="numeric"><span>på banen samtidig</span>
+    <div class="settings-group">
+      <p class="settings-group-title">Lag</p>
+      <div class="settings-group-card settings-pad">
+        <div id="nameRows"></div>
+        <button type="button" id="addPlayerRowBtn" class="add-player-row-btn">+ Legg til spiller</button>
+      </div>
     </div>
 
-    <label class="section-label">Spillere</label>
-    <div id="nameRows"></div>
-    <button type="button" id="addPlayerRowBtn" class="add-player-row-btn">+ Legg til spiller</button>
-
-    <label class="section-label">Kampvarighet</label>
-    <div class="duration-input">
-      <input type="number" id="matchDurationInput" min="1" max="180" inputmode="numeric"><span>min</span>
+    <div class="settings-group">
+      <p class="settings-group-title">Kamp</p>
+      <div class="settings-group-card">
+        <!-- Kamptid og Kampformat vises bare når økten settes opp (openSettings(true)); under en pågående kamp endres kamptiden ved å trykke på klokka. -->
+        <div class="step-row" id="matchDurationRow" hidden>
+          <div class="step-text"><p class="choice-title">Kamptid <span class="sym-lcd" aria-hidden="true">10:00</span></p><p class="choice-q">Kan også endres ved å trykke på klokka</p></div>
+          <div id="matchDurationStep"></div>
+        </div>
+        <div class="step-row">
+          <div class="step-text"><p class="choice-title">Byttetid <span class="sym-warn" aria-hidden="true">⇅</span></p><p class="choice-q">Tid før en utespiller er klar for bytte</p></div>
+          <div id="swapDurationStep"></div>
+        </div>
+        <div class="step-col" id="fieldFormatRow" hidden>
+          <p class="choice-title">Kampformat</p><p class="choice-q">Låses når kampen starter</p>
+          <div class="segmented dark" id="fieldFormatSeg">
+            <button type="button" class="segmented-btn" data-size="3">3v3</button>
+            <button type="button" class="segmented-btn" data-size="5">5v5</button>
+            <button type="button" class="segmented-btn" data-size="7">7v7</button>
+            <button type="button" class="segmented-btn" data-size="11">11v11</button>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <label class="section-label info-label-row">
-      <span>Standard byttetid</span>
-      <button type="button" class="info-btn" data-info="byttetid" aria-label="Om standard byttetid">i</button>
-    </label>
-    <div class="duration-input">
-      <input type="number" id="durMin" min="0" max="30" inputmode="numeric"><span>min</span>
-      <input type="number" id="durSec" min="0" max="59" inputmode="numeric"><span>sek</span>
+    <div class="settings-group" id="choiceGroup">
+      <p class="settings-group-title">Kampoppførsel</p>
+      <p class="choice-rule"><b>Venstre:</b> kun aktuell kamp. <b>Høyre:</b> alle kamper i økten (under en cup).</p>
+      <div class="settings-group-card fold" id="choiceFold" data-open="false">
+        <button type="button" class="fold-h" id="choiceFoldBtn" aria-expanded="false">
+          <span class="fold-text"><span class="fold-t">Kampoppførsel for denne økten</span><span class="fold-s" id="choiceFoldSummary"></span></span>
+          <span class="chev" aria-hidden="true"></span>
+        </button>
+        <div class="fold-b"><div class="fold-in">
+          <!-- Bygges av initChoices() i app.js, se CHOICES. -->
+          <div class="choice-row" id="rankCumulativeRow" data-choice="rank"><input type="checkbox" id="rankByCumulativeToggle" hidden></div>
+          <div class="choice-row" id="reorgRow" data-choice="reorg"><input type="checkbox" id="reorgLastMatchToggle" hidden></div>
+          <div class="choice-row" id="swapSuggestionBasisRow" data-choice="basis"><input type="checkbox" id="swapSuggestionBasisToggle" hidden></div>
+          <div class="choice-row" id="swapSuggestionBenchModeRow" data-choice="bench"><input type="checkbox" id="swapSuggestionBenchModeToggle" hidden></div>
+        </div></div>
+      </div>
     </div>
 
-    <div class="settings-row">
-      <span class="settings-row-label-wrap">
-        <span class="settings-row-label">Hold skjermen våken</span>
-        <button type="button" class="info-btn" data-info="wakelock" aria-label="Om hold skjermen våken">i</button>
-      </span>
-      <label class="toggle">
-        <input type="checkbox" id="wakeLockToggle">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
+    <div class="settings-group">
+      <p class="settings-group-title">Delt økt</p>
+      <div class="settings-group-card">
     <div class="settings-row" id="shareSessionRow">
       <span class="settings-row-label-wrap">
         <span class="settings-row-label">Del økt med andre</span>
@@ -506,7 +530,6 @@
         <span class="toggle-slider"></span>
       </label>
     </div>
-
     <div class="settings-row share-mode-row" id="shareModeRow" hidden>
       <span class="settings-row-label">Tilgang for andre</span>
       <div class="segmented dark" id="shareModeSegmented">
@@ -514,12 +537,6 @@
         <button type="button" class="segmented-btn" data-mode="read">Kun les</button>
       </div>
     </div>
-
-    <!-- Bygges av initChoices() i app.js, se CHOICES. -->
-    <div class="choice-row" id="rankCumulativeRow" data-choice="rank"><input type="checkbox" id="rankByCumulativeToggle" hidden></div>
-    <div class="choice-row" id="swapSuggestionBasisRow" data-choice="basis"><input type="checkbox" id="swapSuggestionBasisToggle" hidden></div>
-    <div class="choice-row" id="swapSuggestionBenchModeRow" data-choice="bench"><input type="checkbox" id="swapSuggestionBenchModeToggle" hidden></div>
-
     <div id="transferOwnerRow" hidden>
       <div class="confirm-wrap" id="transferOwnerWrap">
         <button type="button" id="transferOwnerBtn" class="export-link-btn">🔁 Overfør økt-eier</button>
@@ -527,6 +544,8 @@
         <button type="button" id="transferOwnerCancelBtn" class="confirm-wrap-cancel" hidden aria-label="Avbryt overføring">×</button>
       </div>
       <p id="transferOwnerNote" class="locked-note"></p>
+    </div>
+      </div>
     </div>
 
     <!-- Glemt å avslutte kampen i tide, eller latt klokka gå for lenge? Begge

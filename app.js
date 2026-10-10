@@ -87,7 +87,6 @@
    * @property {Object<string, Cumulative>} cumulative
    * @property {Object<string, Cumulative>} periodStartCumulative
    * @property {MatchClock} matchClock
-   * @property {boolean} wakeLockEnabled
    * @property {number} fieldSize
    * @property {(string|null)[]|null} fieldSlotAssignment - index = formation slot (see fieldSlotList()), value = the onField player id standing there, or null for a not-yet-filled slot (see renderField()'s `if (!id) continue`); the whole array is null when fieldHasPositions() is false (fieldSize < 5, no fixed positions) or not yet reconciled - see syncFieldSlots()
    * @property {boolean} globalRunning
@@ -234,7 +233,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.3.1';
+  var APP_VERSION = '2.3.2';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -242,6 +241,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.3.2', text: 'Ryddigere innstillinger: Kamptid og Byttetid justeres med store knapper (hele minutter), symboler ved titlene, «Bytt om» kan nå endres under kampen, og Kampoppførsel kan foldes sammen. Skjerm-våken ligger under Innstillinger på hjemskjermen og gjelder bare din enhet.' },
     { version: '2.3.1', text: 'Symbolforklaringen finnes nå også under Innstillinger på hjemskjermen, og teksten om hva som finnes hvor er oppdatert. Regellinjen under Kampoppførsel nevner at «alle kamper i økten» gjelder under en cup.' },
     { version: '2.3.0', text: 'Nye, tydeligere valg under Kampoppførsel: to knapper med forklaring i stedet for av/på-brytere (alle står til venstre som standard). Bytteforslag for innbytter velger nå enten den som har ventet lengst siden forrige bytte, eller den med minst spilletid i denne kampen - aldri total spilletid.' },
     { version: '2.2.9', text: 'Når du svarer «Kampslutt»/«Nullstill» på «har du glemt kampen?», settes klokka og spillertidene tilbake til kampvarigheten. Fikset også at spilletid kunne telles dobbelt i kampresultatet hvis klokka hadde vært pauset.' },
@@ -371,6 +371,16 @@
   var settingsDraftMatchDurationMin = 15;
   var settingsDraftSwapDurationMin = 3;
   var settingsDraftFieldSize = 3;
+  // Same idea for the pre-kamp Innstillinger-vinduet (#settingsModal): the
+  // tallknapper/Kampformat edit these drafts, saveSettings() applies them on
+  // OK. The *Init values are what openSettings() found, so a value that was
+  // never touched is left exactly as it was (e.g. a byttetid of 2:30 from
+  // before the whole-minute buttons - OK alone must not round it).
+  var modalDraft = { matchMin: 15, matchMinInit: 15, swapMin: 3, swapMinInit: 3, fieldSize: 3, fieldSizeInit: 3 };
+  /** @type {{match: any, swap: any}} */
+  var modalSteps = { match: null, swap: null };
+  /** @type {{match: any, swap: any}} */
+  var homeSteps = { match: null, swap: null };
   /** @type {Object<string, boolean>} */
   var timeUpNotified = {}; // id -> true once the expiry sound has fired for their current stint
   var multiMode = false; // bulk "send several bench players to field" mode
@@ -384,14 +394,6 @@
     playerTime: {
       title: 'Spillertid',
       text: 'K = kamptid, tid kun for denne kampen. T = totaltid gjennom alle kamper (kumulativ).'
-    },
-    byttetid: {
-      title: 'Standard byttetid',
-      text: 'Tiden en utespiller skal spille før et oransje byttemerke (⇅) varsler at byttetiden er nådd. Spiller vedkommende 50 % lenger enn byttetiden, begynner merket å pulsere forsiktig. Klokka fortsetter å telle etter det - spilleren byttes ikke automatisk ut.'
-    },
-    wakelock: {
-      title: 'Hold skjermen våken',
-      text: 'Hindrer at skjermen låser seg selv mens appen er åpen, slik at klokkene alltid er synlige under kampen.'
     },
     share: {
       title: 'Del økt med andre',
@@ -540,7 +542,6 @@
       cumulative: {},
       periodStartCumulative: {},
       matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
-      wakeLockEnabled: true,
       fieldSize: coachDefaults.fieldSize,
       fieldSlotAssignment: null,
       globalRunning: false,
@@ -585,7 +586,6 @@
     if (!raw.cumulative || typeof raw.cumulative !== 'object') raw.cumulative = {};
     if (!raw.periodStartCumulative || typeof raw.periodStartCumulative !== 'object') raw.periodStartCumulative = {};
     if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
-    if (raw.wakeLockEnabled === undefined) raw.wakeLockEnabled = true;
     if (!raw.fieldSize) raw.fieldSize = 3;
     if (!Array.isArray(raw.fieldSlotAssignment)) raw.fieldSlotAssignment = null;
     if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 180000;
@@ -1838,7 +1838,6 @@
       matchDurationMs: state.matchDurationMs,
       fieldSize: state.fieldSize,
       fieldSlotAssignment: cloneStateValue(state.fieldSlotAssignment || null),
-      wakeLockEnabled: !!state.wakeLockEnabled,
       rankByCumulative: !!state.rankByCumulative,
       reorgUsesLastMatch: !!state.reorgUsesLastMatch,
       swapSuggestionBasis: state.swapSuggestionBasis === 'cumulative' ? 'cumulative' : 'match',
@@ -1872,7 +1871,6 @@
     state.matchDurationMs = typeof snap.matchDurationMs === 'number' ? snap.matchDurationMs : state.matchDurationMs;
     state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.fieldSlotAssignment = Array.isArray(snap.fieldSlotAssignment) ? cloneStateValue(snap.fieldSlotAssignment) : null;
-    state.wakeLockEnabled = snap.wakeLockEnabled !== undefined ? !!snap.wakeLockEnabled : state.wakeLockEnabled;
     state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
     state.reorgUsesLastMatch = snap.reorgUsesLastMatch !== undefined ? !!snap.reorgUsesLastMatch : state.reorgUsesLastMatch;
     state.swapSuggestionBasis = snap.swapSuggestionBasis === 'cumulative' ? 'cumulative' : (snap.swapSuggestionBasis === 'match' ? 'match' : state.swapSuggestionBasis);
@@ -3016,9 +3014,34 @@
 
   /** @type {WakeLockSentinel|null} */
   var wakeLock = null;
+  // "Hold skjermen våken" is a preference of THIS device (set under
+  // Innstillinger on the home screen), not match state: it used to live in
+  // the synced session state, which meant one device's toggle changed
+  // everyone's and a read-only viewer couldn't change their own. A device
+  // that has never saved the preference falls back to what its old session
+  // state said (older builds stored it there), otherwise on.
+  var WAKELOCK_KEY = 'spillerbytte_wakelock_v1';
+  /** @returns {boolean} */
+  function wakeLockWanted(){
+    try {
+      var v = localStorage.getItem(WAKELOCK_KEY);
+      if (v !== null) return v === '1';
+    } catch(e){}
+    return (/** @type {any} */ (state)).wakeLockEnabled !== false;
+  }
+  /** @param {boolean} on */
+  function setWakeLockWanted(on){
+    try { localStorage.setItem(WAKELOCK_KEY, on ? '1' : '0'); } catch(e){}
+    if (on){
+      requestWakeLock();
+    } else if (wakeLock){
+      wakeLock.release().catch(function(){});
+      wakeLock = null;
+    }
+  }
   function requestWakeLock(){
     if (!('wakeLock' in navigator)) return;
-    if (!state || !state.wakeLockEnabled) return;
+    if (!wakeLockWanted()) return;
     navigator.wakeLock.request('screen').then(function(lock){
       wakeLock = lock;
     }).catch(function(){ /* e.g. low-power mode - not critical, ignore */ });
@@ -3775,11 +3798,11 @@
 
   // Tops up to at least fieldSize+1 rows (a full lineup plus one sub - the
   // practical minimum to run a match) or MIN_NAME_ROWS, whichever is
-  // larger. Called on open and (first-run only, before "Antall
-  // utespillere" locks) when the field size changes - never from typing or
+  // larger. Called on open and (first-run only, before Kampformat
+  // locks) when the field size changes - never from typing or
   // blur, so it can't run mid-click.
   function syncNameRows(){
-    var fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value, 10) || state.fieldSize || 3));
+    var fieldSize = Math.max(1, Math.min(11, modalDraft.fieldSize || state.fieldSize || 3));
     var floor = Math.max(fieldSize + 1, MIN_NAME_ROWS);
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     while (rows.length < floor){
@@ -3787,14 +3810,25 @@
     }
   }
 
-  // Standard byttetid defaults to ~15% of kampvarighet, rounded up to the
-  // nearest whole minute (10 min match -> 2 min, 20 min -> 3 min) - live as
-  // "Kampvarighet" is edited. The byttetid fields stay freely editable
-  // afterwards, this is just the suggested starting point.
+  // Byttetid defaults to ~15% of kamptid, rounded up to the nearest whole
+  // minute (10 min match -> 2 min, 20 min -> 3 min) - live as "Kamptid" is
+  // changed. Byttetid stays freely adjustable afterwards, this is just the
+  // suggested starting point.
   function applyMatchDurationSuggestion(){
-    var mins = Math.max(1, parseInt(els.matchDurationInput.value, 10) || 10);
-    els.durMin.value = Math.max(1, Math.ceil(mins * 0.15));
-    els.durSec.value = 0;
+    modalDraft.swapMin = Math.min(30, Math.max(1, Math.ceil(modalDraft.matchMin * 0.15)));
+    if (modalSteps.swap) modalSteps.swap.refresh();
+  }
+
+  // Nearest of the four Kampformat buttons (an odd saved size, e.g. 4, lands
+  // on the closest preset rather than matching none).
+  /** @param {number} n @returns {number} */
+  function nearestFormat(n){
+    return [3, 5, 7, 11].reduce(function(a, b){ return Math.abs(b - n) < Math.abs(a - n) ? b : a; });
+  }
+  function updateModalFormatButtons(){
+    Array.prototype.forEach.call(els.fieldFormatSeg.children, function(btn){
+      btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === modalDraft.fieldSize);
+    });
   }
 
   /* ---------------- Match duration picker (tap the match clock) ---------------- */
@@ -3912,38 +3946,35 @@
     els.masterOnlyNote.hidden = master;
     settingsDirty = false;
     els.nameRows.innerHTML = '';
-    els.fieldSizeInput.value = state.fieldSize || 3;
+    modalDraft.fieldSizeInit = state.fieldSize || 3;
+    modalDraft.fieldSize = isFirstRun ? nearestFormat(modalDraft.fieldSizeInit) : modalDraft.fieldSizeInit;
+    modalDraft.matchMin = modalDraft.matchMinInit = Math.max(1, Math.round(state.matchDurationMs / 60000));
+    modalDraft.swapMin = modalDraft.swapMinInit = Math.max(1, Math.round(state.defaultDurationMs / 60000));
 
     state.players.forEach(function(p, idx){
       addNameRow(p.id, p.name, idx+1, state.onField.indexOf(p.id) !== -1);
     });
     syncNameRows(); // tops up to fieldSize+1 rows, or MIN_NAME_ROWS, whichever is larger
 
-    els.matchDurationInput.value = Math.round(state.matchDurationMs/60000);
-    var totalMs = state.defaultDurationMs;
-    els.durMin.value = Math.floor(totalMs/60000);
-    els.durSec.value = Math.floor((totalMs%60000)/1000);
-    els.matchDurationInput.disabled = !master;
-    els.durMin.disabled = !master;
-    els.durSec.disabled = !master;
-    els.wakeLockToggle.checked = !!state.wakeLockEnabled;
-    // Not master-restricted (this really only affects the tapping device's
-    // own screen, even though it happens to live in shared state) - but
-    // still gated by canEdit(), same as any other shared-state mutation,
-    // now that settings is reachable by a genuinely read-only viewer too.
-    els.wakeLockToggle.disabled = !canEdit();
+    // Kamptid and Kampformat are only chosen when the session is set up; during a
+    // running match kamptid is changed by tapping the clock.
+    var setup = isFirstRun && master;
+    els.matchDurationRow.hidden = !setup;
+    els.fieldFormatRow.hidden = !setup;
+    updateModalFormatButtons();
+    modalSteps.match.refresh(); modalSteps.swap.refresh();
+    modalSteps.match.setLocked(!master); modalSteps.swap.setLocked(!master);
     els.shareSessionToggle.checked = !!sessionCode;
     els.shareSessionRow.hidden = !master;
-    els.rankCumulativeRow.hidden = !master;
-    els.swapSuggestionBasisRow.hidden = !master;
-    els.swapSuggestionBenchModeRow.hidden = !master;
+    els.choiceGroup.hidden = !master;
+    els.choiceFold.dataset.open = 'false';
+    els.choiceFoldBtn.setAttribute('aria-expanded', 'false');
     updateShareModeUI();
     els.rankByCumulativeToggle.checked = !!state.rankByCumulative;
     els.swapSuggestionBasisToggle.checked = state.swapSuggestionBasis === 'cumulative';
     els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative';
+    els.reorgLastMatchToggle.checked = !!state.reorgUsesLastMatch;
     refreshChoices();
-    els.fieldSizeInput.disabled = !isFirstRun || !master;
-    els.fieldSizeLockedNote.style.display = (isFirstRun && master) ? 'none' : '';
     // Meaningless before a real match/roster exists (isFirstRun) - nothing
     // has been ticking yet. "Fjern dødtid" itself only shows once there's
     // actually a meaningful gap (>1 min) since the last real action -
@@ -4227,8 +4258,8 @@
   }
 
   function updateSettingsStepperUI(){
-    els.settingsMatchDurationValue.textContent = settingsDraftMatchDurationMin + ' min';
-    els.settingsSwapDurationValue.textContent = settingsDraftSwapDurationMin + ' min';
+    homeSteps.match.refresh();
+    homeSteps.swap.refresh();
     Array.prototype.forEach.call(els.settingsFieldFormat.children, function(btn){
       btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === settingsDraftFieldSize);
     });
@@ -4244,11 +4275,9 @@
     // index.html) - the real fieldSize can be any 1-11 via the in-app
     // innstillingsvindu's own number input, so an odd saved value (e.g. 4)
     // just lands on the nearest preset here rather than matching none.
-    var presets = [3, 5, 7, 11];
-    settingsDraftFieldSize = presets.indexOf(d.fieldSize) !== -1 ? d.fieldSize : presets.reduce(function(a,b){
-      return Math.abs(b - d.fieldSize) < Math.abs(a - d.fieldSize) ? b : a;
-    });
+    settingsDraftFieldSize = nearestFormat(d.fieldSize);
     updateSettingsStepperUI();
+    els.settingsWakeLockToggle.checked = wakeLockWanted();
     els.settingsDefaultRankCumulative.checked = d.rankByCumulative;
     els.settingsDefaultReorgLastMatch.checked = d.reorgUsesLastMatch;
     els.settingsDefaultSwapBasisCumulative.checked = d.swapSuggestionBasis === 'cumulative';
@@ -4414,22 +4443,6 @@
       // adminUser/local defaults stay as-is until onAuthStateChange fires -
       // signing out doesn't erase the local cache, it just stops updating it.
       updateSettingsStorageNote();
-    });
-    els.settingsMatchDurationMinus.addEventListener('click', function(){
-      settingsDraftMatchDurationMin = Math.max(1, settingsDraftMatchDurationMin - 1);
-      updateSettingsStepperUI();
-    });
-    els.settingsMatchDurationPlus.addEventListener('click', function(){
-      settingsDraftMatchDurationMin = Math.min(180, settingsDraftMatchDurationMin + 1);
-      updateSettingsStepperUI();
-    });
-    els.settingsSwapDurationMinus.addEventListener('click', function(){
-      settingsDraftSwapDurationMin = Math.max(1, settingsDraftSwapDurationMin - 1);
-      updateSettingsStepperUI();
-    });
-    els.settingsSwapDurationPlus.addEventListener('click', function(){
-      settingsDraftSwapDurationMin = Math.min(30, settingsDraftSwapDurationMin + 1);
-      updateSettingsStepperUI();
     });
     Array.prototype.forEach.call(els.settingsFieldFormat.children, function(btn){
       btn.addEventListener('click', function(){
@@ -4665,14 +4678,10 @@
     state.players = newPlayers;
     addNamesToRoster(newPlayers.map(function(p){ return p.name; }));
 
-    var matchMin = Math.max(1, parseInt(els.matchDurationInput.value,10) || Math.round(state.matchDurationMs/60000) || 10);
-    state.matchDurationMs = matchMin * 60000;
-
-    var min = Math.max(0, parseInt(els.durMin.value,10) || 0);
-    var sec = Math.max(0, Math.min(59, parseInt(els.durSec.value,10) || 0));
-    var newDur = (min*60 + sec) * 1000;
-    if (newDur > 0) state.defaultDurationMs = newDur;
-    state.fieldSize = Math.max(1, Math.min(11, parseInt(els.fieldSizeInput.value,10) || state.fieldSize || 3));
+    // Only overwritten when actually changed - see modalDraft.
+    if (modalDraft.matchMin !== modalDraft.matchMinInit) state.matchDurationMs = modalDraft.matchMin * 60000;
+    if (modalDraft.swapMin !== modalDraft.swapMinInit) state.defaultDurationMs = modalDraft.swapMin * 60000;
+    if (modalDraft.fieldSize !== modalDraft.fieldSizeInit) state.fieldSize = modalDraft.fieldSize;
 
     saveState();
     els.settingsModal.classList.remove('open');
@@ -5131,7 +5140,6 @@
     timeUpNotified = {};
     multiMode = false;
     multiSelected = [];
-    var keepWakeLock = state.wakeLockEnabled;
     // defaultState() sets these back to null/[] - losing sessionOwnerDeviceId
     // here would silently un-master the very device that's allowed to call
     // this function, locking everyone (including the real owner) out of
@@ -5163,7 +5171,6 @@
     // in Innstillinger still left the next match at 3 på banen, since this
     // stale value overwrote the fresh default defaultState() had just set.
     state = defaultState();
-    state.wakeLockEnabled = keepWakeLock;
     state.sessionOwnerDeviceId = keepOwnerDeviceId;
     state.participants = keepParticipants;
     state.rev = keepRev;
@@ -5221,29 +5228,39 @@
   // 'change' virker uendret. `invert` snur det for «Bytt om», der lagret
   // reorgUsesLastMatch=true betyr VENSTRE («Kun forrige kamp») - slik at
   // lagrede innstillinger og Supabase-rader ikke trenger migrering.
-  /** @type {Object<string, {title:string, q:string, l:string, r:string, hl:string, hr:string, invert?:boolean}>} */
+  // The small symbols next to each title are the same ones the app uses on the
+  // pitch (see the legend): the two rank triangles, the Forslag button and the
+  // «Avslutt» button. They teach the symbols as a side effect of reading the
+  // settings; styled quietly (see .sym* in style.css).
+  var SYM = {
+    tri: '<span class="sym" aria-hidden="true"><svg viewBox="0 0 14 14"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
+         '<svg viewBox="0 0 14 14"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span>',
+    sugg: '<span class="sym-ico" aria-hidden="true">⇄<i>?</i></span>',
+    endp: '<span class="sym-endp" aria-hidden="true">Avslutt</span>'
+  };
+  /** @type {Object<string, {title:string, sym:string, q:string, l:string, r:string, hl:string, hr:string, invert?:boolean}>} */
   var CHOICES = {
     rank: {
-      title: 'Trekantsymboler', q: 'Rangering på spilletid',
+      title: 'Trekantsymboler', sym: SYM.tri, q: 'Rangering på spilletid',
       l: 'Kun denne kampen', r: 'Alle kamper i økten',
       hl: 'Trekantene viser spilletid i denne kampen.',
       hr: 'Trekantene viser spilletid over alle kamper i økten.'
     },
     reorg: {
-      title: '«Bytt om» ved Kampslutt', q: 'Hvem settes opp først neste kamp',
+      title: '«Bytt om» ved Kampslutt', sym: SYM.endp, q: 'Hvem settes opp først neste kamp',
       l: 'Kun forrige kamp', r: 'Alle kamper i økten',
       hl: 'De som spilte minst i forrige kamp settes på banen først.',
       hr: 'De som har spilt minst over alle kamper settes på banen først.',
       invert: true
     },
     basis: {
-      title: 'Bytteforslag, utespiller', q: 'Hvem foreslås ut',
+      title: 'Bytteforslag, utespiller', sym: SYM.sugg, q: 'Hvem foreslås ut',
       l: 'Mest spilt denne kampen', r: 'Mest spilt over alle kamper',
       hl: 'Foreslår den som har spilt mest i denne kampen.',
       hr: 'Foreslår den som har spilt mest over alle kamper.'
     },
     bench: {
-      title: 'Bytteforslag, innbytter', q: 'Hvem foreslås inn',
+      title: 'Bytteforslag, innbytter', sym: SYM.sugg, q: 'Hvem foreslås inn',
       l: 'Lengst ventetid siden forrige bytte', r: 'Minst spilletid denne kampen',
       hl: 'Den som har sittet lengst på benken siden forrige bytte kommer inn først. Ingen som ble byttet ut etter deg kommer inn før deg.',
       hr: 'Den med minst spilletid i kampen kommer inn først, også om hen nettopp ble byttet ut.'
@@ -5277,7 +5294,7 @@
     if (!cfg || !input) return;
     var sp = splitCommonWords(cfg.hl, cfg.hr);
     row.insertAdjacentHTML('afterbegin',
-      '<p class="choice-title">' + escapeHtml(cfg.title) + '</p>' +
+      '<p class="choice-title">' + escapeHtml(cfg.title) + cfg.sym + '</p>' +
       '<p class="choice-q">' + escapeHtml(cfg.q) + '</p>' +
       '<div class="choice-seg" role="radiogroup" aria-label="' + escapeHtml(cfg.title) + '">' +
         '<div class="choice-thumb"><div class="choice-pill"></div></div>' +
@@ -5367,6 +5384,7 @@
       var actual = inputValue();
       if (actual !== target) setValue(actual);
       run(p, actual);
+      updateChoiceFoldSummary();
     }
 
     // Hent tilstand fra avkrysningsboksen uten animasjon (kode har satt
@@ -5434,7 +5452,128 @@
   }
   // Kall etter at kode har satt avkrysningsboksene direkte (åpning av
   // Innstillinger / pre-kamp-vinduet).
-  function refreshChoices(){ choiceSyncs.forEach(function(f){ f(); }); }
+  function refreshChoices(){ choiceSyncs.forEach(function(f){ f(); }); updateChoiceFoldSummary(); }
+
+  // The one-line status shown while the pre-kamp Kampoppførsel section is
+  // folded: how many of its choices differ from the default (everything to the left).
+  function updateChoiceFoldSummary(){
+    if (!els.choiceFold || !els.choiceFoldSummary) return;
+    var changed = 0;
+    Array.prototype.forEach.call(els.choiceFold.querySelectorAll('.choice-row'), function(/** @type {HTMLElement} */ row){
+      var cfg = CHOICES[row.dataset.choice || ''];
+      var input = /** @type {HTMLInputElement|null} */ (row.querySelector('input'));
+      if (cfg && input && (cfg.invert ? !input.checked : input.checked)) changed++;
+    });
+    els.choiceFoldSummary.textContent = changed === 0 ? 'Standard: alle valg til venstre' : changed + ' valg endret fra standard';
+  }
+
+  /* ---------------- Tallknapper (Kamptid / Byttetid) ---------------- */
+
+  // Hele tall med to store knapper og tallet mellom, aldri tastatur. Holder du
+  // en knapp inne, repeterer den (raskere etter hvert). `cfg.get/set` eier
+  // verdien (en draft som lagres med OK/Lagre); refresh() tegner den på nytt
+  // etter at koden har satt den utenfra.
+  /**
+   * @param {HTMLElement} host
+   * @param {{label:string, unit:string, min:number, max:number, get:() => number, set:(v:number) => void}} cfg
+   * @returns {{refresh: () => void, setLocked: (locked: boolean) => void}}
+   */
+  function setupNumStep(host, cfg){
+    host.className = 'numstep';
+    host.setAttribute('role', 'group');
+    host.setAttribute('aria-label', cfg.label);
+    host.innerHTML = '<button type="button" data-d="-1" aria-label="Mindre">–</button>' +
+      '<span class="numstep-val" aria-live="polite"><b></b><small>' + escapeHtml(cfg.unit) + '</small></span>' +
+      '<button type="button" data-d="1" aria-label="Mer">+</button>';
+    var valEl = /** @type {HTMLElement} */ (host.querySelector('b'));
+    var btns = /** @type {NodeListOf<HTMLButtonElement>} */ (host.querySelectorAll('button'));
+    var locked = false;
+    /** @type {ReturnType<typeof setTimeout>|undefined} */
+    var hold;
+    /** @param {number} dir */
+    function draw(dir){
+      valEl.textContent = String(cfg.get());
+      btns[0].disabled = locked || cfg.get() <= cfg.min;
+      btns[1].disabled = locked || cfg.get() >= cfg.max;
+      if (dir && CHOICE_CAN_ANIMATE && choiceMs(1)){
+        valEl.animate([{ transform: 'translateY(' + (dir * 8) + 'px)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+          { duration: choiceMs(140), easing: 'cubic-bezier(.2,.9,.3,1)' });
+      }
+    }
+    /** @param {number} d @returns {boolean} */
+    function step(d){
+      if (locked) return false;
+      var before = cfg.get(), next = Math.max(cfg.min, Math.min(cfg.max, before + d));
+      if (next === before) return false;
+      cfg.set(next);
+      draw(d);
+      return true;
+    }
+    host.addEventListener('pointerdown', function(e){
+      var b = /** @type {HTMLElement} */ (e.target).closest('button');
+      if (!b || b.disabled) return;
+      var d = parseInt(b.dataset.d || '0', 10);
+      if (!step(d)) return;
+      var n = 0;
+      /** @param {number} delay */
+      var loop = function(delay){
+        hold = setTimeout(function(){
+          if (!step(d)) return;
+          n++;
+          loop(n > 8 ? 40 : 85);
+        }, delay);
+      };
+      loop(380);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function(t){ host.addEventListener(t, function(){ clearTimeout(hold); }); });
+    host.addEventListener('click', function(e){
+      if (e.detail !== 0) return; // berøring/mus går via pointerdown over - dette er tastatur
+      var b = /** @type {HTMLElement} */ (e.target).closest('button');
+      if (b && !b.disabled) step(parseInt(b.dataset.d || '0', 10));
+    });
+    draw(0);
+    return {
+      refresh: function(){ draw(0); },
+      setLocked: function(l){ locked = l; draw(0); }
+    };
+  }
+
+  // Bygger tallknappene og Kampformat-knappene i begge innstillingsvinduene.
+  function initSettingsControls(){
+    modalSteps.match = setupNumStep(els.matchDurationStep, {
+      label: 'Kamptid', unit: 'min', min: 1, max: 180,
+      get: function(){ return modalDraft.matchMin; },
+      set: function(v){ modalDraft.matchMin = v; settingsDirty = true; applyMatchDurationSuggestion(); }
+    });
+    modalSteps.swap = setupNumStep(els.swapDurationStep, {
+      label: 'Byttetid', unit: 'min', min: 1, max: 30,
+      get: function(){ return modalDraft.swapMin; },
+      set: function(v){ modalDraft.swapMin = v; settingsDirty = true; }
+    });
+    homeSteps.match = setupNumStep(els.settingsMatchDurationStep, {
+      label: 'Kamptid', unit: 'min', min: 1, max: 180,
+      get: function(){ return settingsDraftMatchDurationMin; },
+      set: function(v){ settingsDraftMatchDurationMin = v; }
+    });
+    homeSteps.swap = setupNumStep(els.settingsSwapDurationStep, {
+      label: 'Byttetid', unit: 'min', min: 1, max: 30,
+      get: function(){ return settingsDraftSwapDurationMin; },
+      set: function(v){ settingsDraftSwapDurationMin = v; }
+    });
+    Array.prototype.forEach.call(els.fieldFormatSeg.children, function(/** @type {HTMLElement} */ btn){
+      btn.addEventListener('click', function(){
+        modalDraft.fieldSize = parseInt(btn.dataset.size || '3', 10);
+        settingsDirty = true;
+        updateModalFormatButtons();
+        syncNameRows();
+      });
+    });
+    els.choiceFoldBtn.addEventListener('click', function(){
+      var open = els.choiceFold.dataset.open !== 'true';
+      els.choiceFold.dataset.open = String(open);
+      els.choiceFoldBtn.setAttribute('aria-expanded', String(open));
+    });
+  }
 
   function init(){
     els.field = qs('field');
@@ -5497,12 +5636,6 @@
     els.settingsScreenCloseBtn = qs('settingsScreenCloseBtn');
     els.settingsHomeName = qs('settingsHomeName');
     els.settingsHomeAbbr = qs('settingsHomeAbbr');
-    els.settingsMatchDurationValue = qs('settingsMatchDurationValue');
-    els.settingsMatchDurationMinus = qs('settingsMatchDurationMinus');
-    els.settingsMatchDurationPlus = qs('settingsMatchDurationPlus');
-    els.settingsSwapDurationValue = qs('settingsSwapDurationValue');
-    els.settingsSwapDurationMinus = qs('settingsSwapDurationMinus');
-    els.settingsSwapDurationPlus = qs('settingsSwapDurationPlus');
     els.settingsFieldFormat = qs('settingsFieldFormat');
     els.settingsDefaultRankCumulative = qs('settingsDefaultRankCumulative');
     els.settingsDefaultReorgLastMatch = qs('settingsDefaultReorgLastMatch');
@@ -5592,10 +5725,18 @@
     els.closeSessionConfirmBtn = qs('closeSessionConfirmBtn');
     els.nameRows = qs('nameRows');
     els.addPlayerRowBtn = qs('addPlayerRowBtn');
-    els.durMin = qs('durMin');
-    els.durSec = qs('durSec');
-    els.fieldSizeInput = qs('fieldSizeInput');
-    els.fieldSizeLockedNote = qs('fieldSizeLockedNote');
+    els.matchDurationRow = qs('matchDurationRow');
+    els.fieldFormatRow = qs('fieldFormatRow');
+    els.fieldFormatSeg = qs('fieldFormatSeg');
+    els.matchDurationStep = qs('matchDurationStep');
+    els.swapDurationStep = qs('swapDurationStep');
+    els.settingsMatchDurationStep = qs('settingsMatchDurationStep');
+    els.settingsSwapDurationStep = qs('settingsSwapDurationStep');
+    els.choiceGroup = qs('choiceGroup');
+    els.choiceFold = qs('choiceFold');
+    els.choiceFoldBtn = qs('choiceFoldBtn');
+    els.choiceFoldSummary = qs('choiceFoldSummary');
+    els.reorgLastMatchToggle = qs('reorgLastMatchToggle');
     els.okBtn = qs('settingsOkBtn');
     els.cancelBtn = qs('settingsCancelBtn');
     els.settingsCloseBtn = qs('settingsCloseBtn');
@@ -5664,8 +5805,7 @@
     els.goalTimesTitle = qs('goalTimesTitle');
     els.goalTimesText = qs('goalTimesText');
     els.goalTimesCloseBtn = qs('goalTimesCloseBtn');
-    els.matchDurationInput = qs('matchDurationInput');
-    els.wakeLockToggle = qs('wakeLockToggle');
+    els.settingsWakeLockToggle = qs('settingsWakeLockToggle');
     els.exportBtn = qs('exportBtn');
     els.exportModal = qs('exportModal');
     els.exportText = qs('exportText');
@@ -5738,6 +5878,7 @@
       updateSessionCodeUI();
     });
 
+    initSettingsControls();
     initChoices();
     checkForUpdate();
     window.addEventListener('pageshow', function(e){
@@ -5843,11 +5984,9 @@
     Array.prototype.forEach.call(document.querySelectorAll('input[type=number]'), function(el){
       el.addEventListener('wheel', function(){ el.blur(); });
     });
-    els.fieldSizeInput.addEventListener('input', syncNameRows);
     els.addPlayerRowBtn.addEventListener('click', function(){
       addNameRow(null, '', els.nameRows.querySelectorAll('.name-row').length + 1, false, true);
     });
-    els.matchDurationInput.addEventListener('input', applyMatchDurationSuggestion);
     els.okBtn.addEventListener('click', saveSettings);
     els.cancelBtn.addEventListener('click', function(){ els.settingsModal.classList.remove('open'); });
     // Anything that only takes effect on "OK" (see saveSettings) marks the
@@ -6024,17 +6163,7 @@
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
     els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
     els.swapSuggestionCancelBtn.addEventListener('click', cancelSwapSuggestion);
-    els.wakeLockToggle.addEventListener('change', function(){
-      if (!canEdit()){ els.wakeLockToggle.checked = !!state.wakeLockEnabled; return; }
-      state.wakeLockEnabled = els.wakeLockToggle.checked;
-      saveState();
-      if (state.wakeLockEnabled){
-        requestWakeLock();
-      } else if (wakeLock){
-        wakeLock.release().catch(function(){});
-        wakeLock = null;
-      }
-    });
+    els.settingsWakeLockToggle.addEventListener('change', function(){ setWakeLockWanted(els.settingsWakeLockToggle.checked); });
     els.exportBtn.addEventListener('click', function(){
       els.exportText.value = buildExportText();
       els.exportModal.classList.add('open');
@@ -6217,6 +6346,11 @@
       saveState();
       updateShareModeUI();
       updateSessionCodeUI();
+    });
+    els.reorgLastMatchToggle.addEventListener('change', function(){
+      if (!isMaster()){ els.reorgLastMatchToggle.checked = !!state.reorgUsesLastMatch; return; }
+      state.reorgUsesLastMatch = els.reorgLastMatchToggle.checked;
+      saveState();
     });
     els.rankByCumulativeToggle.addEventListener('change', function(){
       if (!isMaster()){ els.rankByCumulativeToggle.checked = !!state.rankByCumulative; return; }
