@@ -1126,6 +1126,42 @@
     max-width:78%;
   }
   #multiSwapWarning.visible{ opacity:1; }
+  /* "Slipp for å bytte" - vises mens en dratt spiller svever over en gyldig bytte-
+     partner (se showDropHint() i app.js). Samme glasskort og samme plassering som
+     #selectionInfo over, men aldri klikkbart. */
+  #dropHint{
+    position:absolute; left:50%; top:10px; transform:translateX(-50%) translateY(-6px);
+    max-width:calc(100% - 32px);
+    background:rgba(15,31,54,.94); color:#fff;
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    backdrop-filter:blur(var(--glass-blur)) saturate(160%);
+    border:1px solid rgba(255,255,255,.16);
+    padding:9px 16px; border-radius:16px;
+    box-shadow:var(--shadow-md);
+    text-align:center;
+    opacity:0; pointer-events:none;
+    transition:opacity .15s ease, transform .15s ease;
+    z-index:51;
+  }
+  #dropHint.visible{ opacity:1; transform:translateX(-50%) translateY(0); }
+  #dropHint .dh-names{ display:flex; align-items:center; justify-content:center; gap:8px; min-width:0; }
+  #dropHint .dh-name{ font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:7.5em; }
+  #dropHint .dh-arrows{ color:rgba(255,255,255,.55); font-size:13px; }
+  #dropHint .dh-action{
+    margin-top:7px; padding-top:7px; border-top:1px solid rgba(255,255,255,.12);
+    display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  #dropHint .dh-action svg{ display:block; }
+  #dropHint .dh-label{ font-size:10.5px; font-weight:700; color:#32b45a; letter-spacing:.02em; }
+  /* Symbol og grønn tekst pulserer forsiktig (opacity + en liten skalering) så det er tydelig at slippet er det som skjer nå. */
+  @keyframes dropHintPulse{ 0%,100%{ opacity:.6; transform:scale(.97); } 50%{ opacity:1; transform:scale(1.04); } }
+  #dropHint.visible .dh-action{ animation:dropHintPulse 1.3s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce){ #dropHint{ transition:opacity .15s ease; transform:translateX(-50%); } #dropHint.visible{ transform:translateX(-50%); } #dropHint.visible .dh-action{ animation:none; } }
+
+  /* Trekant som dukker opp underveis (se updateRankBadgesOnly()): tones inn i stedet for å poppe. */
+  @keyframes rankLiveIn{ from{ opacity:0; transform:scale(.5); } to{ opacity:1; transform:none; } }
+  .badge-rank.rank-live{ animation:rankLiveIn .25s cubic-bezier(.2,.9,.3,1); }
+  @media (prefers-reduced-motion: reduce){ .badge-rank.rank-live{ animation:none; } }
   #selectionInfo.visible{ opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0); }
   #selectionInfo .si-name-row{
     display:flex; align-items:center; gap:7px; min-width:0;
@@ -1829,6 +1865,12 @@
   /* ---------- Felles innstillings-byggeklosser (hjemskjermen + pre-kamp-vinduet) ---------- */
   .settings-group[hidden]{ display:none; }
   .settings-pad{ padding:12px 14px; }
+  /* Lag-kortet holder navnefeltene, og forslagslisten som dukker opp under et
+     felt (.suggest-list, absolutt plassert) må kunne stikke utenfor kortet - det
+     vanlige .settings-group-card har overflow:hidden og klippet den av. Kortet
+     løftes også over kortene under (hvert har backdrop-filter, altså egen
+     stablingskontekst som ellers tegnes oppå listen). */
+  .settings-group-card.settings-pad{ overflow:visible; position:relative; z-index:5; }
   .settings-intro{
     margin:0 0 16px; padding:10px 12px; border-radius:12px; font-size:12px; line-height:1.4;
     color:rgba(255,255,255,.85); background:rgba(106,144,224,.12); border:1px solid rgba(106,144,224,.35);

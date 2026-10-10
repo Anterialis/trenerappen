@@ -233,7 +233,7 @@
   // Single source of truth for the version shown on the launcher - bump on
   // every push (see checkForUpdate below, which parses this same line back
   // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.3.2';
+  var APP_VERSION = '2.3.3';
   var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
@@ -241,6 +241,7 @@
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.3.3', text: 'Rangeringstrekantene oppdateres nå av seg selv mens klokka går (første gang etter 30 sekunder), ikke bare når noe annet tegnes på nytt. Når du drar en spiller over en annen vises «Slipp for å bytte» med navnene på de to. Fikset at navneforslagene i spillerlisten ble klippet av.' },
     { version: '2.3.2', text: 'Ryddigere innstillinger: Kamptid og Byttetid justeres med store knapper (hele minutter), symboler ved titlene, «Bytt om» kan nå endres under kampen, og Kampoppførsel kan foldes sammen. Skjerm-våken ligger under Innstillinger på hjemskjermen og gjelder bare din enhet.' },
     { version: '2.3.1', text: 'Symbolforklaringen finnes nå også under Innstillinger på hjemskjermen, og teksten om hva som finnes hvor er oppdatert. Regellinjen under Kampoppførsel nevner at «alle kamper i økten» gjelder under en cup.' },
     { version: '2.3.0', text: 'Nye, tydeligere valg under Kampoppførsel: to knapper med forklaring i stedet for av/på-brytere (alle står til venstre som standard). Bytteforslag for innbytter velger nå enten den som har ventet lengst siden forrige bytte, eller den med minst spilletid i denne kampen - aldri total spilletid.' },
@@ -1729,6 +1730,36 @@
   // cumulative total, per the "Kumulert rangering" setting. Swap
   // suggestions (computeSwapSuggestion) are entirely separate and keep
   // acting on real ms values regardless of what's badged here.
+  // The triangles are drawn into each token by renderField()/renderBench(), but
+  // those only run when something is re-rendered (a swap, a goal ...) - not
+  // on the 250ms clock tick - so with a running clock and no other action the
+  // triangles stayed stale until the next re-render. updateRankBadgesOnly()
+  // (called from updateTimersOnly) refreshes just the triangle elements in
+  // place when the ranking actually changed, never rebuilding the tokens (that
+  // would cancel a drag in progress). To keep the first seconds calm - everyone's
+  // times are tiny and differ by almost nothing - the clock-driven refresh waits
+  // until RANK_LIVE_AFTER_MS of match time; a re-render caused by an action
+  // still shows them straight away.
+  var RANK_LIVE_AFTER_MS = 30 * 1000;
+  var lastRankSig = '';
+  /** @param {number} now */
+  function updateRankBadgesOnly(now){
+    if (matchClockElapsed(now) < RANK_LIVE_AFTER_MS) return;
+    var badges = computeRankBadges(now);
+    var sig = JSON.stringify(badges);
+    if (sig === lastRankSig) return;
+    lastRankSig = sig;
+    Array.prototype.forEach.call(document.querySelectorAll('#field .token, #bench .token'), function(/** @type {HTMLElement} */ el){
+      var avatar = el.querySelector('.avatar');
+      if (!avatar) return;
+      var rank = badges[el.dataset.id || ''];
+      var cur = avatar.querySelector('.badge-rank');
+      if (cur && rank && cur.classList.contains('rank-' + rank)) return;
+      if (cur) cur.remove();
+      if (rank) avatar.insertAdjacentHTML('beforeend', rankBadgeHtml(rank).replace('class="badge-rank', 'class="badge-rank rank-live'));
+    });
+  }
+
   function computeRankBadges(now){
     var badges = {};
     var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
@@ -2790,6 +2821,7 @@
     els.field.innerHTML = '';
     var now = Date.now();
     var rankBadges = computeRankBadges(now);
+    lastRankSig = JSON.stringify(rankBadges);
     var goalBadges = computeGoalBadges();
     var singleLetter = fieldUsesSingleLetter();
     var formation = fieldFormationRows(state.fieldSize);
@@ -2938,6 +2970,7 @@
     var countdown = matchCountdownMs(now);
     els.matchCountdown.textContent = formatMs(countdown);
     els.matchCountdown.classList.toggle('overtime', countdown < 0);
+    updateRankBadgesOnly(now);
     updateSelectionInfo();
   }
 
@@ -3011,6 +3044,27 @@
     els.selectionInfo.querySelector('.si-bench-period').textContent = formatCumulative(currentPeriodBenchMs(selected.id, now));
     els.selectionInfo.classList.add('visible');
   }
+
+  // "Slipp for å bytte" card shown while a dragged player hovers over someone
+  // they can swap with - same glass card as the player info popup
+  // (#selectionInfo) and docked in the same spot, so it reads as the same
+  // family. pointer-events:none always (it must never intercept the drop).
+  /** @param {string} fromId @param {string} toId @param {boolean} positionOnly */
+  function showDropHint(fromId, toId, positionOnly){
+    var a = playerById(fromId), b = playerById(toId);
+    if (!a || !b) return;
+    els.dropHint.innerHTML =
+      '<div class="dh-names"><span class="dh-name">' + escapeHtml(a.name) + '</span><span class="dh-arrows" aria-hidden="true">⇄</span><span class="dh-name">' + escapeHtml(b.name) + '</span></div>' +
+      '<div class="dh-action">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+          '<path d="M8 17V5M8 5L4.7 8.3M8 5L11.3 8.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '<path d="M16 7v12M16 19l-3.3-3.3M16 19l3.3-3.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+        '<span class="dh-label">' + (positionOnly ? 'Slipp for å bytte plass' : 'Slipp for å bytte') + '</span>' +
+      '</div>';
+    els.dropHint.classList.add('visible');
+  }
+  function hideDropHint(){ els.dropHint.classList.remove('visible'); }
 
   /** @type {WakeLockSentinel|null} */
   var wakeLock = null;
@@ -3338,6 +3392,7 @@
 
     function clearHoverTarget(){
       if (hoverTargetEl){ hoverTargetEl.classList.remove('drop-target'); hoverTargetEl = null; }
+      hideDropHint();
     }
 
     function onMove(ev){
@@ -3356,8 +3411,9 @@
         var overToken = overEl ? /** @type {HTMLElement|null} */ (overEl.closest('.token')) : null;
         var overId = overToken ? overToken.dataset.id : null;
         var isValidTarget = false;
+        var overIsField = false;
         if (overToken && overId && overId !== id){
-          var overIsField = state.onField.indexOf(overId) !== -1;
+          overIsField = state.onField.indexOf(overId) !== -1;
           var overIsBench = state.onBench.indexOf(overId) !== -1;
           isValidTarget = (zone === 'field' && overIsBench) || (zone === 'bench' && overIsField) ||
             // field-onto-field only trades positions when this fieldSize
@@ -3369,6 +3425,7 @@
           clearHoverTarget();
           hoverTargetEl = overToken;
           hoverTargetEl.classList.add('drop-target');
+          showDropHint(id, overId || '', zone === 'field' && overIsField);
         } else if (!isValidTarget){
           clearHoverTarget();
         }
@@ -5826,6 +5883,7 @@
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.autoPauseNotice = qs('autoPauseNotice');
+    els.dropHint = qs('dropHint');
     els.idleSuggestModal = qs('idleSuggestModal');
     els.idleSuggestText = qs('idleSuggestText');
     els.idleSuggestCancelBtn = qs('idleSuggestCancelBtn');
