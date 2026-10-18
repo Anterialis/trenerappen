@@ -22,8 +22,8 @@ Webapp for André, trener for et guttelag (barnefotball, cup). Holder styr på h
 | `app.js` | All logikk (~7000 linjer), delt i seksjoner under. |
 | `sw.js` | Service worker: nettverk først, cachet skall som fallback offline. `CACHE_NAME` må følge `APP_VERSION`. |
 | `manifest.json`, `icon-*.png` | PWA. |
-| `supabase/migrations/` | `team_settings` og `visible_until` (resten av skjemaet: se under). |
-| `.github/workflows/keep-supabase-alive.yml` | Man/tor: pinger Supabase (hindrer pause av gratisprosjektet) og sletter `sessions`-rader eldre enn 60 dager. |
+| `supabase/migrations/` | `team_settings`, `visible_until` og `keepalive` (resten av skjemaet: se under). |
+| `.github/workflows/keep-supabase-alive.yml` | Daglig: skriver til `keepalive`-tabellen (hindrer pause av gratisprosjektet) og sletter `sessions`-rader eldre enn 60 dager. |
 
 **`app.js` i grove trekk:** konfig/konstanter og typedefs → state (`defaultState`, `normalizeState`, lagring, `pushRemoteState`) → delt økt (`createNewSession`, `joinSession`, `subscribeToSession`, `canEdit`, `isMaster`) → konto/historikk/Mitt lag → tidsfunksjoner og rangering → undo/redo → tegning (`renderField/Bench/All`, `updateTimersOnly`) → trykk/dra/bytte → play/pause og glemt kampslutt → innstillinger (modal + skjerm) → mål/kampresultat/Kampslutt/nullstill → `init()` med alle lyttere.
 
