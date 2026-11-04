@@ -1,29 +1,35 @@
 // Trenerappen - service worker
 //
-// Only job: let the app open from the iPhone home screen (or a browser tab)
-// with zero network connectivity, by keeping a cached copy of the app shell
-// (index.html + style.css + app.js - see PROSJEKT-OPPSUMMERING.md) around
-// after the first successful load.
+// Samme modell som Anestesiappen: appen kjører alltid fra en komplett, lagret kopi, og en ny versjon
+// tas først i bruk når brukeren trykker «Oppdater nå». Det gir tre ting på banen:
+// - ingen overraskende omstart midt i en kamp,
+// - rask oppstart også med dårlig dekning, og oppstart helt uten nett,
+// - aldri en blanding av gamle og nye filer, siden hver versjon har sin egen hele kopi.
 //
-// Deliberately NOT a cache-first "offline-first" worker: for navigations it
-// always tries the network first and only falls back to the cached shell
-// when that fails, so a device that DOES have connectivity always gets the
-// live index.html, never a stale cached one. That's what keeps this
-// compatible with the update-check in app.js (checkForUpdate), which
-// fetches with {cache:'no-store'} - those requests are ignored below and
-// go straight to the network, untouched, so they always see what's truly
-// live on Netlify regardless of what this worker has cached.
+// Slik kommer en ny versjon inn: appen ber nettleseren sjekke denne filen ved oppstart og når den
+// hentes frem (se initAppUpdates i app.js). Er filen endret, installeres den nye service workeren i
+// bakgrunnen og blir stående og vente, og appen viser banneret. Derfor MÅ CACHE_NAME bumpes (til samme
+// versjon som APP_VERSION i app.js) ved hver utgivelse: uten endring her oppdager ingen telefon noe.
 //
-// Bump CACHE_NAME (to match APP_VERSION in app.js) on every deploy that
-// changes index.html, style.css or app.js, so the old cached shell gets
-// purged on activate instead of lingering.
-var CACHE_NAME = 'trenerapp-shell-v2.3.4';
-var APP_SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon-180.png', '/icon-512.png'];
+// Lukkes appen helt uten at brukeren har svart, tar nettleseren selv den nye versjonen i bruk neste
+// gang den åpnes. Det er slik service workere virker, og det samme skjer i Anestesiappen.
+var APP_VERSION = '2.4.0';
+var CACHE_NAME = 'trenerapp-app-v2.4.0';
+var APP_SHELL = ['/', '/index.html', '/style.css', '/designs.css', '/design-init.js', '/app.js', '/vendor/supabase-2.118.0.min.js', '/vendor/qrcode-generator-2.0.4.js', '/manifest.json', '/icon-180.png', '/icon-512.png'];
 
 self.addEventListener('install', function(event){
-  self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(function(cache){ return cache.addAll(APP_SHELL); })
+    caches.open(CACHE_NAME).then(function(cache){
+      // cache:'reload': rett fra nettet, så en ny versjon aldri bygges av filer fra nettleserens mellomlager.
+      return cache.addAll(APP_SHELL.map(function(url){ return new Request(url, { cache: 'reload' }); }));
+    }).then(function(){
+      return caches.keys();
+    }).then(function(names){
+      // Forrige generasjon (til og med 2.3.x) hentet alltid fra nettet, så siden kjører allerede de nye
+      // filene når vi kommer hit. Da er det ingenting å spørre om: gå rett over til den nye modellen.
+      var oldGeneration = names.some(function(n){ return n.indexOf('trenerapp-shell-') === 0; });
+      if (oldGeneration) return self.skipWaiting();
+    })
   );
 });
 
@@ -35,36 +41,25 @@ self.addEventListener('activate', function(event){
   );
 });
 
+self.addEventListener('message', function(event){
+  var data = event.data || {};
+  if (data.type === 'SKIP_WAITING') self.skipWaiting(); // brukeren har trykket «Oppdater nå»
+  if (data.type === 'GET_VERSION' && event.source) event.source.postMessage({ type: 'SW_VERSION', version: APP_VERSION });
+});
+
 self.addEventListener('fetch', function(event){
   var req = event.request;
   if (req.method !== 'GET') return;
-  if (req.cache === 'no-store') return; // let cache-busting fetches (our update check) hit the network untouched
-
   var url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // leave cross-origin (Supabase CDN) requests alone
+  if (url.origin !== self.location.origin) return; // Supabase går rett på nettet
 
   var isNavigation = req.mode === 'navigate' || req.destination === 'document';
-
-  if (isNavigation){
-    event.respondWith(
-      fetch(req).then(function(res){
-        var copy = res.clone();
-        caches.open(CACHE_NAME).then(function(cache){ cache.put('/index.html', copy); });
-        return res;
-      }).catch(function(){
-        return caches.match('/index.html').then(function(cached){ return cached || Response.error(); });
-      })
-    );
-    return;
-  }
-
+  var key = isNavigation ? '/index.html' : url.pathname; // søkestreng (?okt=, ?se=) gir samme side
   event.respondWith(
-    fetch(req).then(function(res){
-      if (res && res.ok){
-        var copy = res.clone();
-        caches.open(CACHE_NAME).then(function(cache){ cache.put(req, copy); });
-      }
-      return res;
-    }).catch(function(){ return caches.match(req); })
+    caches.open(CACHE_NAME).then(function(cache){
+      return cache.match(key).then(function(hit){
+        return hit || fetch(req); // ikke en del av appen, eller første besøk før installasjonen er ferdig
+      });
+    })
   );
 });

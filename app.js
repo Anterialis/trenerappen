@@ -76,6 +76,7 @@
    * @property {HistoryGoalEntry[]} goals
    * @property {number} [durationMs] - only set on the entry built by buildHistoryArchiveEntry() right when a match ends (see lastMatchSummary); never persisted to Supabase, so absent on anything fetched back via fetchMatchHistory()
    * @property {number} [swapCount] - number of field<->bench swaps during this match, snapshotted the same way as durationMs (local-only, never persisted to Supabase)
+   * @property {MatchEvent[]} [events] - the match's timeline, local-only like durationMs
    * @property {number|null} [visibleUntil] - set by the admin (see setMatchVisibility()) to share this match with signed-in non-admin accounts until this timestamp; absent/null means admin-only, the default for every match
    *
    * @typedef {Object} AppState
@@ -108,6 +109,26 @@
    * @property {string} opponentAbbr
    * @property {MatchHistoryEntry[]} matchHistory
    * @property {number} rev
+   * @property {string} [sessionUid] - unique per shared session (set by createNewSession()); lets a device notice that its old three-digit code now belongs to someone else's session (see isDifferentSession())
+   * @property {MatchEvent[]} eventLog - timeline of the match in progress (swaps, goals, start/pause), reset at Kampslutt
+   * @property {boolean} [hasKeeper] - absent on sessions from before 2.4.0, which keep the formations they were started with (see fieldFormationRows())
+   * @property {number} [halves] - 1 or 2; with 2 the clock stops at half time (see checkMatchAlarms())
+   * @property {number} [halfStage] - which half is being played
+   * @property {string|null} [homeTeamName] - follows the session, so a co-coach sees the same team name
+   * @property {string|null} [homeTeamAbbr]
+   * @property {boolean} [planEnabled] - «Neste bytte» follows the rotation plan
+   * @property {{name:string, matches:{id:string, time:string, opponent:string}[]}|null} [cup]
+   * @property {Object<string, number>} [keeperMs] - time in goal this match
+   * @property {{id:string, sinceMs:number}|null} [keeperNow]
+   * @property {string[]} opIds - the latest operations this state already contains, so a replay can't apply one twice (see applyOp())
+   *
+   * @typedef {Object} MatchEvent
+   * @property {string} k - 'swap'|'toField'|'toBench'|'goal'|'ungoal'|'start'|'pause'
+   * @property {number} at
+   * @property {number} ms - the match clock when it happened
+   * @property {string|null} a
+   * @property {string|null} b
+   * @property {'home'|'away'} team
    *
    * @typedef {{id: string, zone: 'field'|'bench'}} Selection
    */
@@ -117,15 +138,55 @@
   // window.supabase comes from the CDN script tag above, not a module import,
   // so the type checker has no declaration for it - treat it as untyped here.
   var supabaseGlobal = /** @type {any} */ (window).supabase;
-  var sb = (supabaseGlobal && supabaseGlobal.createClient)
-    ? supabaseGlobal.createClient(SUPABASE_URL, SUPABASE_KEY)
-    : null;
+  /** @type {any} */
+  var sb = null;
+  try {
+    if (supabaseGlobal && supabaseGlobal.createClient) sb = supabaseGlobal.createClient(SUPABASE_URL, SUPABASE_KEY);
+  } catch(e){ console.warn('Kunne ikke starte Supabase-klienten', e); } // appen skal virke lokalt uansett
   var SESSION_CODE_KEY = 'spillerbytte_session_code_v1';
+
+  // Felles klokke. Spillerklokkene regnes ut fra tidsstempler som deles mellom telefoner, og to
+  // telefoner kan gå flere sekunder i utakt. nowTs() er serverens tid (så godt den kan anslås), og
+  // brukes for alt som deles. Lokale ting (hjerteslag, utsettelser, innloggingssperre) bruker Date.now().
+  var CLOCK_OFFSET_KEY = 'spillerbytte_clock_offset_v1';
+  var clockOffsetMs = 0;
+  var clockBestRtt = Infinity;
+  try { clockOffsetMs = Number(localStorage.getItem(CLOCK_OFFSET_KEY)) || 0; } catch(e){}
+  /** @returns {number} */
+  function nowTs(){ return Date.now() + clockOffsetMs; }
+  // Kalles med serverens tid fra et svar. Bare raske svar stoles på (en treg forespørsel sier lite
+  // om når serveren faktisk leste klokka), og små avvik ignoreres så klokkene ikke hopper.
+  /** @param {string|undefined} serverIso @param {number} sentAt @param {number} receivedAt */
+  function noteServerTime(serverIso, sentAt, receivedAt){
+    var server = serverIso ? new Date(serverIso).getTime() : NaN;
+    if (!isFinite(server)) return;
+    var rtt = receivedAt - sentAt;
+    if (rtt > Math.max(clockBestRtt * 1.5, 400)) return;
+    if (rtt < clockBestRtt) clockBestRtt = rtt;
+    var next = server + rtt / 2 - receivedAt;
+    var delta = next - clockOffsetMs;
+    if (Math.abs(delta) < 500) return;
+    clockOffsetMs = next;
+    try { localStorage.setItem(CLOCK_OFFSET_KEY, String(next)); } catch(e){}
+    // Det denne telefonen selv har stemplet er målt med den gamle klokka: flytt det med, så en
+    // pågående kamp ikke hopper. En nyere rad fra serveren tas inn etterpå og er riktig fra før.
+    if (state) shiftStamps(state, delta);
+    undoStack.concat(redoStack).forEach(function(snap){ shiftStamps(snap, delta); });
+  }
+  /** @param {AppState} s @param {number} delta */
+  function shiftStamps(s, delta){
+    [s.fieldTimers, s.benchTimers].forEach(function(group){
+      Object.keys(group).forEach(function(id){ group[id].sinceTs += delta; });
+    });
+    if (s.matchClock) s.matchClock.sinceTs += delta;
+    if (typeof s.lastPlayAt === 'number') s.lastPlayAt += delta;
+    if (typeof s.lastActivityAt === 'number') s.lastActivityAt += delta;
+  }
   var deviceOrigin = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
   // Stable per-device id (survives reloads, unlike deviceOrigin above which
   // is fresh every page load) - used to recognize "this device created the
   // session" for the read-only sharing mode, so the owner keeps edit rights
-  // even after e.g. checkForUpdate's auto-reload.
+  // even after an update reloads the page.
   var DEVICE_ID_KEY = 'spillerbytte_device_id_v1';
   var deviceId = '';
   try {
@@ -140,8 +201,8 @@
   // Reassigned by loadCoachDefaults()/the Settings screen's "Lagre" - starts
   // out matching the scoreboard's original hardcoded "NØT"/"Nøtterøy" values
   // for anyone who's never opened Settings, so nothing changes for them.
-  var HOME_TEAM_NAME = 'Nøtterøy';
-  var HOME_TEAM_ABBR = 'NØT';
+  var HOME_TEAM_NAME = 'Hjemmelag';
+  var HOME_TEAM_ABBR = 'HJE';
   var STORAGE_KEY = 'spillerbytte_v4';
   // Local-only "coach defaults" - what a new session/Ny økt starts prefilled
   // with (home team, kamptid, byttetid, kampformat, kumulert rangering,
@@ -163,6 +224,8 @@
    * @property {boolean} reorgUsesLastMatch
    * @property {'match'|'cumulative'} swapSuggestionBasis
    * @property {'waited'|'cumulative'} swapSuggestionBenchMode
+   * @property {number} halves
+   * @property {'auto'|'on'|'off'} keeper
    */
   /** @returns {CoachDefaults} */
   function loadCoachDefaults(){
@@ -171,12 +234,13 @@
     // 20 min baseline, for anyone who's never touched Settings too.
     /** @type {CoachDefaults} */
     var fallback = {
-      homeTeamName: 'Nøtterøy', homeTeamAbbr: 'NØT',
+      homeTeamName: 'Hjemmelag', homeTeamAbbr: 'HJE',
       matchDurationMs: 900000, defaultDurationMs: 180000, fieldSize: 3,
       // Alle valg står til venstre i Kampoppførsel som standard - for «Bytt om» er
       // venstre «Kun forrige kamp», altså reorgUsesLastMatch = true (se CHOICES.reorg).
       rankByCumulative: false, reorgUsesLastMatch: true,
-      swapSuggestionBasis: 'match', swapSuggestionBenchMode: 'waited'
+      swapSuggestionBasis: 'match', swapSuggestionBenchMode: 'waited',
+      halves: 1, keeper: 'auto'
     };
     try {
       var raw = localStorage.getItem(COACH_DEFAULTS_KEY);
@@ -191,7 +255,9 @@
         rankByCumulative: !!parsed.rankByCumulative,
         reorgUsesLastMatch: !!parsed.reorgUsesLastMatch,
         swapSuggestionBasis: parsed.swapSuggestionBasis === 'cumulative' ? 'cumulative' : 'match',
-        swapSuggestionBenchMode: parsed.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : 'waited'
+        swapSuggestionBenchMode: parsed.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : 'waited',
+        halves: parsed.halves === 2 ? 2 : 1,
+        keeper: parsed.keeper === 'on' || parsed.keeper === 'off' ? parsed.keeper : 'auto'
       };
     } catch(e){ return fallback; }
   }
@@ -208,8 +274,23 @@
   function applyHomeTeamName(name, abbr){
     HOME_TEAM_NAME = name;
     HOME_TEAM_ABBR = abbr;
-    if (els.homeTeamLabel) els.homeTeamLabel.textContent = abbr;
-    if (els.homeScoreBtn) els.homeScoreBtn.setAttribute('aria-label', 'Registrer mål for ' + name);
+    if (els.homeTeamLabel && state) renderScore();
+  }
+  // Lagnavnet følger økten, så en medtrener ser samme lag. Eldre økter uten navn bruker enhetens.
+  /** @returns {string} */
+  function homeName(){ return (state && state.homeTeamName) || HOME_TEAM_NAME; }
+  /** @returns {string} */
+  function homeAbbr(){ return (state && state.homeTeamAbbr) || HOME_TEAM_ABBR; }
+  // Nøtterøy var standard før 2.4.0. En enhet som allerede har en kamp liggende, men aldri åpnet
+  // innstillingene, skal beholde det den har sett hele tiden.
+  function migrateOldDefaultTeam(){
+    try {
+      if (localStorage.getItem(COACH_DEFAULTS_KEY) || !localStorage.getItem(STORAGE_KEY)) return;
+      var d = loadCoachDefaults();
+      d.homeTeamName = 'Nøtterøy';
+      d.homeTeamAbbr = 'NØT';
+      localStorage.setItem(COACH_DEFAULTS_KEY, JSON.stringify(d));
+    } catch(e){}
   }
   var ROSTER_KEY = 'spillerbytte_roster_v1';
   var COINFLIP_COLORS_KEY = 'spillerbytte_coinflip_colors_v1';
@@ -232,17 +313,17 @@
   var IDLE_SUGGEST_SNOOZE_MS = 24 * 60 * 60 * 1000;
   var IDLE_SUGGEST_SNOOZE_KEY_PREFIX = 'spillerbytte_idle_snooze_';
 
-  // Single source of truth for the version shown on the launcher - bump on
-  // every push (see checkForUpdate below, which parses this same line back
-  // out of the live deployed file to detect when a newer version exists).
-  var APP_VERSION = '2.3.4';
-  var UPDATE_ATTEMPT_KEY = 'spillerbytte_update_attempt_v1';
+  // The version shown on the launcher - bump on every push, together with
+  // APP_VERSION and CACHE_NAME in sw.js (that change is what phones detect).
+  var APP_VERSION = '2.4.0';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
   // footer on the launcher) - newest first, one entry per version bump.
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.4.0', text: 'Stor oppdatering: velg mellom fem design under Innstillinger. Kampslutt på ett ark, Angre rett etter hvert bytte, Neste bytte alltid synlig, bytteplan, omganger med fløyte, keeper på 5v5 og større, fast stall, cup-oppsett, statistikk og rapport å dele. Del økten med lenke og QR, og med en egen foreldrelenke. Samtidige bytter fra to trenere går ikke lenger tapt, og økter er ikke lenger åpne for alle. Appen spør nå før den oppdaterer seg.' },
+    { version: '2.3.5', text: 'Tryggere på banen: appen starter raskt også med dårlig dekning, en telefon som har sovet kan ikke lenger overskrive kampen, og kamper som ikke får lagret seg uten nett sendes automatisk senere. Angre etter en pause og «Fjern dødtid» endrer ikke lenger spilletiden feil. Du må også bekrefte før en delt økt erstatter kampen på enheten.' },
     { version: '2.3.4', text: 'Glemt kampslutt: når kamptiden er ute og det har vært stille en stund, kommer et ark med «Tilbakestill til kampslutt», «Fortsett» og «Still manuelt». Etter «Fortsett» lyser klokka og viser hvor kamptiden endres. Du kan også stille klokka tilbake fra overtidsklokka og fra Korriger tid.' },
     { version: '2.3.3', text: 'Rangeringstrekantene oppdateres nå av seg selv mens klokka går (første gang etter 30 sekunder), ikke bare når noe annet tegnes på nytt. Når du drar en spiller over en annen vises «Slipp for å bytte» med navnene på de to. Fikset at navneforslagene i spillerlisten ble klippet av.' },
     { version: '2.3.2', text: 'Ryddigere innstillinger: Kamptid og Byttetid justeres med store knapper (hele minutter), symboler ved titlene, «Bytt om» kan nå endres under kampen, og Kampoppførsel kan foldes sammen. Skjerm-våken ligger under Innstillinger på hjemskjermen og gjelder bare din enhet.' },
@@ -302,41 +383,125 @@
     { version: '1.7', text: 'Redesignet multiBytte- og avbryt-knappene på innbytterbenken for bedre synlighet.' }
   ];
 
-  // Runs at startup (and when iOS restores a suspended PWA tab from its
-  // back-forward cache instead of doing a real reload) to make sure the
-  // device isn't stuck on a cached copy from before the last Netlify
-  // deploy. Fetches this same URL bypassing HTTP cache, reads the
-  // APP_VERSION the *live* file declares, and if it differs, navigates to
-  // a cache-busted URL so the browser/PWA is forced to fetch fresh HTML.
-  // Guarded by sessionStorage so a mismatch that persists after one
-  // reload attempt (e.g. slow CDN propagation) can't loop forever.
-  function checkForUpdate(){
-    // APP_VERSION lives in this file now (index.html just <script src>'s
-    // it), so the version-check fetch has to target app.js, not the page.
-    fetch('/app.js', { cache: 'no-store' })
-      .then(function(res){ return res.ok ? res.text() : null; })
-      .then(function(js){
-        if (!js) return;
-        var m = js.match(/APP_VERSION\s*=\s*'([^']+)'/);
-        if (!m || m[1] === APP_VERSION) return;
-        var target = m[1];
-        /** @type {string|null} */
-        var lastAttempt = null;
-        try { lastAttempt = sessionStorage.getItem(UPDATE_ATTEMPT_KEY); } catch(e){}
-        if (lastAttempt === target) return;
-        try { sessionStorage.setItem(UPDATE_ATTEMPT_KEY, target); } catch(e){}
-        location.href = location.pathname + '?v=' + encodeURIComponent(target) + '&_=' + Date.now();
-      })
-      .catch(function(){ /* offline or network hiccup - keep running the current version */ });
+  /* ---------------- Ny versjon: spør før den tas i bruk ----------------
+     Samme modell som Anestesiappen (se sw.js). Appen ber nettleseren se etter en ny versjon ved oppstart,
+     når den hentes frem, når nettet er tilbake og hvert 30. minutt mens den er synlig. Nettleserens egen
+     sjekk er for treg, og på iOS kommer den ofte ikke i det hele tatt. Finnes det en ny versjon, ligger den
+     ferdig nedlastet og venter til brukeren trykker «Oppdater nå». */
+  var UPDATE_CHECK_EVERY_MS = 30 * 60 * 1000;
+  /** @type {ServiceWorkerRegistration|null} */
+  var swRegistration = null;
+  /** @type {ServiceWorker|null} */
+  var waitingWorker = null;
+  var updateDismissed = false;
+  var updateAccepted = false;
+
+  // Under utvikling (localhost, lokalt nett) skal endrede filer vises med en gang, så der er service workeren
+  // av, som i Anestesiappen. ?sw=on slår den på, for å teste selve oppdateringen.
+  /** @returns {boolean} */
+  function isDevHost(){
+    return /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+  }
+  /** @returns {boolean} */
+  function serviceWorkerAllowed(){
+    return !isDevHost() || new URLSearchParams(location.search).get('sw') === 'on';
   }
 
-  // Lets the app open from the home screen (or a browser tab) with zero
-  // connectivity, once it's been loaded successfully at least once - see
-  // sw.js. Bump the cache name in sw.js alongside APP_VERSION on every
-  // deploy that changes index.html, style.css or app.js.
-  if ('serviceWorker' in navigator){
-    window.addEventListener('load', function(){
-      navigator.serviceWorker.register('/sw.js').catch(function(){ /* offline shell just won't be available */ });
+  function initAppUpdates(){
+    if (!('serviceWorker' in navigator)) return;
+    if (!serviceWorkerAllowed()){
+      // En tidligere registrert worker ville ellers fortsatt servert gamle filer.
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        regs.forEach(function(r){ r.unregister(); });
+      }).catch(function(){});
+      if (window.caches) caches.keys().then(function(names){
+        names.forEach(function(n){ if (n.indexOf('trenerapp-') === 0) caches.delete(n); });
+      }).catch(function(){});
+      return;
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if (updateAccepted) location.reload();
+    });
+    navigator.serviceWorker.addEventListener('message', function(event){
+      var data = event.data || {};
+      if (data.type === 'SW_VERSION' && data.version && data.version !== APP_VERSION){
+        qs('updateBannerTitle').textContent = 'Versjon ' + data.version + ' er klar';
+      }
+    });
+    qs('updateNowBtn').addEventListener('click', acceptUpdate);
+    qs('updateLaterBtn').addEventListener('click', function(){
+      updateDismissed = true; // spør igjen neste gang appen startes
+      qs('updateBanner').hidden = true;
+    });
+    var start = function(){
+      navigator.serviceWorker.register('/sw.js').then(function(reg){
+        swRegistration = reg;
+        if (reg.waiting) showUpdateBanner(reg.waiting);
+        reg.addEventListener('updatefound', function(){
+          /** @type {any} */
+          var worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', function(){
+            // Uten en som styrer siden fra før er dette første installasjon, ikke en oppdatering.
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) showUpdateBanner(worker);
+          });
+        });
+        checkForAppUpdate();
+      }).catch(function(){ /* uten service worker går appen rett mot nettet, og er alltid nyeste versjon */ });
+    };
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) checkForAppUpdate(); });
+    window.addEventListener('online', checkForAppUpdate);
+    window.addEventListener('pageshow', function(e){ if (e.persisted) checkForAppUpdate(); });
+    setInterval(function(){ if (!document.hidden) checkForAppUpdate(); }, UPDATE_CHECK_EVERY_MS);
+  }
+
+  /** @returns {Promise<any>} */
+  function checkForAppUpdate(){
+    if (!swRegistration) return Promise.resolve();
+    return swRegistration.update().catch(function(){ /* uten nett: prøver igjen senere */ });
+  }
+
+  /** @param {ServiceWorker} worker */
+  function showUpdateBanner(worker){
+    waitingWorker = worker;
+    if (updateDismissed || updateAccepted) return;
+    qs('updateBannerSub').textContent = state && state.players.length > 0 && !spectatorCode
+      ? 'Kampen og klokkene fortsetter der de er.'
+      : 'Tar bare et øyeblikk.';
+    qs('updateBanner').hidden = false;
+    worker.postMessage({ type: 'GET_VERSION' });
+  }
+
+  function acceptUpdate(){
+    if (!waitingWorker) return;
+    updateAccepted = true;
+    if (state) saveStateLocally(); // alt skal ligge trygt før siden lastes på nytt
+    var btn = qs('updateNowBtn');
+    btn.disabled = true;
+    btn.textContent = 'Oppdaterer …';
+    waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    setTimeout(function(){ location.reload(); }, 4000); // reserve om nettleseren aldri sier fra
+  }
+
+  // «Se etter oppdatering» i versjonsvinduet.
+  function checkForUpdateNow(){
+    var note = qs('checkUpdateNote');
+    if (!swRegistration){
+      note.textContent = serviceWorkerAllowed()
+        ? 'Du har versjon ' + APP_VERSION + '. Fikk ikke sjekket akkurat nå.'
+        : 'Du kjører versjon ' + APP_VERSION + ' lokalt, og ser alltid de nyeste filene.';
+      return;
+    }
+    var reg = swRegistration;
+    note.textContent = 'Ser etter oppdatering …';
+    updateDismissed = false;
+    reg.update().then(function(){
+      if (reg.waiting) showUpdateBanner(reg.waiting);
+      note.textContent = reg.waiting || reg.installing ? 'Ny versjon funnet.' : 'Du har nyeste versjon (' + APP_VERSION + ').';
+    }).catch(function(){
+      note.textContent = 'Fikk ikke kontakt. Du har versjon ' + APP_VERSION + '.';
     });
   }
 
@@ -346,14 +511,13 @@
   var selected = null; // {id, zone} of the currently tap-selected token, if any
   /** @type {string|null} */
   var suggestedPartnerId = null; // bench player id a "Forslag" tap recommends completing the swap with - see computeSwapSuggestion()
-  var swapSuggestionArmed = false; // true once a suggestion is marked (selected+suggestedPartnerId set) and awaiting a 2nd "Forslag" tap to confirm - same 2-tap pattern as multiBytte, see onSwapSuggestionBtnClick()
   /** @type {string[]} */
   var roster = []; // remembered player names, alphabetical
   /** @type {AppState[]} */
   var undoStack = []; // snapshots, oldest first; capped at UNDO_MAX
   /** @type {AppState[]} */
   var redoStack = []; // snapshots stepped back past via undo, oldest first; capped at UNDO_MAX
-  var UNDO_MAX = 3;
+  var UNDO_MAX = 20;
   // Call whenever `state` is replaced WHOLESALE by data from somewhere else
   // (joining a session, adopting an incoming realtime update, adopting the
   // server's row on reconnect) rather than by a local, well-scoped
@@ -375,12 +539,15 @@
   var settingsDraftMatchDurationMin = 15;
   var settingsDraftSwapDurationMin = 3;
   var settingsDraftFieldSize = 3;
+  var settingsDraftHalves = 1;
+  /** @type {'auto'|'on'|'off'} */
+  var settingsDraftKeeper = 'auto';
   // Same idea for the pre-kamp Innstillinger-vinduet (#settingsModal): the
   // tallknapper/Kampformat edit these drafts, saveSettings() applies them on
   // OK. The *Init values are what openSettings() found, so a value that was
   // never touched is left exactly as it was (e.g. a byttetid of 2:30 from
   // before the whole-minute buttons - OK alone must not round it).
-  var modalDraft = { matchMin: 15, matchMinInit: 15, swapMin: 3, swapMinInit: 3, fieldSize: 3, fieldSizeInit: 3 };
+  var modalDraft = { matchMin: 15, matchMinInit: 15, swapMin: 3, swapMinInit: 3, fieldSize: 3, fieldSizeInit: 3, keeper: false, halves: 1, setup: false };
   /** @type {{match: any, swap: any}} */
   var modalSteps = { match: null, swap: null };
   /** @type {{match: any, swap: any}} */
@@ -401,19 +568,19 @@
     },
     share: {
       title: 'Del økt med andre',
-      text: 'Slår på sanntidsdeling med en tresifret kode. Du velger om andre får redigeringsrettighet (standard) - alle i økten kan gjøre byttinger og styre kampen - eller kun "les", hvor andre kun kan se hovedskjermen (kampen) live, uten å kunne gjøre endringer selv.'
+      text: 'Slår på sanntidsdeling med en kode. Du velger om andre får redigeringsrettighet (standard), slik at alle i økten kan bytte og styre kampen, eller kun «les». Foreldre får en egen lenke som aldri kan endre noe.'
     },
     endPeriod: {
       title: 'Kampslutt, ny kamp',
-      text: 'Avslutter denne kampen, men beholder laget og de kumulerte tallene til neste kamp. Du blir spurt om denne kampen skal lagres til historikk.'
+      text: 'Avslutter denne kampen, men beholder laget og total spilletid til neste kamp.'
     },
     endReset: {
-      title: 'Avslutt',
-      text: 'Starter helt på nytt - nullstiller spilletid, mål og kamptelling for alle. Krever et andre trykk for å bekrefte. Du blir spurt om den pågående kampen skal lagres til historikk.'
+      title: 'Avslutt økten',
+      text: 'Starter helt på nytt: nullstiller spilletid, mål og kamptelling for alle. Krever et andre trykk.'
     },
     leaveMatch: {
-      title: 'Forlat kampen',
-      text: 'Går til hjemskjermen, akkurat som tilbake-pilen øverst til venstre. Kampen røres ikke - den fortsetter nøyaktig som den er, og "Fortsett" fra hjemskjermen henter deg rett tilbake. Deler du økten med andre, er du fortsatt med i den i bakgrunnen; bruk "Forlat delt økt" under om du faktisk vil koble fra den.'
+      title: 'Til hjemskjermen',
+      text: 'Kampen røres ikke. «Fortsett kampen» på hjemskjermen henter deg rett tilbake. Deler du økten, er du fortsatt med i den.'
     },
     closeSession: {
       title: 'Forlat delt økt',
@@ -426,12 +593,7 @@
   // inside init(), see createConfirmArm() below. Holding these as plain
   // module vars (not re-declared locally) keeps disarm() reachable from
   // functions defined outside init(), like openSettings().
-  var kampsluttConfirm, avsluttConfirm, transferOwnerConfirm;
-  // Coach's answer from the "lagre denne kampen?" prompt (see
-  // askSaveToHistory), read by reorgNoBtn/reorgYesBtn once the reorg prompt
-  // that follows it closes - the two questions are independent, but ask
-  // order puts the save question first.
-  var pendingSaveToHistory = false;
+  var avsluttConfirm, transferOwnerConfirm;
   // The just-ended match's full summary (score, duration, goal timeline,
   // player times) - set by endMatchPeriod()/archiveInProgressMatch() right
   // as a match ends, read by showMatchSummaryThen() to render the "Kampen
@@ -443,6 +605,7 @@
   var audioCtx = null;
   var els = {};
 
+  /** @param {string} id @returns {any} */
   function qs(id){ return document.getElementById(id); }
 
   var CONFIRM_TIMEOUT_MS = 2500;
@@ -538,6 +701,15 @@
     // Ny økt/Avslutt, not just after a reload.
     var coachDefaults = loadCoachDefaults();
     return {
+      homeTeamName: coachDefaults.homeTeamName,
+      homeTeamAbbr: coachDefaults.homeTeamAbbr,
+      hasKeeper: keeperDefaultFor(coachDefaults.fieldSize, coachDefaults.keeper),
+      halves: coachDefaults.halves,
+      halfStage: 1,
+      planEnabled: false,
+      cup: null,
+      keeperMs: {},
+      keeperNow: null,
       players: [],
       onField: [],
       onBench: [],
@@ -545,7 +717,7 @@
       benchTimers: {},
       cumulative: {},
       periodStartCumulative: {},
-      matchClock: { baseElapsedMs: 0, sinceTs: Date.now() },
+      matchClock: { baseElapsedMs: 0, sinceTs: nowTs() },
       fieldSize: coachDefaults.fieldSize,
       fieldSlotAssignment: null,
       globalRunning: false,
@@ -560,12 +732,14 @@
       participants: [],
       goalLog: [],
       swapCount: 0,
-      lastActivityAt: Date.now(),
-      lastPlayAt: Date.now(),
+      lastActivityAt: nowTs(),
+      lastPlayAt: nowTs(),
       continueCount: 0,
       opponentName: '',
       opponentAbbr: '',
       matchHistory: [],
+      eventLog: [],
+      opIds: [],
       // Bumped by 1 on every pushRemoteState() call (see there) - lets a
       // receiving device tell a genuinely newer shared update apart from a
       // stale one arriving late (e.g. a read-only viewer's phone whose tab
@@ -579,41 +753,162 @@
   // (localStorage or a Supabase row) - returns null if it's too malformed
   // to safely render (e.g. missing players/onField/onBench arrays), so
   // callers can fall back instead of letting renderField/renderBench throw.
+  //
+  // This is also the only gate on UNTRUSTED data: `sessions` is open to anyone
+  // with the (public) key, so what comes back from Supabase may be malformed or
+  // hostile. Everything the app later puts into innerHTML or does arithmetic on
+  // is forced into its expected shape here: ids can't contain markup, names are
+  // strings, every timer is a real number, and every player sits in exactly one
+  // zone (one in neither would otherwise be invisible for the rest of the match).
   /**
    * @param {any} raw
    * @returns {AppState|null}
    */
   function normalizeState(raw){
     if (!raw || typeof raw !== 'object' || !Array.isArray(raw.players)) return null;
-    if (!Array.isArray(raw.onField)) raw.onField = [];
-    if (!Array.isArray(raw.onBench)) raw.onBench = [];
-    if (!raw.fieldTimers || typeof raw.fieldTimers !== 'object') raw.fieldTimers = {};
-    if (!raw.benchTimers || typeof raw.benchTimers !== 'object') raw.benchTimers = {};
-    if (!raw.cumulative || typeof raw.cumulative !== 'object') raw.cumulative = {};
-    if (!raw.periodStartCumulative || typeof raw.periodStartCumulative !== 'object') raw.periodStartCumulative = {};
-    if (!raw.matchClock) raw.matchClock = { baseElapsedMs: 0, sinceTs: Date.now() };
-    if (!raw.fieldSize) raw.fieldSize = 3;
+    var now = nowTs();
+    /** @type {Object<string, boolean>} */
+    var known = {};
+    raw.players = raw.players.filter(function(p){
+      if (!p || typeof p !== 'object' || !isSafeId(p.id) || typeof p.name !== 'string' || !p.name.trim() || known[p.id]) return false;
+      known[p.id] = true;
+      return true;
+    });
+    /** @type {Object<string, boolean>} */
+    var placed = {};
+    /** @param {any} list @returns {string[]} */
+    var cleanZone = function(list){
+      return (Array.isArray(list) ? list : []).filter(function(id){
+        if (typeof id !== 'string' || !known[id] || placed[id]) return false;
+        placed[id] = true;
+        return true;
+      });
+    };
+    raw.onField = cleanZone(raw.onField);
+    raw.onBench = cleanZone(raw.onBench);
+    raw.players.forEach(function(p){ if (!placed[p.id]) raw.onBench.push(p.id); });
+    /** @param {any} src @param {string[]} ids @returns {Object<string, {baseElapsedMs:number, sinceTs:number}>} */
+    var cleanTimers = function(src, ids){
+      var out = {};
+      ids.forEach(function(id){
+        var t = src && typeof src === 'object' ? src[id] : null;
+        out[id] = {
+          baseElapsedMs: t && isFinite(t.baseElapsedMs) && t.baseElapsedMs > 0 ? Number(t.baseElapsedMs) : 0,
+          sinceTs: t && typeof t.sinceTs === 'number' && isFinite(t.sinceTs) ? t.sinceTs : now
+        };
+      });
+      return out;
+    };
+    raw.fieldTimers = cleanTimers(raw.fieldTimers, raw.onField);
+    raw.benchTimers = cleanTimers(raw.benchTimers, raw.onBench);
+    /** @param {any} src @returns {Object<string, {fieldMs:number, benchMs:number}>} */
+    var cleanCumulative = function(src){
+      var out = {};
+      Object.keys(src && typeof src === 'object' ? src : {}).forEach(function(id){
+        var c = src[id];
+        if (!isSafeId(id) || !c || typeof c !== 'object') return;
+        out[id] = { fieldMs: isFinite(c.fieldMs) ? Number(c.fieldMs) || 0 : 0, benchMs: isFinite(c.benchMs) ? Number(c.benchMs) || 0 : 0 };
+      });
+      return out;
+    };
+    raw.cumulative = cleanCumulative(raw.cumulative);
+    raw.periodStartCumulative = cleanCumulative(raw.periodStartCumulative);
+    var mc = raw.matchClock;
+    raw.matchClock = {
+      baseElapsedMs: mc && typeof mc.baseElapsedMs === 'number' && isFinite(mc.baseElapsedMs) && mc.baseElapsedMs > 0 ? mc.baseElapsedMs : 0,
+      sinceTs: mc && typeof mc.sinceTs === 'number' && isFinite(mc.sinceTs) ? mc.sinceTs : now
+    };
+    raw.fieldSize = Math.max(1, Math.min(11, Math.round(Number(raw.fieldSize)) || 3));
+    raw.globalRunning = raw.globalRunning === true;
+    if (typeof raw.sessionUid !== 'string') delete raw.sessionUid;
+    if (typeof raw.sessionOwnerDeviceId !== 'string') raw.sessionOwnerDeviceId = null;
+    raw.participants = (Array.isArray(raw.participants) ? raw.participants : []).filter(function(p){
+      return p && typeof p === 'object' && typeof p.deviceId === 'string' && typeof p.joinedAt === 'number';
+    });
+    raw.goalLog = (Array.isArray(raw.goalLog) ? raw.goalLog : []).filter(function(g){
+      return g && typeof g === 'object' && (g.team === 'home' || g.team === 'away');
+    }).map(function(g){
+      return {
+        id: typeof g.id === 'string' ? g.id : uid(),
+        team: g.team,
+        playerId: isSafeId(g.playerId) ? g.playerId : null,
+        at: typeof g.at === 'number' && isFinite(g.at) ? g.at : 0,
+        matchMs: typeof g.matchMs === 'number' && isFinite(g.matchMs) ? g.matchMs : 0
+      };
+    });
+    raw.matchHistory = (Array.isArray(raw.matchHistory) ? raw.matchHistory : []).filter(function(m){
+      return m && typeof m === 'object';
+    }).map(function(m){
+      var playerMs = {};
+      Object.keys(m.playerMs && typeof m.playerMs === 'object' ? m.playerMs : {}).forEach(function(id){
+        if (isSafeId(id) && isFinite(m.playerMs[id])) playerMs[id] = Number(m.playerMs[id]) || 0;
+      });
+      return {
+        id: typeof m.id === 'string' ? m.id : uid(),
+        opponentName: typeof m.opponentName === 'string' ? m.opponentName : '',
+        opponentAbbr: typeof m.opponentAbbr === 'string' ? m.opponentAbbr : '',
+        homeScore: Number(m.homeScore) || 0,
+        awayScore: Number(m.awayScore) || 0,
+        endedAt: Number(m.endedAt) || 0,
+        playerMs: playerMs,
+        goals: (Array.isArray(m.goals) ? m.goals : []).filter(function(g){
+          return g && typeof g === 'object' && typeof g.playerName === 'string';
+        }).map(function(g){
+          return { playerId: isSafeId(g.playerId) ? g.playerId : '', playerName: g.playerName, matchMs: Number(g.matchMs) || 0 };
+        })
+      };
+    });
     if (!Array.isArray(raw.fieldSlotAssignment)) raw.fieldSlotAssignment = null;
     if (typeof raw.defaultDurationMs !== 'number' || raw.defaultDurationMs <= 0) raw.defaultDurationMs = 180000;
     if (typeof raw.matchDurationMs !== 'number' || raw.matchDurationMs <= 0) raw.matchDurationMs = 1200000;
-    if (raw.globalRunning === undefined) raw.globalRunning = false;
     if (raw.rankByCumulative === undefined) raw.rankByCumulative = false;
     if (raw.reorgUsesLastMatch === undefined) raw.reorgUsesLastMatch = false;
     if (raw.swapSuggestionBasis !== 'cumulative') raw.swapSuggestionBasis = 'match';
     if (raw.swapSuggestionBenchMode !== 'cumulative') raw.swapSuggestionBenchMode = 'waited';
     if (raw.shareEditable === undefined) raw.shareEditable = true;
-    if (raw.sessionOwnerDeviceId === undefined) raw.sessionOwnerDeviceId = null;
-    if (!Array.isArray(raw.participants)) raw.participants = [];
-    if (!Array.isArray(raw.goalLog)) raw.goalLog = [];
     if (typeof raw.swapCount !== 'number') raw.swapCount = 0;
-    if (typeof raw.lastActivityAt !== 'number') raw.lastActivityAt = Date.now();
+    if (typeof raw.lastActivityAt !== 'number') raw.lastActivityAt = nowTs();
     if (typeof raw.lastPlayAt !== 'number') raw.lastPlayAt = raw.lastActivityAt;
     if (typeof raw.continueCount !== 'number') raw.continueCount = 0;
     if (typeof raw.opponentName !== 'string') raw.opponentName = '';
     if (typeof raw.opponentAbbr !== 'string') raw.opponentAbbr = '';
-    if (!Array.isArray(raw.matchHistory)) raw.matchHistory = [];
-    if (typeof raw.rev !== 'number') raw.rev = 0;
+    if (typeof raw.rev !== 'number' || !isFinite(raw.rev)) raw.rev = 0;
+    raw.eventLog = (Array.isArray(raw.eventLog) ? raw.eventLog : []).filter(function(ev){
+      return ev && typeof ev === 'object' && typeof ev.k === 'string';
+    }).map(function(ev){
+      return { k: ev.k, at: Number(ev.at) || 0, ms: Number(ev.ms) || 0, a: isSafeId(ev.a) ? ev.a : null, b: isSafeId(ev.b) ? ev.b : null, team: ev.team === 'away' ? 'away' : 'home' };
+    });
+    if (typeof raw.hasKeeper !== 'boolean') delete raw.hasKeeper;
+    raw.halves = raw.halves === 2 ? 2 : 1;
+    raw.halfStage = raw.halfStage === 2 ? 2 : 1;
+    raw.planEnabled = raw.planEnabled === true;
+    raw.homeTeamName = typeof raw.homeTeamName === 'string' && raw.homeTeamName ? raw.homeTeamName.slice(0, 60) : null;
+    raw.homeTeamAbbr = typeof raw.homeTeamAbbr === 'string' && raw.homeTeamAbbr ? raw.homeTeamAbbr.slice(0, 8) : null;
+    if (raw.cup && typeof raw.cup === 'object'){
+      raw.cup = {
+        name: typeof raw.cup.name === 'string' ? raw.cup.name.slice(0, 60) : '',
+        matches: (Array.isArray(raw.cup.matches) ? raw.cup.matches : []).filter(function(m){ return m && typeof m === 'object'; }).map(function(m){
+          return { id: typeof m.id === 'string' ? m.id : uid(), time: /^\d\d:\d\d$/.test(m.time) ? m.time : '', opponent: typeof m.opponent === 'string' ? m.opponent.slice(0, 60) : '' };
+        })
+      };
+    } else {
+      raw.cup = null;
+    }
+    var keeperMs = {};
+    Object.keys(raw.keeperMs && typeof raw.keeperMs === 'object' ? raw.keeperMs : {}).forEach(function(id){
+      if (isSafeId(id) && isFinite(raw.keeperMs[id])) keeperMs[id] = Number(raw.keeperMs[id]) || 0;
+    });
+    raw.keeperMs = keeperMs;
+    raw.keeperNow = raw.keeperNow && isSafeId(raw.keeperNow.id) && isFinite(raw.keeperNow.sinceMs) ? { id: raw.keeperNow.id, sinceMs: Number(raw.keeperNow.sinceMs) } : null;
+    raw.opIds = (Array.isArray(raw.opIds) ? raw.opIds : []).filter(function(id){ return typeof id === 'string'; }).slice(-OP_ID_MEMORY);
     return raw;
+  }
+
+  // Player ids go into data-id attributes and querySelector strings. uid() only
+  // ever produces these characters, so anything else is not one of ours.
+  /** @param {any} id @returns {boolean} */
+  function isSafeId(id){
+    return typeof id === 'string' && /^[\w-]{1,64}$/.test(id);
   }
 
   // Drops timeUpNotified entries that no longer match reality after `state`
@@ -622,7 +917,7 @@
   // stint someone else gave them), should be able to trigger the beep again
   // next time their timer actually hits zero on this device.
   function resyncTimeUpNotified(){
-    var now = Date.now();
+    var now = nowTs();
     Object.keys(timeUpNotified).forEach(function(id){
       if (state.onField.indexOf(id) === -1 || fieldElapsed(id, now) < state.defaultDurationMs){
         delete timeUpNotified[id];
@@ -643,7 +938,12 @@
   }
 
   function saveStateLocally(){
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+    if (spectatorCode) return; // foreldrevisningen skal aldri røre en kamp som ligger på telefonen
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (pendingOps.length > 0) localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(pendingOps));
+      else localStorage.removeItem(PENDING_OPS_KEY);
+    }
     catch(e){ console.warn('Kunne ikke lagre tilstand', e); }
   }
 
@@ -655,37 +955,432 @@
     // below can tell whether ANY device did something recently, not just
     // this one - important in a shared session, where this device being
     // closed for weeks says nothing about whether someone else kept using it.
-    state.lastActivityAt = Date.now();
+    state.lastActivityAt = nowTs();
+    if (!opRecorded && sessionCode) plainEditPending = true;
+    opRecorded = false;
     saveStateLocally();
     pushRemoteState();
   }
 
-  // Same as saveState() but without touching lastActivityAt - for flushing
-  // already-current state (e.g. right before the tab backgrounds) without
-  // that flush itself counting as "activity". Backgrounding happens every
-  // time the screen locks, so if this stamped lastActivityAt too, the idle
-  // clock checkLongIdleSuggestion() relies on would never actually advance.
+  // Same as saveState() but without touching lastActivityAt - for a system
+  // correction (the idle auto-pause below) that isn't a real action by anyone.
   function flushState(){
     saveStateLocally();
-    // canEdit() gate - a read-only viewer's device runs this same code path
-    // (backgrounding the tab, or the idle-auto-pause correction below) and
-    // has no business writing to the shared session at all, regardless of
-    // whether its in-memory `state` happens to be stale at that moment or
-    // not. (isNewerRevision() on the receiving end would also catch a
-    // genuinely stale write, but "read-only" should mean no writes, full
-    // stop, not just "no writes that happen to be old".)
+    // canEdit() gate - "read-only" should mean no writes, full stop.
     if (canEdit()) pushRemoteState();
   }
 
-  function pushRemoteState(){
-    if (!sessionCode || !sb) return;
-    state.rev = (typeof state.rev === 'number' ? state.rev : 0) + 1;
-    sb.from('sessions')
-      .update({ data: state, origin: deviceOrigin, updated_at: new Date().toISOString() })
-      .eq('code', sessionCode)
-      .then(function(res){
-        if (res && res.error) console.warn('Kunne ikke synkronisere', res.error);
+  /* ---------------- Sync with the shared session ----------------
+     The rules, in one place:
+     - Every write is conditional: the server only accepts a rev strictly newer than the row's.
+       A device that slept through half a match can't roll the row back, whichever code path
+       decided to write.
+     - Whenever a device may have missed something (the channel (re)connected, the network came
+       back, the app came to the foreground, a ping arrived) it reads the row FIRST and only then
+       decides who is ahead (reconcileWithServer). Read-only devices do this too.
+     - Nothing is written unless something actually changed (remoteDirty). A no-op write would
+       bump rev and make everyone else redraw each time a phone locks.
+     - Two coaches at once: local actions are recorded as operations (recordOp). If the server
+       turns out to be ahead, this device takes the server's state and plays its own unconfirmed
+       operations on top, so both coaches' swaps survive. An edit that isn't an operation (angre)
+       can't be replayed: the server wins and the coach is told.
+     - The database is reached through functions (get_session and friends), because the table
+       itself is closed after privacy step 2. Before step 1 has been run they don't exist, and the
+       app uses the table directly as it always did, so app and database can be updated in any
+       order. See supabase/migrations/ and PROSJEKT-OPPSUMMERING.md. */
+  var remoteDirty = false;       // local edits the server hasn't confirmed yet
+  var sessionVerified = false;   // the row has been compared with local state since this device entered the session
+  var participantChecked = false;
+  var pushSeq = 0;               // only the newest write's answer may clear remoteDirty
+  /** @type {Promise<void>|null} */
+  var reconcileInFlight = null;
+  var reconcileGen = 0;
+  var reconcileAgain = false;    // a ping arrived while a read was on its way: that read may already be too old
+  var lastReconcileAt = 0;
+  var RECONCILE_TIMEOUT_MS = 8000;
+  var SYNC_WAIT_MS = 3000;       // how long startup/resume waits for the server before carrying on with local state
+  /** @type {boolean|null} */
+  var rpcAvailable = null;       // null until the database has answered; false = step 1 hasn't been run
+  /** @type {string|null} */
+  var sessionViewCode = null;    // the read-only code for the parent link (the row's view_code)
+  /** @type {any[]} */
+  var pendingOps = [];           // operations the server hasn't confirmed, oldest first
+  var opRecorded = false;        // set by recordOp, read by saveState: was this save an operation?
+  var plainEditPending = false;  // an unconfirmed edit that isn't an operation
+  var PENDING_OPS_KEY = 'spillerbytte_pending_ops_v1';
+  var OP_ID_MEMORY = 64;
+  /** @type {string|null} */
+  var spectatorCode = null;      // set while this is a parent link (?se=...): nothing is ever written or stored
+
+  /** @param {any} res @returns {boolean} */
+  function isRpcMissing(res){
+    return !!(res && res.error && (res.error.code === 'PGRST202' || res.error.code === '42883' || res.status === 404));
+  }
+  function noteRpcMissing(){
+    if (rpcAvailable === false) return;
+    rpcAvailable = false;
+    if (sessionCode) subscribeToSession(sessionCode); // the pings come from a trigger in step 1 too: listen to the table instead
+  }
+
+  // {ok:false} = no contact, {ok:true,row:null} = no such session.
+  /** @param {string} code @returns {Promise<{ok:boolean, row:any}>} */
+  function fetchSessionRow(code){
+    var sentAt = Date.now();
+    /** @returns {Promise<{ok:boolean, row:any}>} */
+    var direct = function(){
+      return sb.from('sessions').select('*').eq('code', code).maybeSingle().then(function(/** @type {any} */ res){
+        if (!res || res.error) return { ok: false, row: null };
+        return { ok: true, row: res.data || null };
       });
+    };
+    if (rpcAvailable === false) return direct();
+    return sb.rpc('get_session', { p_code: code }).then(function(/** @type {any} */ res){
+      if (isRpcMissing(res)){ noteRpcMissing(); return direct(); }
+      if (!res || res.error) return { ok: false, row: null };
+      rpcAvailable = true;
+      var row = Array.isArray(res.data) ? res.data[0] : res.data;
+      if (row) noteServerTime(row.server_now, sentAt, Date.now());
+      return { ok: true, row: row || null };
+    });
+  }
+
+  function pushRemoteState(){
+    if (!sessionCode || !sb || spectatorCode) return;
+    state.rev = (typeof state.rev === 'number' ? state.rev : 0) + 1;
+    remoteDirty = true;
+    sendRemoteState();
+  }
+
+  // force: skip the rev condition - only for a row without a numeric rev when talking to the table
+  // directly, which the JSON filter can never match (the database functions handle this themselves).
+  /** @param {boolean} [force] */
+  function sendRemoteState(force){
+    if (!sessionCode || !sb || !sessionVerified || spectatorCode) return; // stays dirty; reconcileWithServer sends it once it's safe
+    var code = sessionCode;
+    var seq = ++pushSeq;
+    var sentIds = pendingOps.map(function(op){ return op.id; });
+    var sentAt = Date.now();
+    var confirmed = function(){
+      pendingOps = pendingOps.filter(function(op){ return sentIds.indexOf(op.id) === -1; });
+      if (seq === pushSeq && pendingOps.length === 0){
+        remoteDirty = false;
+        plainEditPending = false;
+      }
+      saveStateLocally();
+    };
+    var direct = function(){
+      var query = sb.from('sessions')
+        .update({ data: state, origin: deviceOrigin, updated_at: new Date().toISOString() })
+        .eq('code', code);
+      // data->rev (not ->>): jsonb compares as numbers, text would sort "9" above "10".
+      if (!force) query = query.lt('data->rev', state.rev);
+      return query.select('code').then(function(/** @type {any} */ res){
+        if (code !== sessionCode) return;
+        if (res && res.error){ console.warn('Kunne ikke synkronisere', res.error); return; } // still dirty - retried by the heartbeat and on reconnect
+        if (res && Array.isArray(res.data) && res.data.length === 0){ reconcileWithServer(); return; } // the server is ahead of this write (or the row is gone)
+        confirmed();
+      });
+    };
+    var sent = rpcAvailable === false ? direct() : sb.rpc('update_session', { p_code: code, p_data: state, p_origin: deviceOrigin }).then(function(/** @type {any} */ res){
+      if (isRpcMissing(res)){ noteRpcMissing(); return direct(); }
+      if (code !== sessionCode) return;
+      if (!res || res.error){ console.warn('Kunne ikke synkronisere', res && res.error); return; }
+      rpcAvailable = true;
+      var row = Array.isArray(res.data) ? res.data[0] : res.data;
+      if (row) noteServerTime(row.server_now, sentAt, Date.now());
+      if (row && row.updated) confirmed();
+      else reconcileWithServer();
+    });
+    sent.catch(function(/** @type {any} */ e){ console.warn('Kunne ikke synkronisere', e); });
+  }
+
+  function flushRemoteIfDirty(){
+    if (!sessionCode || !sb || !remoteDirty) return;
+    if (!sessionVerified) reconcileWithServer();
+    else if (canEdit()) sendRemoteState();
+  }
+
+  // True if `incoming` is someone else's session that happens to use the same
+  // code: rows are cleaned up after 60 days and three-digit codes get reused, and
+  // a phone returning after that still has the old code and a high rev.
+  /** @param {AppState} incoming @returns {boolean} */
+  function isDifferentSession(incoming){
+    if (!state || state.players.length === 0) return false; // nothing local to protect
+    return !!incoming.sessionUid && incoming.sessionUid !== state.sessionUid;
+  }
+
+  // The one place a remote state replaces this device's state outright.
+  /** @param {AppState} incoming */
+  function adoptRemoteState(incoming){
+    var wasMaster = isMaster();
+    state = incoming;
+    pendingOps = [];
+    plainEditPending = false;
+    remoteDirty = false;
+    clearUndoHistory(); // see its own comment - this device's undo history predates whatever just arrived
+    dropStaleSelection();
+    saveStateLocally();
+    resyncTimeUpNotified();
+    renderAll();
+    if (!wasMaster && isMaster()) showOwnerTransferredNotice();
+  }
+
+  // The server is ahead and this device has its own unconfirmed operations: keep both.
+  /** @param {AppState} server */
+  function mergeOntoServer(server){
+    var ops = pendingOps.slice();
+    var wasMaster = isMaster();
+    state = server;
+    clearUndoHistory();
+    ops.forEach(function(op){
+      try { applyOp(op); } catch(e){ console.warn('Kunne ikke spille av en endring', op, e); }
+    });
+    dropStaleSelection();
+    resyncTimeUpNotified();
+    saveStateLocally();
+    renderAll();
+    if (!wasMaster && isMaster()) showOwnerTransferredNotice();
+    pushRemoteState();
+  }
+
+  // What's marked on this device may no longer be true once another device has moved people.
+  function dropStaleSelection(){
+    if (selected && (selected.zone === 'field' ? state.onField : state.onBench).indexOf(selected.id) === -1){
+      selected = null;
+      suggestedPartnerId = null;
+    }
+    if (suggestedPartnerId && state.onBench.indexOf(suggestedPartnerId) === -1){
+      suggestedPartnerId = null;
+    }
+    multiSelected = multiSelected.filter(function(id){ return !!playerById(id); });
+  }
+
+  // Decides what a row from the server means for this device.
+  /** @param {AppState} server @param {string|null|undefined} origin @param {boolean} hasRev */
+  function applyServerRow(server, origin, hasRev){
+    if (isDifferentSession(server)){
+      detachFromSession('Koden brukes nå av en annen økt. Kampen fortsetter bare på denne enheten.');
+      return;
+    }
+    sessionVerified = true;
+    // Redrawing now would remove the element the finger is on; the pointerup would never arrive
+    // and the drag ghost would stay on screen. Taken up when the finger lets go - see onPointerDown.
+    if (activeDragCancel){
+      pendingRemoteRow = { server: server, origin: origin, hasRev: hasRev };
+      return;
+    }
+    var sameRev = server.rev === state.rev;
+    var fromOther = origin !== deviceOrigin;
+    var dirty = remoteDirty || pendingOps.length > 0 || plainEditPending;
+    if (sameRev && !fromOther){
+      // Our own write landed, only the answer got lost.
+      pendingOps = [];
+      plainEditPending = false;
+      remoteDirty = false;
+    } else if (server.rev > state.rev || (sameRev && fromOther)){
+      if (!canEdit() || !dirty) adoptRemoteState(server);
+      else if (pendingOps.length > 0 && !plainEditPending) mergeOntoServer(server);
+      else {
+        adoptRemoteState(server);
+        showNotice('Noe ble endret på en annen enhet samtidig. Sjekk kampen og prøv igjen.');
+      }
+    } else if (!canEdit()){
+      if (!sameRev) adoptRemoteState(server);
+    } else {
+      remoteDirty = true;
+      sendRemoteState(!hasRev);
+    }
+    if (!participantChecked){
+      participantChecked = true;
+      if (ensureParticipant()) pushRemoteState();
+    }
+  }
+
+  // Compares this device with the server row and brings whichever is behind up
+  // to date. Never rejects, and safe to call as often as needed.
+  /** @returns {Promise<void>} */
+  function reconcileWithServer(){
+    if (!sessionCode || !sb) return Promise.resolve();
+    if (reconcileInFlight){ reconcileAgain = true; return reconcileInFlight; }
+    var code = sessionCode;
+    var gen = ++reconcileGen;
+    /** @param {{ok:boolean, row:any}} result */
+    var onRow = function(result){
+      if (gen !== reconcileGen) return; // gave up on this one (see below): a late answer may be older than what a newer attempt found
+      reconcileInFlight = null;
+      if (code !== sessionCode) return;
+      if (!result.ok) return; // no contact - the next signal tries again
+      lastReconcileAt = Date.now();
+      if (!result.row){
+        detachFromSession('Den delte økten finnes ikke lenger. Kampen fortsetter bare på denne enheten.');
+        return;
+      }
+      if (result.row.view_code) sessionViewCode = result.row.view_code;
+      var rawData = result.row.data;
+      var hasRev = !!rawData && typeof rawData === 'object' && typeof rawData.rev === 'number';
+      var server = normalizeState(rawData);
+      if (!server){
+        console.warn('Lagret økt inneholdt ugyldig data, fortsetter med lokal tilstand');
+        sessionVerified = true;
+        return;
+      }
+      applyServerRow(server, result.row.origin, hasRev);
+    };
+    // A request can hang for a minute on iOS. Until the row has been compared nothing
+    // can be written, so a stalled request must not block the next attempt that long.
+    reconcileInFlight = new Promise(function(resolve){
+      var timer = setTimeout(function(){
+        if (gen === reconcileGen){ reconcileGen++; reconcileInFlight = null; }
+        resolve();
+      }, RECONCILE_TIMEOUT_MS);
+      fetchSessionRow(code)
+        .then(onRow)
+        .catch(function(/** @type {any} */ e){
+          if (gen === reconcileGen) reconcileInFlight = null;
+          console.warn('Kunne ikke hente delt økt', e);
+        })
+        .then(function(){
+          clearTimeout(timer);
+          resolve();
+          if (reconcileAgain && !reconcileInFlight){ reconcileAgain = false; reconcileWithServer(); }
+        });
+    });
+    return reconcileInFlight;
+  }
+
+  // Runs fn once the server has answered, or after SYNC_WAIT_MS at the latest:
+  // a hanging connection must never hold up a match on the screen.
+  /** @param {() => void} fn */
+  function afterSessionSync(fn){
+    if (!sessionCode || !sb){ fn(); return; }
+    var done = false;
+    var once = function(){ if (!done){ done = true; fn(); } };
+    reconcileWithServer().then(once, once);
+    setTimeout(once, SYNC_WAIT_MS);
+  }
+
+  /** @param {string} message */
+  function detachFromSession(message){
+    leaveSession();
+    showNotice(message);
+  }
+
+  /* ---------------- Operations: every change that can be replayed on top of a newer state ---------------- */
+
+  // Applies one change to `state`. Must stay valid when run later, on a state another coach has
+  // changed in the meantime, so each case checks that it still makes sense. op.at is when the
+  // coach actually did it, which keeps the times right after a replay.
+  /** @param {any} op */
+  function applyOp(op){
+    if (state.opIds.indexOf(op.id) !== -1) return; // already part of this state (a write whose answer got lost)
+    state.opIds.push(op.id);
+    if (state.opIds.length > OP_ID_MEMORY) state.opIds.shift();
+    var at = op.at;
+    switch (op.t){
+      case 'swap':
+        if (state.onField.indexOf(op.out) === -1 || state.onBench.indexOf(op.in) === -1) return;
+        logEvent('swap', at, op.out, op.in);
+        swapFieldAndBench(op.out, op.in, at);
+        break;
+      case 'toField':
+        if (state.onBench.indexOf(op.p) === -1 || state.onField.length >= (state.fieldSize || 3)) return;
+        logEvent('toField', at, op.p, null);
+        commitBenchStint(op.p, at);
+        state.onBench = state.onBench.filter(function(x){ return x !== op.p; });
+        state.onField.push(op.p);
+        state.fieldTimers[op.p] = { baseElapsedMs: 0, sinceTs: at };
+        delete state.benchTimers[op.p];
+        delete timeUpNotified[op.p];
+        break;
+      case 'toBench':
+        if (state.onField.indexOf(op.p) === -1) return;
+        logEvent('toBench', at, op.p, null);
+        commitFieldStint(op.p, at);
+        state.onField = state.onField.filter(function(x){ return x !== op.p; });
+        delete state.fieldTimers[op.p];
+        state.onBench.push(op.p);
+        state.benchTimers[op.p] = { baseElapsedMs: 0, sinceTs: at };
+        delete timeUpNotified[op.p];
+        break;
+      case 'pos':
+        syncFieldSlots();
+        var arr = state.fieldSlotAssignment;
+        if (!arr) return;
+        var ia = arr.indexOf(op.a), ib = arr.indexOf(op.b);
+        if (ia === -1 || ib === -1) return;
+        arr[ia] = op.b;
+        arr[ib] = op.a;
+        break;
+      case 'goal':
+        if (state.goalLog.some(function(g){ return g.id === op.goal.id; })) return;
+        state.goalLog.push(op.goal);
+        logEvent('goal', at, op.goal.playerId, null, op.goal.team);
+        break;
+      case 'ungoal':
+        var before = state.goalLog.length;
+        state.goalLog = state.goalLog.filter(function(g){ return g.id !== op.goalId; });
+        if (state.goalLog.length !== before) logEvent('ungoal', at, null, null);
+        break;
+      case 'clock':
+        if (op.run === state.globalRunning) return;
+        if (op.run) startClockAt(at); else stopClockAt(at);
+        logEvent(op.run ? 'start' : 'pause', at, null, null);
+        break;
+      case 'set':
+        Object.keys(op.fields).forEach(function(k){ state[k] = op.fields[k]; });
+        break;
+      case 'trim':
+        trimElapsedTime(op.ms);
+        if (op.pause) pauseClock();
+        if (op.continueReset) state.continueCount = 0;
+        break;
+      case 'roster':
+        applyRoster(op);
+        break;
+      case 'halftime':
+        if (state.halfStage === 2) return;
+        if (state.globalRunning) stopClockAt(at);
+        state.halfStage = 2;
+        break;
+      case 'endMatch':
+        applyEndMatch(!!op.reorganize, at, op.nextOpponentName, op.nextOpponentAbbr);
+        break;
+      case 'reset':
+        applyReset();
+        break;
+      case 'participant':
+        ensureParticipant();
+        break;
+      default:
+        return;
+    }
+    if (op.t === 'swap' || op.t === 'toField' || op.t === 'toBench' || op.t === 'pos' || op.t === 'goal' || op.t === 'ungoal' || op.t === 'clock') state.lastPlayAt = at;
+  }
+
+  // Runs a change now and remembers it until the server has confirmed it. The caller still decides
+  // when to save (saveState) and draw, so one tap can consist of several operations.
+  /** @param {any} op */
+  function recordOp(op){
+    op.at = op.at || nowTs();
+    op.id = uid();
+    applyOp(op);
+    if (sessionCode){
+      pendingOps.push(op);
+      opRecorded = true;
+    }
+  }
+
+  // For the many small settings that are just "these fields now have these values".
+  /** @param {Object<string, any>} fields */
+  function setShared(fields){
+    recordOp({ t: 'set', fields: fields });
+    saveState();
+  }
+
+  /** @param {string} k @param {number} at @param {string|null} a @param {string|null} b @param {'home'|'away'} [team] */
+  function logEvent(k, at, a, b, team){
+    state.eventLog.push({ k: k, at: at, ms: matchClockElapsed(at), a: a, b: b, team: team === 'away' ? 'away' : 'home' });
+    if (state.eventLog.length > 300) state.eventLog.shift();
   }
 
   // True if `incoming` is safe to adopt as this device's new state - i.e.
@@ -727,6 +1422,7 @@
   // (owner is recognized by the stable deviceId, not the per-load
   // deviceOrigin, so it survives reloads).
   function canEdit(){
+    if (spectatorCode) return false;
     if (!sessionCode) return true;
     if (!state || state.shareEditable !== false) return true;
     return state.sessionOwnerDeviceId === deviceId;
@@ -741,6 +1437,7 @@
   // shared session (or before one exists), this device is trivially its
   // own master.
   function isMaster(){
+    if (spectatorCode) return false;
     if (!sessionCode) return true;
     return state.sessionOwnerDeviceId === deviceId;
   }
@@ -754,7 +1451,7 @@
     if (!Array.isArray(state.participants)) state.participants = [];
     var already = state.participants.some(function(p){ return p.deviceId === deviceId; });
     if (already) return false;
-    state.participants.push({ deviceId: deviceId, joinedAt: Date.now() });
+    state.participants.push({ deviceId: deviceId, joinedAt: nowTs() });
     return true;
   }
 
@@ -779,7 +1476,7 @@
   // whether this candidate still makes sense to hand off to.
   /** @param {number} joinedAt @returns {string} */
   function formatJoinedAgo(joinedAt){
-    var mins = Math.max(0, Math.round((Date.now() - joinedAt) / 60000));
+    var mins = Math.max(0, Math.round((nowTs() - joinedAt) / 60000));
     if (mins < 1) return 'ble med for under 1 min siden';
     if (mins < 60) return 'ble med for ' + mins + ' min siden';
     var hours = Math.round(mins / 60);
@@ -802,7 +1499,7 @@
       var readOnly = state && state.shareEditable === false && state.sessionOwnerDeviceId !== deviceId;
       els.sessionCodeText.textContent = sessionCode + (readOnly ? ' · kun visning' : '');
       els.sessionCodeBar.style.display = '';
-      var healthy = networkOnline && realtimeSubscribed;
+      var healthy = !!sb && networkOnline && realtimeSubscribed;
       els.sessionCodeBar.classList.toggle('offline', !healthy);
       if (els.syncDot){
         els.syncDot.classList.toggle('offline', !healthy);
@@ -818,38 +1515,42 @@
     if (!sb) return;
     if (realtimeChannel) sb.removeChannel(realtimeChannel);
     realtimeSubscribed = false;
-    realtimeChannel = sb.channel('session-' + code)
-      .on('postgres_changes',
+    var channel = sb.channel('session-' + code);
+    if (rpcAvailable === false){
+      // Before privacy step 1: the row arrives with the update, as it always has.
+      channel.on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'sessions', filter: 'code=eq.' + code },
-        function(payload){
+        function(/** @type {any} */ payload){
           if (!payload.new || payload.new.origin === deviceOrigin) return;
+          var hasRev = payload.new.data && typeof payload.new.data.rev === 'number';
           var normalized = normalizeState(payload.new.data);
           if (!normalized){ console.warn('Mottok ugyldig delt tilstand fra økt, ignorerer'); return; }
           if (!isNewerRevision(normalized)){ console.warn('Ignorerte en foreldet delt tilstand (rev ' + normalized.rev + ' < ' + state.rev + ')'); return; }
-          var wasMaster = isMaster();
-          state = normalized;
-          clearUndoHistory(); // see its own comment - this device's undo history predates whatever just arrived
-          saveStateLocally();
-          resyncTimeUpNotified();
-          renderAll();
-          if (!wasMaster && isMaster()) showOwnerTransferredNotice();
+          applyServerRow(normalized, payload.new.origin, hasRev);
         }
-      )
-      .subscribe(function(status){
-        realtimeSubscribed = (status === 'SUBSCRIBED');
-        updateSessionCodeUI();
-        // Only an editor's own reconnect should ever re-push its in-memory
-        // state - a read-only viewer has no business writing at all (this
-        // used to run unconditionally, which was exactly how a dormant
-        // read-only phone once clobbered an active match - see
-        // isNewerRevision's comment). canEdit() alone isn't quite enough on
-        // its own though (an editor's phone can go just as stale), which is
-        // why isNewerRevision() above is the real backstop.
-        if (realtimeSubscribed && canEdit()) pushRemoteState(); // catch up on anything queued while disconnected
+      );
+    } else {
+      // Only a ping with no names in it (a trigger in the database sends it): the row itself is
+      // fetched by whoever knows the code.
+      channel.on('broadcast', { event: 'changed' }, function(/** @type {any} */ message){
+        var ping = message && message.payload;
+        if (!ping || ping.origin === deviceOrigin) return;
+        if (typeof ping.rev === 'number' && ping.rev < state.rev) return;
+        reconcileWithServer();
       });
+    }
+    realtimeChannel = channel.subscribe(function(/** @type {string} */ status){
+      realtimeSubscribed = (status === 'SUBSCRIBED');
+      updateSessionCodeUI();
+      // Fires again after every reconnect. Realtime doesn't replay what was
+      // missed while disconnected, so read the row first and let
+      // reconcileWithServer() decide who is ahead - never push blindly (that's
+      // how a dormant phone once clobbered an active match).
+      if (realtimeSubscribed) reconcileWithServer();
+    });
   }
 
-  // Detaches this device from its shared session without touching the
+    // Detaches this device from its shared session without touching the
   // Supabase row itself (no server-side cleanup, matching how the rest of
   // this app treats sessions) - triggered by switching "Del økt med andre"
   // off in settings.
@@ -857,8 +1558,24 @@
     if (realtimeChannel && sb){ sb.removeChannel(realtimeChannel); realtimeChannel = null; }
     realtimeSubscribed = false;
     sessionCode = null;
+    sessionVerified = false;
+    participantChecked = false;
+    remoteDirty = false;
+    pendingOps = [];
+    plainEditPending = false;
+    pendingRemoteRow = null;
+    sessionViewCode = null;
     try { localStorage.removeItem(SESSION_CODE_KEY); } catch(e){}
     updateSessionCodeUI();
+  }
+
+  // Ownership has to go somewhere when the owner leaves, or nobody can administer
+  // the session any more. No-op for a non-owner, or with nobody else to hand it to.
+  function handOffOwnershipIfOwner(){
+    if (!isMaster()) return;
+    var target = longestTenuredOtherParticipant();
+    if (!target) return;
+    setShared({ sessionOwnerDeviceId: target.deviceId });
   }
 
   function generateCode(){
@@ -907,10 +1624,18 @@
   function createNewSession(callback){
     if (!sb){ callback(null); return; }
     state.sessionOwnerDeviceId = deviceId;
+    state.sessionUid = uid();
+    state.participants = []; // devices from an earlier session on this phone aren't part of this one
     ensureParticipant();
 
     function onCreated(code){
       sessionCode = code;
+      sessionVerified = true; // this device just wrote the row itself
+      participantChecked = true;
+      remoteDirty = false;
+      pendingOps = [];
+      plainEditPending = false;
+      saveStateLocally(); // right away: the code and sessionUid must never be out of step (see isDifferentSession)
       try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
       subscribeToSession(code);
       updateSessionCodeUI();
@@ -939,36 +1664,85 @@
       });
     }
 
-    pickFreeCode(function(code){
-      if (!code){ blindRetryInsert(); return; }
-      sb.from('sessions').insert({ code: code, data: state, origin: deviceOrigin }).then(function(res){
-        if (res && res.error){ blindRetryInsert(); return; } // someone else grabbed it between our fetch and this insert
-        onCreated(code);
+    var createDirect = function(){
+      pickFreeCode(function(code){
+        if (!code){ blindRetryInsert(); return; }
+        sb.from('sessions').insert({ code: code, data: state, origin: deviceOrigin }).then(function(res){
+          if (res && res.error){ blindRetryInsert(); return; } // someone else grabbed it between our fetch and this insert
+          onCreated(code);
+        });
       });
-    });
+    };
+    if (rpcAvailable === false){ createDirect(); return; }
+    // The server picks the code: nobody can list which ones are taken any more.
+    sb.rpc('create_session', { p_data: state, p_origin: deviceOrigin }).then(function(/** @type {any} */ res){
+      if (isRpcMissing(res)){ rpcAvailable = false; createDirect(); return; }
+      var row = res && !res.error ? (Array.isArray(res.data) ? res.data[0] : res.data) : null;
+      if (!row){ callback(null); return; }
+      rpcAvailable = true;
+      sessionViewCode = row.view_code || null;
+      onCreated(row.code);
+    }).catch(function(){ callback(null); });
   }
 
-  function joinSession(code, onSuccess, onNotFound){
-    if (!sb){ onNotFound(); return; }
-    sb.from('sessions').select('*').eq('code', code).maybeSingle().then(function(res){
-      if (!res || res.error || !res.data){ onNotFound(); return; }
-      var normalized = normalizeState(res.data.data);
+  // onError: no contact with the database at all - not the same thing as a code
+  // that doesn't exist, and telling someone at the pitch "wrong code" sends them
+  // looking for the wrong problem.
+  /** @param {string} code @param {() => void} onSuccess @param {() => void} onNotFound @param {() => void} onError */
+  function joinSession(code, onSuccess, onNotFound, onError){
+    if (!sb){ onError(); return; }
+    fetchSessionRow(code).then(function(result){
+      if (!result.ok){ onError(); return; }
+      if (!result.row){ onNotFound(); return; }
+      var viewCode = result.row.view_code || null;
+      var normalized = normalizeState(result.row.data);
       if (!normalized){ console.warn('Økten fantes, men data var ugyldig'); onNotFound(); return; }
-      state = normalized;
-      clearUndoHistory(); // this device's own pre-join history (if any) has nothing to do with the session it's adopting now
-      sessionCode = code;
-      try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
-      // Register as a participant before the very first save so the owner
-      // (and anyone else) sees this device as a hand-off candidate - pushed
-      // remotely right away rather than waiting for the next real edit.
-      var joinedAsNewParticipant = ensureParticipant();
-      saveStateLocally();
-      resyncTimeUpNotified();
-      subscribeToSession(code);
-      updateSessionCodeUI();
-      if (joinedAsNewParticipant) pushRemoteState();
-      onSuccess();
-    });
+      var incoming = normalized;
+      var finish = function(){
+        state = incoming;
+        clearUndoHistory(); // this device's own pre-join history (if any) has nothing to do with the session it's adopting now
+        selected = null;
+        suggestedPartnerId = null;
+        multiMode = false;
+        multiSelected = [];
+        sessionCode = code;
+        sessionViewCode = viewCode;
+        sessionVerified = true;
+        participantChecked = true;
+        remoteDirty = false;
+        pendingOps = [];
+        plainEditPending = false;
+        try { localStorage.setItem(SESSION_CODE_KEY, code); } catch(e){}
+        // Register as a participant before the very first save so the owner
+        // (and anyone else) sees this device as a hand-off candidate - pushed
+        // remotely right away rather than waiting for the next real edit.
+        var joinedAsNewParticipant = ensureParticipant();
+        saveStateLocally();
+        resyncTimeUpNotified();
+        subscribeToSession(code);
+        updateSessionCodeUI();
+        if (joinedAsNewParticipant) pushRemoteState();
+        onSuccess();
+      };
+      // The code submits itself on the third digit and there are only 1000 of
+      // them, so a typo can land in a stranger's match. Nothing is replaced until
+      // the coach has seen what they're about to join.
+      if (state.players.length > 0 && sessionCode !== code) askJoinConfirm(code, incoming, finish);
+      else finish();
+    }).catch(function(){ onError(); });
+  }
+
+  /** @type {(() => void)|null} */
+  var pendingJoinFinish = null;
+  /** @param {string} code @param {AppState} incoming @param {() => void} finish */
+  function askJoinConfirm(code, incoming, finish){
+    var names = incoming.players.slice(0, 3).map(function(p){ return p.name; }).join(', ');
+    var more = incoming.players.length > 3 ? ' og ' + (incoming.players.length - 3) + ' til' : '';
+    var against = incoming.opponentName ? ', mot ' + incoming.opponentName : '';
+    els.joinConfirmText.textContent = 'Økt ' + code + ': ' + (names || 'ingen spillere ennå') + more + against + '. ' +
+      'Kampen som ligger på denne enheten blir erstattet og kan ikke hentes tilbake.';
+    pendingJoinFinish = finish;
+    els.joinConfirmModal.classList.add('open');
   }
 
   function loadRoster(){
@@ -1007,10 +1781,45 @@
   // enforced by Postgres row-level security, not just this client-side
   // check) can SELECT/UPDATE/DELETE. Parents/other coaches can never read
   // it without an admin's login - see PROSJEKT-OPPSUMMERING.md.
+  //
+  // The pitch often has no coverage at exactly the moment a match ends, and the
+  // match summary only exists right then - so a row that can't be sent waits in
+  // localStorage and is retried on startup, on reconnect and when the app comes
+  // back to the foreground. The row carries a client-made id when possible, so a
+  // retry after a lost response can't save the same match twice.
+  var HISTORY_QUEUE_KEY = 'spillerbytte_history_queue_v1';
+  var HISTORY_QUEUE_MAX = 50;
+
+  /** @returns {any[]} */
+  function loadHistoryQueue(){
+    try {
+      var parsed = JSON.parse(localStorage.getItem(HISTORY_QUEUE_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch(e){ return []; }
+  }
+  /** @param {any[]} queue */
+  function saveHistoryQueue(queue){
+    try {
+      if (queue.length === 0) localStorage.removeItem(HISTORY_QUEUE_KEY);
+      else localStorage.setItem(HISTORY_QUEUE_KEY, JSON.stringify(queue.slice(-HISTORY_QUEUE_MAX)));
+    } catch(e){ console.warn('Kunne ikke lagre historikk-køen', e); }
+  }
+  /** @param {any} row @returns {Promise<boolean>} */
+  function insertHistoryRow(row){
+    if (!sb) return Promise.resolve(false);
+    return sb.from('match_history').insert(row).then(function(res){
+      if (!res.error || res.error.code === '23505') return true; // 23505: already saved by an earlier attempt
+      console.warn('Kunne ikke lagre kamp til historikk', res.error);
+      return false;
+    }).catch(function(e){
+      console.warn('Kunne ikke lagre kamp til historikk', e);
+      return false;
+    });
+  }
   /** @param {HistoryMatchEntry} entry @returns {Promise<boolean>} */
   function saveMatchToHistory(entry){
-    if (!sb) return Promise.resolve(false);
-    return sb.from('match_history').insert({
+    /** @type {Object<string, any>} */
+    var row = {
       ended_at: new Date(entry.endedAt).toISOString(),
       opponent_name: entry.opponentName || '',
       opponent_abbr: entry.opponentAbbr || '',
@@ -1019,9 +1828,45 @@
       players: entry.players || [],
       goals: entry.goals || [],
       origin: deviceOrigin
-    }).then(function(res){
-      if (res.error){ console.warn('Kunne ikke lagre kamp til historikk', res.error); return false; }
-      return true;
+    };
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.id)) row.id = entry.id;
+    return insertHistoryRow(row).then(function(ok){
+      if (!ok) saveHistoryQueue(loadHistoryQueue().concat([row]));
+      return ok;
+    });
+  }
+  var historyQueueFlushing = false;
+  function flushHistoryQueue(){
+    if (historyQueueFlushing || !sb) return;
+    var queue = loadHistoryQueue();
+    if (queue.length === 0) return;
+    historyQueueFlushing = true;
+    /** @type {Object<string, boolean>} */
+    var sent = {};
+    var next = function(){
+      var row = queue.shift();
+      if (!row){
+        // Re-read rather than overwrite: a match may have been queued while this ran.
+        saveHistoryQueue(loadHistoryQueue().filter(function(r){ return !sent[r.ended_at]; }));
+        historyQueueFlushing = false;
+        return;
+      }
+      insertHistoryRow(row).then(function(ok){
+        if (ok) sent[row.ended_at] = true;
+        next();
+      });
+    };
+    next();
+  }
+  // Shared by Kampslutt and Avslutt: the summary popup opens before the save has
+  // answered, so the outcome is reported in that same popup.
+  /** @param {HistoryMatchEntry} entry */
+  function saveToHistoryWithNote(entry){
+    if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
+    saveMatchToHistory(entry).then(function(ok){
+      if (ok || !els.matchSummaryHistoryNote) return;
+      els.matchSummaryHistoryNote.textContent = 'Fikk ikke kontakt med databasen. Kampen er lagret på denne enheten og sendes til Historikk automatisk når det er mulig.';
+      els.matchSummaryHistoryNote.hidden = false;
     });
   }
 
@@ -1042,9 +1887,24 @@
       swap_suggestion_bench_mode: d.swapSuggestionBenchMode
     };
   }
+  // Stall og nyere valg ligger i en egen jsonb-kolonne (privacy step 1). Skrives i et eget kall, så en
+  // database uten kolonnen aldri kan velte lagringen av resten av innstillingene.
+  function saveTeamExtras(){
+    if (!sb || !isTeamAccountSignedIn()) return;
+    var d = loadCoachDefaults();
+    sb.from('team_settings').update({ extras: { roster: roster, halves: d.halves, keeper: d.keeper } }).eq('user_id', adminUser.id)
+      .then(function(/** @type {any} */ res){ if (res && res.error) console.warn('Kunne ikke lagre stallen på kontoen', res.error); })
+      .catch(function(/** @type {any} */ e){ console.warn('Kunne ikke lagre stallen på kontoen', e); });
+  }
   /** @param {any} row @returns {CoachDefaults} */
   function rowToCoachDefaults(row){
+    var extras = row.extras && typeof row.extras === 'object' ? row.extras : {};
+    if (Array.isArray(extras.roster)){
+      addNamesToRoster(extras.roster.filter(function(/** @type {any} */ n){ return typeof n === 'string' && n.trim(); }));
+    }
     return {
+      halves: extras.halves === 2 ? 2 : 1,
+      keeper: extras.keeper === 'on' || extras.keeper === 'off' ? extras.keeper : 'auto',
       homeTeamName: row.home_team_name,
       homeTeamAbbr: row.home_team_abbr,
       matchDurationMs: row.match_duration_ms,
@@ -1076,21 +1936,28 @@
     });
   }
 
-  /** @returns {Promise<HistoryMatchEntry[]>} */
+  // null = no contact (not the same as "no matches saved"). Anyone may INSERT a
+  // row (see above), and the admin is the one reading them, so these fields are
+  // forced into shape here rather than trusted further down.
+  /** @returns {Promise<HistoryMatchEntry[]|null>} */
   function fetchMatchHistory(){
-    if (!sb) return Promise.resolve([]);
+    if (!sb) return Promise.resolve(null);
     return sb.from('match_history').select('*').order('ended_at', { ascending: false }).then(function(res){
-      if (res.error){ console.warn('Kunne ikke hente historikk', res.error); return []; }
+      if (res.error){ console.warn('Kunne ikke hente historikk', res.error); return null; }
       return (res.data || []).map(function(row){
         return {
-          id: row.id,
+          id: String(row.id),
           endedAt: new Date(row.ended_at).getTime(),
-          opponentName: row.opponent_name || '',
-          opponentAbbr: row.opponent_abbr || '',
-          homeScore: row.home_score || 0,
-          awayScore: row.away_score || 0,
-          players: row.players || [],
-          goals: row.goals || [],
+          opponentName: String(row.opponent_name || ''),
+          opponentAbbr: String(row.opponent_abbr || ''),
+          homeScore: Number(row.home_score) || 0,
+          awayScore: Number(row.away_score) || 0,
+          players: (Array.isArray(row.players) ? row.players : []).filter(function(p){ return p && typeof p === 'object'; }).map(function(p){
+            return { id: String(p.id || ''), name: String(p.name || ''), ms: Number(p.ms) || 0, goals: Number(p.goals) || 0 };
+          }),
+          goals: (Array.isArray(row.goals) ? row.goals : []).filter(function(g){ return g && typeof g === 'object'; }).map(function(g){
+            return { team: g.team === 'away' ? 'away' : 'home', scorerName: String(g.scorerName || ''), matchMs: Number(g.matchMs) || 0 };
+          }),
           // null/absent for anything not currently flagged visible - RLS
           // (see the migration) already means a non-admin viewer only ever
           // gets rows where this is set and still in the future, so its
@@ -1133,6 +2000,8 @@
   // (isHistoryAdmin()) without awaiting getSession() everywhere it's read.
   /** @type {any} */
   var adminUser = null;
+  var registrationInProgress = false;
+  var pendingPasswordRecovery = false;
   // "Mitt lag" (see initAccountAndSettings) and Historikk-login share the
   // exact same sb.auth session - there's only one Supabase Auth per project,
   // so any signed-in team account IS, technically, a session here too.
@@ -1171,7 +2040,12 @@
   }
 
   if (sb){
-    sb.auth.onAuthStateChange(function(_event, session){
+    sb.auth.onAuthStateChange(function(/** @type {string} */ event, /** @type {any} */ session){
+      if (event === 'PASSWORD_RECOVERY'){
+        // Kan komme før appen er ferdig startet: init() ser etter flagget.
+        pendingPasswordRecovery = true;
+        if (els.newPasswordModal) els.newPasswordModal.classList.add('open');
+      }
       var wasAdmin = isHistoryAdmin();
       var wasTeamAccount = isTeamAccountSignedIn();
       adminUser = (session && session.user) || null;
@@ -1182,8 +2056,7 @@
       // A logout while the (admin-only) Historikk screen is open would
       // otherwise leave it sitting open with no way to show its now-
       // unauthorized list - there's no non-admin view left inside it to
-      // fall back to (see openHistoryLoginModal() - login now gates entry
-      // from the launcher instead of living inside this screen).
+      // fall back to.
       if (wasAdmin && !isHistoryAdmin() && els.historyScreen && els.historyScreen.classList.contains('open')){
         els.historyScreen.classList.remove('open');
       }
@@ -1199,13 +2072,18 @@
       // session restoring on page load) - covers both without duplicating
       // this in two places. Only on the actual signed-out -> signed-in
       // transition, not every token refresh in between.
-      if (!wasTeamAccount && isTeamAccountSignedIn()){
-        fetchTeamSettings(adminUser.id).then(function(remote){
+      // (Not during registration: that flow writes the account's first row itself,
+      // with the chosen team name - seeding here too would race it and could win.)
+      if (!wasTeamAccount && isTeamAccountSignedIn() && !registrationInProgress){
+        var signedInId = adminUser.id;
+        fetchTeamSettings(signedInId).then(function(remote){
+          // Signed out (or switched account) while this was on its way.
+          if (!adminUser || adminUser.id !== signedInId) return;
           if (remote) saveCoachDefaults(remote);
           // No row yet (a Historikk-admin-only login, or an account that
           // predates this feature) - leave the local cache as the seed and
           // push it up, so the account has something from here on.
-          else upsertTeamSettings(adminUser.id, loadCoachDefaults());
+          else upsertTeamSettings(signedInId, loadCoachDefaults());
           if (els.settingsScreen && els.settingsScreen.classList.contains('open')) openSettingsScreen();
           else if (els.settingsStorageNote) updateSettingsStorageNote();
         });
@@ -1215,163 +2093,16 @@
     });
   }
 
-  // ---------------- Historikk login lockout ----------------
-  // Client-side throttle only, not real brute-force protection - Supabase
-  // Auth already rate-limits sign-in attempts server-side regardless. This
-  // exists purely for the UX the coach asked for (a visible "wait 5
-  // minutes" instead of unlimited silent retries), stored locally so it
-  // survives closing/reopening the popup.
-  var HISTORY_LOGIN_LOCK_KEY = 'spillerbytte_history_login_lock_v1';
-  var HISTORY_LOGIN_MAX_ATTEMPTS = 3;
-  // First lockout is 5 minutes; every one after that is 1 hour (stage
-  // clamps at the last entry, so it never escalates past that).
-  var HISTORY_LOGIN_LOCK_DURATIONS_MS = [5 * 60 * 1000, 60 * 60 * 1000];
-
-  function loadHistoryLoginLock(){
-    try {
-      var raw = localStorage.getItem(HISTORY_LOGIN_LOCK_KEY);
-      var s = raw ? JSON.parse(raw) : null;
-      if (!s || typeof s !== 'object') return { fails: 0, stage: 0, lockUntil: 0 };
-      return { fails: s.fails || 0, stage: s.stage || 0, lockUntil: s.lockUntil || 0 };
-    } catch(e){ return { fails: 0, stage: 0, lockUntil: 0 }; }
+  /** @param {any} err @returns {boolean} */
+  function isWrongPasswordError(err){
+    return !!err && (err.code === 'invalid_credentials' || (err.status === 400 && err.code !== 'email_not_confirmed'));
   }
-  /** @param {{fails: number, stage: number, lockUntil: number}} s */
-  function saveHistoryLoginLock(s){
-    try { localStorage.setItem(HISTORY_LOGIN_LOCK_KEY, JSON.stringify(s)); } catch(e){}
-  }
-  function historyLoginLockRemainingMs(){
-    var remaining = loadHistoryLoginLock().lockUntil - Date.now();
-    return remaining > 0 ? remaining : 0;
-  }
-  // @returns the lock state AFTER recording this failure, so the caller can
-  // read .fails (attempts used so far this cycle) without a second load.
-  function recordFailedHistoryLogin(){
-    var s = loadHistoryLoginLock();
-    s.fails += 1;
-    if (s.fails >= HISTORY_LOGIN_MAX_ATTEMPTS){
-      var idx = Math.min(s.stage, HISTORY_LOGIN_LOCK_DURATIONS_MS.length - 1);
-      s.lockUntil = Date.now() + HISTORY_LOGIN_LOCK_DURATIONS_MS[idx];
-      s.stage += 1;
-      s.fails = 0;
-    }
-    saveHistoryLoginLock(s);
-    return s;
-  }
-  function recordSuccessfulHistoryLogin(){
-    saveHistoryLoginLock({ fails: 0, stage: 0, lockUntil: 0 });
-  }
-  /** @param {number} ms @returns {string} */
-  function formatLockRemaining(ms){
-    var totalSec = Math.ceil(ms / 1000);
-    var h = Math.floor(totalSec / 3600);
-    var m = Math.floor((totalSec % 3600) / 60);
-    var s = totalSec % 60;
-    if (h > 0) return h + ' t ' + m + ' min';
-    if (m > 0) return m + ' min ' + s + ' sek';
-    return s + ' sek';
-  }
-
-  /** @type {ReturnType<typeof setInterval>|undefined} */
-  var historyLoginCountdownTimer;
-
-  function openHistoryLoginModal(){
-    els.historyLoginEmail.value = '';
-    els.historyLoginPassword.value = '';
-    els.historyLoginError.style.display = 'none';
-    clearFieldInvalid(els.historyLoginEmailWrap);
-    clearFieldInvalid(els.historyLoginPasswordWrap);
-    els.historyLoginModal.classList.add('open');
-    updateHistoryLoginLockUI();
-    if (!historyLoginLockRemainingMs()){
-      setTimeout(function(){ els.historyLoginEmail.focus(); }, 350);
-    }
-  }
-
-  // Supabase Auth only knows email/password - there's no real "username"
-  // concept server-side. This is a purely client-side alias table so André
-  // can type "Anterialis" instead of his email; resolved to the real email
-  // before ever calling signInWithPassword. Fine at this scale (a single
-  // admin) - would need a real username->email lookup (e.g. a small public
-  // table) if there were ever more than a couple of admins to remember.
-  var HISTORY_LOGIN_USERNAME_ALIASES = {
-    'anterialis': 'andre.nanbjor@gmail.com'
-  };
-
-  function resolveHistoryLoginEmail(input){
-    var alias = HISTORY_LOGIN_USERNAME_ALIASES[input.toLowerCase()];
-    return alias || input;
-  }
-
-  function closeHistoryLoginModal(){
-    els.historyLoginModal.classList.remove('open');
-    clearInterval(historyLoginCountdownTimer);
-  }
-
-  // Toggles the form vs. the "prøv igjen om ..." note, and keeps that
-  // note's countdown ticking live for as long as the modal stays open.
-  function updateHistoryLoginLockUI(){
-    var remaining = historyLoginLockRemainingMs();
-    clearInterval(historyLoginCountdownTimer);
-    if (remaining <= 0){
-      els.historyLoginFormFields.hidden = false;
-      els.historyLoginLockedNote.hidden = true;
-      return;
-    }
-    els.historyLoginFormFields.hidden = true;
-    els.historyLoginLockedNote.hidden = false;
-    var tick = function(){
-      var left = historyLoginLockRemainingMs();
-      if (left <= 0){
-        clearInterval(historyLoginCountdownTimer);
-        updateHistoryLoginLockUI();
-        return;
-      }
-      els.historyLoginLockedText.textContent = 'For mange feilede forsøk. Prøv igjen om ' + formatLockRemaining(left) + '.';
-    };
-    tick();
-    historyLoginCountdownTimer = setInterval(tick, 1000);
-  }
-
-  function attemptHistoryLogin(){
-    if (historyLoginLockRemainingMs() > 0){ updateHistoryLoginLockUI(); return; }
-    var email = resolveHistoryLoginEmail(els.historyLoginEmail.value.trim());
-    var password = els.historyLoginPassword.value;
-    els.historyLoginError.style.display = 'none';
-    clearFieldInvalid(els.historyLoginEmailWrap);
-    clearFieldInvalid(els.historyLoginPasswordWrap);
-    if (!sb){
-      els.historyLoginError.textContent = 'Ingen tilkobling til databasen akkurat nå.';
-      els.historyLoginError.style.display = '';
-      return;
-    }
-    if (!email || !password){
-      if (!email) markFieldInvalid(els.historyLoginEmailWrap);
-      if (!password) markFieldInvalid(els.historyLoginPasswordWrap);
-      return;
-    }
-    els.historyLoginBtn.disabled = true;
-    sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
-      els.historyLoginBtn.disabled = false;
-      if (res.error){
-        var lock = recordFailedHistoryLogin();
-        shakeElement(els.historyLoginModal.querySelector('.modal-card'));
-        if (historyLoginLockRemainingMs() > 0){
-          updateHistoryLoginLockUI();
-        } else {
-          var left = HISTORY_LOGIN_MAX_ATTEMPTS - lock.fails;
-          els.historyLoginError.textContent = 'Feil e-post eller passord. ' + left + ' forsøk igjen.';
-          els.historyLoginError.style.display = '';
-          els.historyLoginPassword.value = '';
-          els.historyLoginPassword.focus();
-        }
-        return;
-      }
-      recordSuccessfulHistoryLogin();
-      closeHistoryLoginModal();
-      openHistoryScreen();
-      // adminUser/badge are already updated via onAuthStateChange, which
-      // fires synchronously off this same signInWithPassword call.
-    });
+  /** @param {any} err @returns {string} */
+  function authErrorMessage(err){
+    if (err && err.code === 'email_not_confirmed') return 'E-posten er ikke bekreftet ennå. Se etter bekreftelsen i innboksen din.';
+    if (isWrongPasswordError(err)) return 'Feil e-post eller passord.';
+    if (err && err.status === 429) return 'For mange forsøk på kort tid. Vent litt og prøv igjen.';
+    return 'Fikk ikke kontakt med innloggingen. Sjekk nettet og prøv igjen.';
   }
 
   // ---------------- Historikk screen ----------------
@@ -1393,6 +2124,7 @@
   /** @type {HistoryMatchEntry[]} */
   var historyListCache = [];
   var historyListLoading = false;
+  var historyListFailed = false;
 
 
   function fetchAndRenderHistoryList(){
@@ -1400,7 +2132,8 @@
     renderHistoryList();
     fetchMatchHistory().then(function(list){
       historyListLoading = false;
-      historyListCache = list;
+      historyListFailed = !list;
+      if (list) historyListCache = list; // no contact: keep showing what was already fetched
       renderHistoryList();
     });
   }
@@ -1415,9 +2148,11 @@
       return;
     }
     var admin = isHistoryAdmin();
-    els.historyEmpty.textContent = admin
-      ? 'Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".'
-      : 'Ingen kamper er delt med deg ennå.';
+    els.historyEmpty.textContent = historyListFailed
+      ? 'Fikk ikke kontakt med databasen. Sjekk nettet og prøv igjen.'
+      : admin
+        ? 'Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".'
+        : 'Ingen kamper er delt med deg ennå.';
     els.historyEmpty.hidden = list.length > 0;
     if (list.length === 0){
       els.historyList.innerHTML = '';
@@ -1438,7 +2173,7 @@
         '</div>';
       }).join('') || '<div class="history-row-player"><span class="history-row-player-name">Ingen spillerdata registrert.</span></div>';
       var goalRows = (m.goals || []).map(function(g){
-        return '<div class="history-row-goal history-row-goal-' + g.team + '">' +
+        return '<div class="history-row-goal history-row-goal-' + (g.team === 'away' ? 'away' : 'home') + '">' +
           '<span class="history-row-goal-time">' + formatMs(g.matchMs) + '</span>' +
           '<span class="history-row-goal-scorer">' + escapeHtml(g.scorerName) + '</span>' +
         '</div>';
@@ -1464,13 +2199,13 @@
             '<circle cx="12" cy="12" r="3.2" fill="' + (visible ? '#32d74b' : 'none') + '" stroke="' + (visible ? '#32d74b' : 'rgba(255,255,255,.6)') + '" stroke-width="1.6"/>' +
           '</svg>' +
         '</button>' : '';
-      return '<div class="history-row' + (expanded ? ' expanded' : '') + '" data-id="' + m.id + '">' +
+      return '<div class="history-row' + (expanded ? ' expanded' : '') + '" data-id="' + escapeHtml(m.id) + '">' +
         '<div class="history-row-main">' +
           (historySelectMode ? '<input type="checkbox" class="history-row-check"' + (selected ? ' checked' : '') + '>' : '') +
           '<div class="history-row-text">' +
             '<div class="history-row-top">' +
               '<span class="history-row-opponent">vs ' + escapeHtml(opponent) + '</span>' +
-              '<span class="history-row-score">' + m.homeScore + ' - ' + m.awayScore + '</span>' +
+              '<span class="history-row-score">' + (Number(m.homeScore) || 0) + ' - ' + (Number(m.awayScore) || 0) + '</span>' +
             '</div>' +
             '<div class="history-row-date">' + formatHistoryDate(m.endedAt) + '</div>' +
           '</div>' +
@@ -1548,12 +2283,8 @@
     }
   }
 
-  // Only ever reached already authenticated - either historyTile's click
-  // handler found an existing admin session, or openHistoryLoginModal()
-  // just established one (see attemptHistoryLogin()). Login itself gates
-  // entry from the launcher now, so this screen has nothing to fall back
-  // to if it weren't - see the onAuthStateChange listener above, which
-  // closes it again on logout rather than leaving it stranded.
+  // Only ever reached signed in (the tile is hidden otherwise) - see the
+  // onAuthStateChange listener above, which closes it again on logout.
   function openHistoryScreen(){
     historySelectMode = false;
     historySelected = {};
@@ -1595,14 +2326,14 @@
   function fieldElapsed(id, now){
     var t = state.fieldTimers[id];
     if (!t || typeof t.baseElapsedMs !== 'number') return 0;
-    return state.globalRunning ? t.baseElapsedMs + (now - t.sinceTs) : t.baseElapsedMs;
+    return state.globalRunning ? t.baseElapsedMs + sinceMs(now, t.sinceTs) : t.baseElapsedMs;
   }
 
   /** @param {string} id @param {number} now @returns {number} */
   function benchElapsed(id, now){
     var t = state.benchTimers[id];
     if (!t) return 0;
-    if (state.globalRunning) return t.baseElapsedMs + (now - t.sinceTs);
+    if (state.globalRunning) return t.baseElapsedMs + sinceMs(now, t.sinceTs);
     return t.baseElapsedMs;
   }
 
@@ -1610,7 +2341,14 @@
   function matchClockElapsed(now){
     var t = state.matchClock;
     if (!t) return 0;
-    return state.globalRunning ? t.baseElapsedMs + (now - t.sinceTs) : t.baseElapsedMs;
+    return state.globalRunning ? t.baseElapsedMs + sinceMs(now, t.sinceTs) : t.baseElapsedMs;
+  }
+
+  // sinceTs can come from another phone whose clock runs a few seconds ahead of
+  // this one. Time never runs backwards (formatMs would show it as "+0:05").
+  /** @param {number} now @param {number} sinceTs @returns {number} */
+  function sinceMs(now, sinceTs){
+    return Math.max(0, now - sinceTs);
   }
 
   // How much of kampvarighet is left to show on the big clock: it freezes
@@ -1627,7 +2365,8 @@
   // once kampvarighet is exceeded, with no separate show/hide state needed.
   /** @param {number} now @returns {number} */
   function matchCountdownMs(now){
-    return state.matchDurationMs - matchClockElapsed(now);
+    var end = state.halves === 2 && state.halfStage !== 2 ? state.matchDurationMs / 2 : state.matchDurationMs;
+    return end - matchClockElapsed(now);
   }
 
   /** @param {string} id @returns {Cumulative} */
@@ -1844,7 +2583,8 @@
   function computeSwapSuggestion(now){
     if (state.onBench.length === 0) return null;
     var msFor = state.swapSuggestionBasis === 'cumulative' ? cumulativeFieldMs : currentPeriodFieldMs;
-    var due = state.onField.filter(function(id){ return fieldElapsed(id, now) >= state.defaultDurationMs; });
+    var keeper = keeperIdNow();
+    var due = state.onField.filter(function(id){ return id !== keeper && fieldElapsed(id, now) >= state.defaultDurationMs; });
     if (due.length === 0) return null;
     var fieldId = pickByMetric(due, function(id){ return msFor(id, now); });
     var benchId = state.swapSuggestionBenchMode === 'cumulative'
@@ -1870,7 +2610,7 @@
       benchTimers: cloneStateValue(state.benchTimers),
       cumulative: cloneStateValue(state.cumulative),
       periodStartCumulative: cloneStateValue(state.periodStartCumulative || {}),
-      matchClock: cloneStateValue(state.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() }),
+      matchClock: cloneStateValue(state.matchClock || { baseElapsedMs: 0, sinceTs: nowTs() }),
       globalRunning: !!state.globalRunning,
       defaultDurationMs: state.defaultDurationMs,
       matchDurationMs: state.matchDurationMs,
@@ -1891,39 +2631,40 @@
       opponentName: state.opponentName || '',
       opponentAbbr: state.opponentAbbr || '',
       matchHistory: cloneStateValue(state.matchHistory || []),
+      eventLog: cloneStateValue(state.eventLog || []),
+      halfStage: state.halfStage,
+      keeperMs: cloneStateValue(state.keeperMs || {}),
+      keeperNow: cloneStateValue(state.keeperNow || null),
+      opIds: [],
       rev: typeof state.rev === 'number' ? state.rev : 0
     };
   }
 
+  // Only what the undoable actions (swap, goal, move, time correction) actually
+  // change. Settings aren't undoable and have no snapshot of their own, so an
+  // older snapshot would silently carry their OLD values along: undoing a swap
+  // must not also revert the match length, the opponent, a player's new name or
+  // an ownership hand-off made since. (A changed roster clears the undo history
+  // instead - see saveSettings().)
   /** @param {AppState} snap */
   function restoreState(snap){
     if (!snap) return;
-    state.players = cloneStateValue(snap.players || state.players || []);
     state.onField = (snap.onField || []).slice();
     state.onBench = (snap.onBench || []).slice();
     state.fieldTimers = cloneStateValue(snap.fieldTimers || {});
     state.benchTimers = cloneStateValue(snap.benchTimers || {});
     state.cumulative = cloneStateValue(snap.cumulative || {});
     state.periodStartCumulative = cloneStateValue(snap.periodStartCumulative || {});
-    state.matchClock = cloneStateValue(snap.matchClock || { baseElapsedMs: 0, sinceTs: Date.now() });
+    state.matchClock = cloneStateValue(snap.matchClock || { baseElapsedMs: 0, sinceTs: nowTs() });
     state.globalRunning = !!snap.globalRunning;
-    state.defaultDurationMs = typeof snap.defaultDurationMs === 'number' ? snap.defaultDurationMs : state.defaultDurationMs;
-    state.matchDurationMs = typeof snap.matchDurationMs === 'number' ? snap.matchDurationMs : state.matchDurationMs;
-    state.fieldSize = typeof snap.fieldSize === 'number' ? snap.fieldSize : state.fieldSize;
     state.fieldSlotAssignment = Array.isArray(snap.fieldSlotAssignment) ? cloneStateValue(snap.fieldSlotAssignment) : null;
-    state.rankByCumulative = snap.rankByCumulative !== undefined ? !!snap.rankByCumulative : state.rankByCumulative;
-    state.reorgUsesLastMatch = snap.reorgUsesLastMatch !== undefined ? !!snap.reorgUsesLastMatch : state.reorgUsesLastMatch;
-    state.swapSuggestionBasis = snap.swapSuggestionBasis === 'cumulative' ? 'cumulative' : (snap.swapSuggestionBasis === 'match' ? 'match' : state.swapSuggestionBasis);
-    state.swapSuggestionBenchMode = snap.swapSuggestionBenchMode === 'cumulative' ? 'cumulative' : (snap.swapSuggestionBenchMode === 'waited' ? 'waited' : state.swapSuggestionBenchMode);
-    state.shareEditable = snap.shareEditable !== undefined ? !!snap.shareEditable : state.shareEditable;
-    state.sessionOwnerDeviceId = snap.sessionOwnerDeviceId !== undefined ? snap.sessionOwnerDeviceId : state.sessionOwnerDeviceId;
-    state.participants = cloneStateValue(snap.participants || state.participants || []);
     state.goalLog = cloneStateValue(snap.goalLog || []);
     state.swapCount = typeof snap.swapCount === 'number' ? snap.swapCount : state.swapCount;
-    state.lastActivityAt = typeof snap.lastActivityAt === 'number' ? snap.lastActivityAt : state.lastActivityAt;
-    state.opponentName = snap.opponentName !== undefined ? snap.opponentName : state.opponentName;
-    state.opponentAbbr = snap.opponentAbbr !== undefined ? snap.opponentAbbr : state.opponentAbbr;
-    state.matchHistory = cloneStateValue(snap.matchHistory || state.matchHistory || []);
+    state.continueCount = typeof snap.continueCount === 'number' ? snap.continueCount : state.continueCount;
+    state.eventLog = cloneStateValue(snap.eventLog || []);
+    state.halfStage = snap.halfStage === 2 ? 2 : 1;
+    state.keeperMs = cloneStateValue(snap.keeperMs || {});
+    state.keeperNow = cloneStateValue(snap.keeperNow || null);
   }
 
   // Call BEFORE mutating state for any undoable action - pushes the
@@ -1932,7 +2673,7 @@
   // A genuine new action invalidates any pending redo (standard undo/redo
   // semantics), so this also clears redoStack.
   function pushUndoSnapshot(){
-    state.lastPlayAt = Date.now(); // every undoable action is a real play action - see forgottenMatchInfo()
+    state.lastPlayAt = nowTs(); // every undoable action is a real play action - see forgottenMatchInfo()
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -1954,13 +2695,13 @@
     if (!canEdit()) return;
     var snap = undoStack.pop();
     if (!snap) return;
-    state.lastPlayAt = Date.now();
+    state.lastPlayAt = nowTs();
+    pendingOps = []; // the restored state replaces them; see plainEditPending
     redoStack.push(snapshotState());
     if (redoStack.length > UNDO_MAX) redoStack.shift();
     restoreState(snap);
     selected = null;
     suggestedPartnerId = null;
-    swapSuggestionArmed = false;
     saveState();
     updateUndoUI();
     renderAll();
@@ -1970,13 +2711,13 @@
     if (!canEdit()) return;
     var snap = redoStack.pop();
     if (!snap) return;
-    state.lastPlayAt = Date.now();
+    state.lastPlayAt = nowTs();
+    pendingOps = [];
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     restoreState(snap);
     selected = null;
     suggestedPartnerId = null;
-    swapSuggestionArmed = false;
     saveState();
     updateUndoUI();
     renderAll();
@@ -1986,6 +2727,7 @@
   // changes, since clocks are timestamp-based (sinceTs/baseElapsedMs) and
   // keep advancing correctly regardless of what's on screen.
   function showLauncherMenu(){
+    updateLauncherResume();
     els.launcherTile.classList.remove('lifted');
     els.launcherScreen.classList.remove('hidden');
   }
@@ -1997,7 +2739,7 @@
   }
 
   function escapeHtml(str){
-    return str.replace(/[&<>"']/g, function(c){
+    return String(str === null || str === undefined ? '' : str).replace(/[&<>"']/g, function(c){
       return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
     });
   }
@@ -2037,6 +2779,10 @@
 
     var wrapW = (els.fieldWrap && els.fieldWrap.clientWidth) || 360;
     var wrapH = (els.fieldWrap && els.fieldWrap.clientHeight) || 420;
+    // The designs place the clock differently, so #field's padding is read rather than assumed.
+    var fieldStyle = els.field ? getComputedStyle(els.field) : null;
+    var padTop = (fieldStyle && parseFloat(fieldStyle.paddingTop)) || 98;
+    var padBottom = (fieldStyle && parseFloat(fieldStyle.paddingBottom)) || 16;
 
     // Width constraint: the widest row's tokens (+ the gaps between them)
     // side by side, inside #field's own horizontal padding (see
@@ -2059,7 +2805,7 @@
     // .field-row-pre-keeper's own fixed margin-bottom - see its comment in
     // style.css for why that exists instead of just nudging the keeper
     // further up. Keep both this and that 6px in sync.
-    var availH = Math.max(140, wrapH - (98 + 16) - 12 - rowGap * (rowCount - 1) - (formation.hasKeeper ? 6 : 0));
+    var availH = Math.max(140, wrapH - (padTop + padBottom) - 12 - rowGap * (rowCount - 1) - (formation.hasKeeper ? 6 : 0));
     var perRowH = availH / rowCount;
     // avatar + label (margin-top 8 + ~1.2 line-height) + timer (margin-top
     // 3 + ~1.2 line-height), with label/timer font sizes both ~0.23x the
@@ -2068,7 +2814,9 @@
     // budget room for a .field-pos-tag pill above the avatar - that moved
     // into #selectionInfo's popup instead, see updateSelectionInfo(), so
     // tokens on the pitch itself are back to just avatar+label+timer.)
-    var avatarFromHeight = (perRowH - 11) / 1.546;
+    // Designene kan legge ring og BYTT-merke rundt spilleren, og sier fra om plassen det tar.
+    var tokenExtra = (fieldStyle && parseFloat(fieldStyle.getPropertyValue('--token-extra'))) || 0;
+    var avatarFromHeight = (perRowH - 11 - tokenExtra) / 1.546;
 
     // Avatar sits inside the token box at roughly 0.70x its width across
     // every old tier (68/96, 58/84, 50/74, 44/66) - reusing that ratio
@@ -2140,7 +2888,8 @@
   // narrow phone can hit that threshold earlier than a wide one would at
   // the same fieldSize.
   function fieldUsesSingleLetter(){
-    return lastFieldAvatarSize <= 50;
+    var design = document.documentElement.getAttribute('data-design') || 'a';
+    return lastFieldAvatarSize <= (design !== 'a' ? 38 : 50);
   }
 
   // Real-football row shapes per fieldSize (1-11), bottom-to-top (keeper/
@@ -2166,9 +2915,34 @@
     10:{ rows:[1,4,3,2],   roles:['K','B','M','S'], hasKeeper:true },
     11:{ rows:[1,4,4,2],   roles:['K','B','M','S'], hasKeeper:true }
   };
+  // NFF: 3v3 spilles uten keeper, 5v5 og 7v7 med (4+1 og 6+1). Økter fra før 2.4.0 har ikke feltet
+  // hasKeeper og beholder tabellen over, ellers ville spillere byttet plass midt i en kamp.
+  var FORMATIONS_WITH_KEEPER = {
+    1: { rows:[1],     roles:['K'],         hasKeeper:true },
+    2: { rows:[1,1],   roles:['K','S'],     hasKeeper:true },
+    3: { rows:[1,2],   roles:['K','S'],     hasKeeper:true },
+    4: { rows:[1,2,1], roles:['K','B','S'], hasKeeper:true },
+    5: { rows:[1,2,2], roles:['K','B','S'], hasKeeper:true }
+  };
+  var FORMATIONS_WITHOUT_KEEPER = {
+    6:  { rows:[2,2,2], roles:['B','M','S'], hasKeeper:false },
+    7:  { rows:[3,3,1], roles:['B','M','S'], hasKeeper:false },
+    8:  { rows:[3,3,2], roles:['B','M','S'], hasKeeper:false },
+    9:  { rows:[3,3,3], roles:['B','M','S'], hasKeeper:false },
+    10: { rows:[4,3,3], roles:['B','M','S'], hasKeeper:false },
+    11: { rows:[4,4,3], roles:['B','M','S'], hasKeeper:false }
+  };
+  /** @param {number} fieldSize @param {string} [pref] @returns {boolean} */
+  function keeperDefaultFor(fieldSize, pref){
+    if (pref === 'on') return true;
+    if (pref === 'off') return false;
+    return fieldSize >= 5;
+  }
   /** @returns {{rows:number[], roles:string[], hasKeeper:boolean}} */
   function fieldFormationRows(fieldSize){
     var n = Math.max(1, Math.min(11, fieldSize || 3));
+    if (state && state.hasKeeper === true && FORMATIONS_WITH_KEEPER[n]) return FORMATIONS_WITH_KEEPER[n];
+    if (state && state.hasKeeper === false && FORMATIONS_WITHOUT_KEEPER[n]) return FORMATIONS_WITHOUT_KEEPER[n];
     return FIELD_FORMATIONS[n] || FIELD_FORMATIONS[3];
   }
 
@@ -2179,7 +2953,64 @@
   // (see fieldSlotTags below) that a sub inherits when swapped on, and that
   // two on-field players can trade directly by dragging one onto the other.
   function fieldHasPositions(){
-    return (state.fieldSize || 3) >= 5;
+    return (state.fieldSize || 3) >= 5 || state.hasKeeper === true;
+  }
+
+  /* ---------------- Keeper-rotasjon ---------------- */
+  var KEEPER_HISTORY_KEY = 'spillerbytte_keeper_history_v1';
+  /** @returns {string|null} */
+  function keeperIdNow(){
+    if (!fieldHasPositions() || !fieldFormationRows(state.fieldSize).hasKeeper) return null;
+    syncFieldSlots();
+    var arr = state.fieldSlotAssignment;
+    return (arr && arr[0]) || null;
+  }
+  // Klokketid i mål, ført på den som står der. Kalles ved tegning og ved kampslutt.
+  /** @param {number} now */
+  function syncKeeperTime(now){
+    if (!state.keeperMs) state.keeperMs = {};
+    var id = keeperIdNow(), clock = matchClockElapsed(now), cur = state.keeperNow;
+    if (cur && cur.id !== id){
+      state.keeperMs[cur.id] = (state.keeperMs[cur.id] || 0) + Math.max(0, clock - cur.sinceMs);
+      cur = null;
+      state.keeperNow = null;
+    }
+    if (!cur && id) state.keeperNow = { id: id, sinceMs: clock };
+  }
+  /** @param {string} id @param {number} now @returns {number} */
+  function keeperMsThisMatch(id, now){
+    var ms = (state.keeperMs && state.keeperMs[id]) || 0;
+    if (state.keeperNow && state.keeperNow.id === id) ms += Math.max(0, matchClockElapsed(now) - state.keeperNow.sinceMs);
+    return ms;
+  }
+  /** @returns {Object<string, number>} */
+  function loadKeeperHistory(){
+    try { var h = JSON.parse(localStorage.getItem(KEEPER_HISTORY_KEY) || '{}'); return h && typeof h === 'object' ? h : {}; }
+    catch(e){ return {}; }
+  }
+  /** @param {number} now */
+  function bankKeeperHistory(now){
+    if (spectatorCode) return;
+    var h = loadKeeperHistory();
+    state.players.forEach(function(p){
+      var ms = keeperMsThisMatch(p.id, now);
+      if (ms > 0) h[p.name] = (Number(h[p.name]) || 0) + ms;
+    });
+    try { localStorage.setItem(KEEPER_HISTORY_KEY, JSON.stringify(h)); } catch(e){}
+  }
+  // Den som har stått minst i mål, over alle kamper på denne enheten.
+  /** @param {number} now @returns {{id:string, name:string, ms:number}|null} */
+  function suggestNextKeeper(now){
+    if (!fieldFormationRows(state.fieldSize).hasKeeper || state.players.length < 2) return null;
+    var h = loadKeeperHistory(), current = keeperIdNow();
+    /** @type {any} */
+    var best = null;
+    state.players.forEach(function(p){
+      if (p.id === current) return;
+      var ms = (Number(h[p.name]) || 0) + keeperMsThisMatch(p.id, now);
+      if (!best || ms < best.ms || (ms === best.ms && p.name.localeCompare(best.name, 'nb') < 0)) best = { id: p.id, name: p.name, ms: ms };
+    });
+    return best;
   }
 
   // Left/center/right tag(s) for one row of `count` players at one role
@@ -2300,10 +3131,11 @@
     var ia = arr.indexOf(idA), ib = arr.indexOf(idB);
     if (ia === -1 || ib === -1) return;
     pushUndoSnapshot();
-    arr[ia] = idB;
-    arr[ib] = idA;
+    recordOp({ t: 'pos', a: idA, b: idB });
     saveState();
     renderAll();
+    var pa = playerById(idA), pb = playerById(idB);
+    if (pa && pb) showUndoToast(firstName(pa.name) + ' og ' + firstName(pb.name) + ' byttet plass');
     flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + idA + '"]')));
     flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + idB + '"]')));
   }
@@ -2317,11 +3149,12 @@
     updateTimersOnly();
     updateUndoUI();
     updateMultiSelectUI();
-    updateSwapSuggestionUI();
     renderScore();
   }
 
   function renderScore(){
+    els.homeTeamLabel.textContent = homeAbbr();
+    els.homeScoreBtn.setAttribute('aria-label', 'Registrer mål for ' + homeName());
     els.homeScoreBtn.textContent = String(teamGoalCount('home'));
     els.awayScoreBtn.textContent = String(teamGoalCount('away'));
     if (els.awayTeamLabel){
@@ -2362,9 +3195,7 @@
     var name = els.opponentNameInput.value.trim();
     var abbr = els.opponentAbbrInput.value.trim().toUpperCase();
     if (!abbr && name) abbr = deriveAbbrFromName(name);
-    state.opponentName = name;
-    state.opponentAbbr = abbr;
-    saveState();
+    setShared({ opponentName: name, opponentAbbr: abbr });
     els.opponentModal.classList.remove('open');
     renderScore();
   }
@@ -2414,13 +3245,7 @@
   // A goal is undoable the same way a substitution is (see pushUndoSnapshot
   // above togglePlayPause) - both just mutate `state` before saving, so the
   // generic snapshot-based undo stack covers this for free.
-  var GOAL_CONFIRM_WINDOW_MS = 30000;
-  // A goal on a player who JUST got subbed off (≤15s ago) is almost always
-  // the normal "scored, then subbed, then registered the goal" order done
-  // in the other sequence - not worth a warning. Past that, it's more
-  // likely to be a mis-tap (wrong player) or a goal attributed after the
-  // fact to someone no longer even in play, so it's worth a confirm.
-  var BENCH_GOAL_WARNING_MS = 15000;
+  var GOAL_CONFIRM_WINDOW_MS = 8000; // bare en dobbeltregistrering: ellers fanger Angre-stripen feil
   /** @type {'home'|'away'|null} */
   var pendingGoalTeam = null;
   /** @type {string|null} */
@@ -2429,10 +3254,12 @@
   /** @param {'home'|'away'} team @param {string|null} playerId */
   function registerGoal(team, playerId){
     pushUndoSnapshot();
-    var now = Date.now();
-    state.goalLog.push({ id: uid(), team: team, playerId: playerId || null, at: now, matchMs: matchClockElapsed(now) });
+    var now = nowTs();
+    recordOp({ t: 'goal', at: now, goal: { id: uid(), team: team, playerId: playerId || null, at: now, matchMs: matchClockElapsed(now) } });
     saveState();
     renderAll();
+    var scorer = playerId ? playerById(playerId) : null;
+    showUndoToast(team === 'home' ? 'Mål: ' + (scorer ? firstName(scorer.name) : homeName()) : 'Mål til ' + (state.opponentName || 'motstanderen'));
   }
 
   // Returns the confirm-dialog text to show before actually registering a
@@ -2445,11 +3272,7 @@
   /** @param {'home'|'away'} team @param {string|null} playerId @param {number} now @returns {string|null} */
   function goalConfirmMessage(team, playerId, now){
     var last = lastGoalEntry(team);
-    var duplicate = !!(last && (now - last.at) < GOAL_CONFIRM_WINDOW_MS);
-    var onBench = !!(playerId && state.onBench.indexOf(playerId) !== -1 && benchElapsed(playerId, now) > BENCH_GOAL_WARNING_MS);
-    if (duplicate && onBench) return 'Mål registrert på en innbytter, kort tid etter forrige mål. Korrekt?';
-    if (onBench) return 'Mål registrert på innbytter. Korrekt?';
-    if (duplicate) return 'Et mål ble nettopp registrert. Er du sikker?';
+    if (last && (now - last.at) < GOAL_CONFIRM_WINDOW_MS) return 'Et mål ble nettopp registrert. Er du sikker?';
     return null;
   }
 
@@ -2460,7 +3283,7 @@
   // goal.
   function onAwayScoreTap(){
     if (!canEdit()) return;
-    var msg = goalConfirmMessage('away', null, Date.now());
+    var msg = goalConfirmMessage('away', null, nowTs());
     if (msg){
       pendingGoalTeam = 'away';
       pendingGoalPlayerId = null;
@@ -2473,7 +3296,7 @@
 
   /** @param {string} playerId */
   function onHomePlayerPicked(playerId){
-    var msg = goalConfirmMessage('home', playerId, Date.now());
+    var msg = goalConfirmMessage('home', playerId, nowTs());
     if (msg){
       pendingGoalTeam = 'home';
       pendingGoalPlayerId = playerId;
@@ -2509,9 +3332,10 @@
     }
     if (idx === -1) return;
     pushUndoSnapshot();
-    state.goalLog.splice(idx, 1);
+    recordOp({ t: 'ungoal', goalId: state.goalLog[idx].id });
     saveState();
     renderAll();
+    showUndoToast('Målet er fjernet');
   }
 
   // Quick-remove shortcut (see .goal-quick-remove) - removes whichever
@@ -2523,9 +3347,10 @@
     var last = lastGoalEntry(team);
     if (!last) return;
     pushUndoSnapshot();
-    state.goalLog.splice(state.goalLog.indexOf(last), 1);
+    recordOp({ t: 'ungoal', goalId: last.id });
     saveState();
     renderAll();
+    showUndoToast('Målet er fjernet');
   }
 
   var SCORE_LONG_PRESS_MS = 550;
@@ -2591,7 +3416,7 @@
       state.onField.forEach(function(id){ onFieldSet[id] = true; });
       var onFieldPlayers = rows.filter(function(p){ return onFieldSet[p.id]; });
       var benchPlayers = rows.filter(function(p){ return !onFieldSet[p.id]; });
-      var groupByRole = fieldHasPositions() && (state.fieldSize || 3) >= 6;
+      var groupByRole = fieldHasPositions() && fieldFormationRows(state.fieldSize).rows.length >= 3;
       onFieldPlayers = sortGoalPickerGroup(onFieldPlayers, groupByRole);
       benchPlayers = sortGoalPickerGroup(benchPlayers, false);
       rows = onFieldPlayers.concat(benchPlayers);
@@ -2607,14 +3432,14 @@
       var n = goalBadges.counts[p.id] || 0;
       var disabled = goalPlayerMode === 'remove' && n === 0;
       var openTag = '<' + tag + ' class="goal-player-row"' +
-        (interactive ? ' type="button" data-id="' + p.id + '"' + (disabled ? ' disabled' : '') : '') + '>';
+        (interactive ? ' type="button" data-id="' + escapeHtml(p.id) + '"' + (disabled ? ' disabled' : '') : '') + '>';
       return (i === dividerBeforeIndex ? '<div class="goal-player-divider"></div>' : '') +
         openTag +
-        '<span class="goal-player-row-avatar">' + initials(p.name, singleLetter) + '</span>' +
+        '<span class="goal-player-row-avatar">' + escapeHtml(initials(p.name, singleLetter)) + '</span>' +
         '<span class="goal-player-row-name">' + escapeHtml(p.name) + '</span>' +
         (n > 0 ? '<span class="goal-player-row-count">' + n + '</span>' : '') +
         (goalPlayerMode === 'view' && n > 0
-          ? '<button type="button" class="goal-time-btn" data-id="' + p.id + '" aria-label="Vis måltidspunkt for ' + escapeHtml(p.name) + '">🕐</button>'
+          ? '<button type="button" class="goal-time-btn" data-id="' + escapeHtml(p.id) + '" aria-label="Vis måltidspunkt for ' + escapeHtml(p.name) + '">🕐</button>'
           : '') +
       '</' + tag + '>';
     }).join('');
@@ -2805,6 +3630,18 @@
   // near it, the tap falls through onto a token underneath" bug - moved
   // into #selectionInfo's own popup instead (see updateSelectionInfo() and
   // fieldPositionTagFor()), which no longer sits over the pitch at all.
+  // The settle animation is for tokens that actually moved. Every token is rebuilt
+  // on every render, and with a shared session that happens on each remote update,
+  // so replaying it for everyone made the whole team blink each time.
+  /** @type {Object<string, string>} */
+  var lastZoneById = {};
+  /** @param {string} id @param {'field'|'bench'} zone @returns {string} */
+  function enterClassFor(id, zone){
+    var moved = lastZoneById[id] !== zone;
+    lastZoneById[id] = zone;
+    return moved ? ' token-enter' : '';
+  }
+
   /** @param {string} id @param {number} now @param {Object} rankBadges @param {Object} goalBadges @param {boolean} singleLetter */
   function buildFieldTokenEl(id, now, rankBadges, goalBadges, singleLetter){
     var p = playerById(id);
@@ -2814,24 +3651,43 @@
     var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
     var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
     var el = document.createElement('div');
-    el.className = 'token field-token token-enter' + (isChecked ? ' multi-checked' : '');
+    el.className = 'token field-token' + enterClassFor(id, 'field') + (isChecked ? ' multi-checked' : '');
     el.dataset.id = id;
     el.innerHTML =
-      '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + initials(p.name, singleLetter) +
+      '<div class="avatar' + (timeUp ? ' time-up' : '') + '">' + escapeHtml(initials(p.name, singleLetter)) +
         rankBadgeHtml(rankBadges[id]) +
         goalBadgeHtml(id, goalBadges) +
         (farOver ? '<div class="badge-warning overtime">⇅</div>' : timeUp ? '<div class="badge-warning due">⇅</div>' : '') +
         (isChecked ? '<div class="badge-check">✓</div>' : '') +
       '</div>' +
       '<div class="label">' + escapeHtml(p.name) + '</div>' +
-      '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>';
+      '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>' +
+      // Vises bare i designene som bruker dem (designs.css).
+      '<div class="level-tag"></div><div class="stint-bar"><i></i></div>';
+    paintStint(el, elapsed);
     attachTokenEvents(el, id, 'field');
     return el;
   }
 
+  // Hvor langt spilleren er kommet mot byttetiden, for ring og stolpe i designene. Nivået står også
+  // som tekst, så tilstanden aldri bare ligger i en farge.
+  /** @param {HTMLElement} el @param {number} elapsed */
+  function paintStint(el, elapsed){
+    var d = state.defaultDurationMs;
+    var level = elapsed >= d * OVERTIME_FACTOR ? 'over' : elapsed >= d ? 'due' : elapsed >= d - PREWARN_MS ? 'soon' : '';
+    el.style.setProperty('--stint', String(Math.min(1, elapsed / d)));
+    el.style.setProperty('--list-order', String(-Math.floor(elapsed / 1000)));
+    if (el.dataset.level !== level){
+      el.dataset.level = level;
+      var tag = el.querySelector('.level-tag');
+      if (tag) tag.textContent = level === 'over' ? 'BYTT NÅ' : level === 'due' ? 'BYTT' : '';
+    }
+  }
+
   function renderField(){
     els.field.innerHTML = '';
-    var now = Date.now();
+    var now = nowTs();
+    syncKeeperTime(now);
     var rankBadges = computeRankBadges(now);
     lastRankSig = JSON.stringify(rankBadges);
     var goalBadges = computeGoalBadges();
@@ -2907,7 +3763,7 @@
 
   function renderBench(){
     els.bench.innerHTML = '';
-    var now = Date.now();
+    var now = nowTs();
     var rankBadges = computeRankBadges(now);
     var goalBadges = computeGoalBadges();
     var sorted = state.onBench.filter(function(id, i){ return state.onBench.indexOf(id) === i; }).sort(function(a,b){
@@ -2922,10 +3778,10 @@
       if (!p) return;
       var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
       var el = document.createElement('div');
-      el.className = 'token bench-token token-enter' + (isChecked ? ' multi-checked' : '');
+      el.className = 'token bench-token' + enterClassFor(id, 'bench') + (isChecked ? ' multi-checked' : '');
       el.dataset.id = id;
       el.innerHTML =
-        '<div class="avatar bench-avatar">' + initials(p.name) +
+        '<div class="avatar bench-avatar">' + escapeHtml(initials(p.name)) +
           rankBadgeHtml(rankBadges[id]) +
           goalBadgeHtml(id, goalBadges) +
           (isChecked ? '<div class="badge-check">✓</div>' : '') +
@@ -2943,7 +3799,7 @@
   // running - it must NOT early-return when paused: renderAll()/settings/
   // picker changes while paused still need the clock + countdown redrawn.
   function updateTimersOnly(){
-    var now = Date.now();
+    var now = nowTs();
     Array.prototype.forEach.call(els.field.querySelectorAll('.field-token'), function(el){
       var id = el.dataset.id;
       var elapsed = fieldElapsed(id, now);
@@ -2952,6 +3808,8 @@
       timerEl.textContent = formatMs(elapsed);
       var timeUp = elapsed >= state.defaultDurationMs;
       var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
+      paintStint(el, elapsed);
+      notePrewarn(id, elapsed);
       timerEl.classList.toggle('overtime', farOver);
       timerEl.classList.toggle('due', timeUp && !farOver);
       avatarEl.classList.toggle('time-up', timeUp);
@@ -2971,7 +3829,8 @@
       }
       if (timeUp && !timeUpNotified[id]){
         timeUpNotified[id] = true;
-        playTimeUpBeep();
+        if (!spectatorCode) playTimeUpBeep();
+        maybeTip('due');
       }
     });
     Array.prototype.forEach.call(els.bench.querySelectorAll('.bench-token'), function(el){
@@ -2980,10 +3839,16 @@
     });
     els.matchClock.textContent = formatMs(matchClockDisplayMs(now));
     var countdown = matchCountdownMs(now);
-    els.matchCountdown.textContent = formatMs(countdown);
+    els.matchCountdown.textContent = (state.halves === 2 ? (state.halfStage === 2 ? '2. ' : '1. ') : '') + formatMs(countdown);
     els.matchCountdown.classList.toggle('overtime', countdown < 0);
     updateRankBadgesOnly(now);
     updateSelectionInfo();
+    if (state.globalRunning) checkMatchAlarms(now);
+    var second = Math.floor(now / 1000);
+    if (second !== lastPanelsSecond){
+      lastPanelsSecond = second;
+      renderMatchPanels(now);
+    }
   }
 
   function applySelectionStyles(){
@@ -3044,7 +3909,7 @@
         '</div>';
       selectionInfoRenderedId = selected.id;
     }
-    var now = Date.now();
+    var now = nowTs();
     els.selectionInfo.querySelector('.si-name').textContent = p.name;
     var posTag = selected.zone === 'field' ? fieldPositionTagFor(selected.id) : null;
     var posTagEl = els.selectionInfo.querySelector('.si-pos-tag');
@@ -3113,14 +3978,55 @@
     }).catch(function(){ /* e.g. low-power mode - not critical, ignore */ });
   }
 
+  // Not only 'suspended': iOS reports 'interrupted' after a screen lock or a phone
+  // call, and the beep then stays silent until the next user gesture resumes it.
   function ensureAudioUnlocked(){
+    // Uten dette demper iPhone lyden når stillebryteren står på, og det gjør den ofte på banen.
+    try {
+      var session = /** @type {any} */ (navigator).audioSession;
+      if (session && session.type !== 'playback') session.type = 'playback';
+    } catch(e){}
     if (!audioCtx){
       try { audioCtx = new (window.AudioContext || /** @type {any} */ (window).webkitAudioContext)(); }
       catch(e){ audioCtx = null; }
     }
-    if (audioCtx && audioCtx.state === 'suspended'){
+    if (audioCtx && audioCtx.state !== 'running'){
       audioCtx.resume().catch(function(){});
     }
+  }
+
+  /** @param {Array<[number, number, number]>} tones - [frekvens, start, lengde] */
+  function playTones(tones){
+    if (!audioCtx) return;
+    var ctx = audioCtx;
+    try {
+      tones.forEach(function(tone){
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        var t0 = ctx.currentTime + tone[1];
+        osc.type = 'triangle';
+        osc.frequency.value = tone[0];
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + tone[2]);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + tone[2] + 0.02);
+      });
+    } catch(e){ console.warn('Kunne ikke spille lyd', e); }
+  }
+  function playWhistle(){
+    playTones([[2100, 0, 0.32], [2100, 0.42, 0.32], [2100, 0.84, 0.7]]);
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+  }
+  /** @param {string} key @returns {boolean} */
+  function soundPref(key){
+    try { return localStorage.getItem('spillerbytte_sound_' + key + '_v1') !== '0'; } catch(e){ return true; }
+  }
+  /** @param {string} key @param {boolean} on */
+  function setSoundPref(key, on){
+    try { localStorage.setItem('spillerbytte_sound_' + key + '_v1', on ? '1' : '0'); } catch(e){}
   }
 
   function playTimeUpBeep(){
@@ -3197,49 +4103,6 @@
     renderAll();
   }
 
-  // Same 2-tap pattern as multiBytte (see updateMultiSelectUI): 1st "Forslag"
-  // tap marks the pair (button turns green, cancel × appears beside it,
-  // both tokens highlight via selected/suggestedPartnerId), 2nd tap on the
-  // same button performs the swap immediately - no need to also tap the
-  // highlighted bench player, though doing so (or tapping any other token)
-  // still works via the normal handleTap() flow and disarms this.
-  function updateSwapSuggestionUI(){
-    els.swapSuggestionCancelBtn.classList.toggle('visible', swapSuggestionArmed);
-    els.swapSuggestionBtn.classList.toggle('ready', swapSuggestionArmed);
-    els.swapSuggestionBtnLabel.textContent = swapSuggestionArmed ? 'Bytt →' : 'Forslag';
-  }
-
-  function cancelSwapSuggestion(){
-    if (!swapSuggestionArmed) return;
-    selected = null;
-    suggestedPartnerId = null;
-    swapSuggestionArmed = false;
-    applySelectionStyles();
-    updateSwapSuggestionUI();
-  }
-
-  function onSwapSuggestionBtnClick(){
-    if (!canEdit() || multiMode){ shakeElement(els.swapSuggestionBtn); return; }
-    if (swapSuggestionArmed){
-      var fieldId = selected && selected.id;
-      var benchId = suggestedPartnerId;
-      selected = null;
-      suggestedPartnerId = null;
-      swapSuggestionArmed = false;
-      updateSwapSuggestionUI();
-      if (fieldId && benchId) animateAndPerformSwap(fieldId, benchId);
-      else applySelectionStyles();
-      return;
-    }
-    var suggestion = computeSwapSuggestion(Date.now());
-    if (!suggestion){ shakeElement(els.swapSuggestionBtn); return; }
-    selected = { id: suggestion.fieldId, zone: 'field' };
-    suggestedPartnerId = suggestion.benchId;
-    swapSuggestionArmed = true;
-    applySelectionStyles();
-    updateSwapSuggestionUI();
-  }
-
   function onMultiSelectBtnClick(){
     if (!canEdit()) return;
     if (!multiMode){
@@ -3247,7 +4110,6 @@
       multiSelected = [];
       selected = null;
       suggestedPartnerId = null;
-      swapSuggestionArmed = false;
       updateMultiSelectUI();
       renderAll();
       return;
@@ -3290,13 +4152,14 @@
     }
     pushUndoSnapshot();
     for (var i = 0; i < fieldSelected.length; i++){
-      swapFieldAndBench(fieldSelected[i], benchSelected[i]);
+      recordOp({ t: 'swap', out: fieldSelected[i], in: benchSelected[i] });
     }
     multiMode = false;
     multiSelected = [];
     saveState();
     updateMultiSelectUI();
     renderAll();
+    showUndoToast(fieldSelected.length + ' bytter utført');
   }
 
   /* ---------------- Tap select / swap ---------------- */
@@ -3305,8 +4168,6 @@
     // Any real tap - whether it confirms a "Forslag" suggestion or not -
     // drops that highlight before its own logic runs below.
     suggestedPartnerId = null;
-    swapSuggestionArmed = false;
-    updateSwapSuggestionUI();
     if (!selected){
       selected = {id:id, zone:zone};
       applySelectionStyles();
@@ -3335,21 +4196,19 @@
     }
     var fieldId = zone === 'field' ? id : selected.id;
     var benchId = zone === 'bench' ? id : selected.id;
-    performSwap(fieldId, benchId);
     selected = null;
-    saveState();
-    renderAll();
+    animateAndPerformSwap(fieldId, benchId);
   }
 
   // Core swap mutation, no undo snapshot of its own - callers decide the
   // undo granularity (performSwap snapshots once per swap; a multi-swap
   // batch snapshots once for the whole batch, see performMultiSwap).
-  /** @param {string} fieldId @param {string} benchId */
-  function swapFieldAndBench(fieldId, benchId){
+  /** @param {string} fieldId @param {string} benchId @param {number} [at] */
+  function swapFieldAndBench(fieldId, benchId, at){
     if (state.onField.indexOf(fieldId) === -1 || state.onBench.indexOf(benchId) === -1){
       return;
     }
-    var now = Date.now();
+    var now = typeof at === 'number' ? at : nowTs();
     commitFieldStint(fieldId, now);
     commitBenchStint(benchId, now);
     state.swapCount = (state.swapCount || 0) + 1;
@@ -3373,7 +4232,7 @@
       return;
     }
     pushUndoSnapshot();
-    swapFieldAndBench(fieldId, benchId);
+    recordOp({ t: 'swap', out: fieldId, in: benchId });
   }
 
   /* ---------------- Drag & drop ---------------- */
@@ -3382,8 +4241,21 @@
     el.addEventListener('pointerdown', function(e){ onPointerDown(e, id, zone); });
   }
 
+  /** @type {(() => void)|null} */
+  var activeDragCancel = null; // set from pointerdown to pointerup on a token; a second finger is ignored meanwhile
+  /** @type {{server:AppState, origin:any, hasRev:boolean}|null} */
+  var pendingRemoteRow = null; // a remote update that arrived during a drag - see applyServerRow()
+  var DRAG_WATCHDOG_MS = 15000;
+
   function onPointerDown(e, id, zone){
-    if (!canEdit()) return;
+    if (e.isPrimary === false || activeDragCancel) return;
+    if (!canEdit()){
+      // Tilskuere og lesere kan se spillerinfo, men ikke flytte noen.
+      e.preventDefault();
+      selected = selected && selected.id === id ? null : { id: id, zone: zone };
+      applySelectionStyles();
+      return;
+    }
     if (multiMode){
       e.preventDefault();
       toggleMultiSelect(id);
@@ -3399,6 +4271,8 @@
     var ghost = null;
     /** @type {HTMLElement|null} */
     var hoverTargetEl = null; // token currently under the cursor that a drop would swap with - see .token.drop-target
+    /** @type {ReturnType<typeof setTimeout>|undefined} */
+    var watchdog;
 
     try { sourceEl.setPointerCapture(pointerId); } catch(err){}
 
@@ -3407,7 +4281,16 @@
       hideDropHint();
     }
 
+    // Remote updates wait while a finger is down (see adoptRemoteState), so a
+    // pointerup that somehow never arrives must not be able to hold them up for good.
+    function armWatchdog(){
+      clearTimeout(watchdog);
+      watchdog = setTimeout(cancelDrag, DRAG_WATCHDOG_MS);
+    }
+
     function onMove(ev){
+      if (ev.pointerId !== pointerId) return;
+      armWatchdog();
       var dx = ev.clientX - startX, dy = ev.clientY - startY;
       if (!dragging && (Math.abs(dx) > 9 || Math.abs(dy) > 9)){
         dragging = true;
@@ -3444,27 +4327,54 @@
       }
     }
 
-    function onUp(ev){
-      if (settled) return;
+    // Everything that ends a press, whatever the reason. A remote update that
+    // waited is taken up here, BEFORE the drop is acted on, so the drop works on
+    // the current team and not on the one the drag started from.
+    function settle(){
       settled = true;
+      clearTimeout(watchdog);
       try { sourceEl.releasePointerCapture(pointerId); } catch(err){}
-      sourceEl.removeEventListener('pointermove', onMove);
-      sourceEl.removeEventListener('pointerup', onUp);
-      sourceEl.removeEventListener('pointercancel', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
       sourceEl.classList.remove('drag-source-hidden');
       clearHoverTarget();
-
-      if (dragging){
-        if (ghost) ghost.remove();
-        handleDrop(id, zone, ev.clientX, ev.clientY);
-      } else {
-        handleTap(id, zone);
+      if (ghost){ ghost.remove(); ghost = null; }
+      activeDragCancel = null;
+      if (pendingRemoteRow){
+        var waiting = pendingRemoteRow;
+        pendingRemoteRow = null;
+        applyServerRow(waiting.server, waiting.origin, waiting.hasRev);
       }
     }
 
-    sourceEl.addEventListener('pointermove', onMove);
-    sourceEl.addEventListener('pointerup', onUp);
-    sourceEl.addEventListener('pointercancel', onUp);
+    function onUp(ev){
+      if (settled || ev.pointerId !== pointerId) return;
+      var wasDragging = dragging;
+      settle();
+      if (wasDragging) handleDrop(id, zone, ev.clientX, ev.clientY);
+      else handleTap(id, zone);
+    }
+
+    // The system took the touch away (a notification swipe, the screen locking).
+    // The coach never let go on purpose, so nothing may happen to the team.
+    function onCancel(ev){
+      if (settled || ev.pointerId !== pointerId) return;
+      cancelDrag();
+    }
+
+    function cancelDrag(){
+      if (settled) return;
+      settle();
+    }
+
+    activeDragCancel = cancelDrag;
+    armWatchdog();
+    // On document, not the token: the events still reach it through the capture
+    // above, and they keep working if the token is ever replaced during the press.
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
   }
 
   /** @param {HTMLElement} sourceEl @returns {HTMLElement} */
@@ -3503,6 +4413,8 @@
     performSwap(fieldId, benchId);
     saveState();
     renderAll();
+    var out = playerById(fieldId), inn = playerById(benchId);
+    if (out && inn) showUndoToast(firstName(out.name) + ' ⇄ ' + firstName(inn.name));
     // The field player now lives in the bench list, and vice versa.
     flashSwapped(/** @type {HTMLElement|null} */ (els.bench.querySelector('[data-id="' + fieldId + '"]')));
     flashSwapped(/** @type {HTMLElement|null} */ (els.field.querySelector('[data-id="' + benchId + '"]')));
@@ -3512,7 +4424,6 @@
   function handleDrop(id, fromZone, clientX, clientY){
     selected = null;
     suggestedPartnerId = null;
-    swapSuggestionArmed = false;
     applySelectionStyles();
 
     // Dropped directly on top of another player -> act on them
@@ -3549,7 +4460,7 @@
 
     var inField = clientX>=fieldRect.left && clientX<=fieldRect.right && clientY>=fieldRect.top && clientY<=fieldRect.bottom;
     var inBench = clientX>=benchRect.left && clientX<=benchRect.right && clientY>=benchRect.top && clientY<=benchRect.bottom;
-    var now = Date.now();
+    var now = nowTs();
 
     if (inField && fromZone === 'bench'){
       if (state.onBench.indexOf(id) === -1){ renderAll(); return; }
@@ -3559,25 +4470,17 @@
         return;
       }
       pushUndoSnapshot();
-      commitBenchStint(id, now);
-      state.onBench = state.onBench.filter(function(x){ return x !== id; });
-      state.onField.push(id);
-      state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-      delete state.benchTimers[id];
-      delete timeUpNotified[id];
+      recordOp({ t: 'toField', p: id, at: now });
       saveState();
       renderAll();
+      showUndoToast('Flyttet til banen');
     } else if (inBench && fromZone === 'field'){
       if (state.onField.indexOf(id) === -1){ renderAll(); return; }
       pushUndoSnapshot();
-      commitFieldStint(id, now);
-      state.onField = state.onField.filter(function(x){ return x !== id; });
-      delete state.fieldTimers[id];
-      state.onBench.push(id);
-      state.benchTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-      delete timeUpNotified[id];
+      recordOp({ t: 'toBench', p: id, at: now });
       saveState();
       renderAll();
+      showUndoToast('Flyttet til benken');
     } else {
       renderAll();
       flashDropRejected(id, fromZone);
@@ -3606,18 +4509,57 @@
   // isn't silently credited as playtime).
   /** @param {number} ts */
   function freezeTimersAt(ts){
-    Object.keys(state.fieldTimers).forEach(function(id){
-      var t = state.fieldTimers[id];
-      t.baseElapsedMs = t.baseElapsedMs + (ts - t.sinceTs);
+    freezeClocksOf(state, ts);
+  }
+
+  /** @param {AppState} s @param {number} ts */
+  function freezeClocksOf(s, ts){
+    Object.keys(s.fieldTimers).forEach(function(id){
+      var t = s.fieldTimers[id];
+      t.baseElapsedMs = t.baseElapsedMs + sinceMs(ts, t.sinceTs);
       t.sinceTs = ts;
     });
-    Object.keys(state.benchTimers).forEach(function(id){
-      var t = state.benchTimers[id];
-      t.baseElapsedMs = t.baseElapsedMs + (ts - t.sinceTs);
+    Object.keys(s.benchTimers).forEach(function(id){
+      var t = s.benchTimers[id];
+      t.baseElapsedMs = t.baseElapsedMs + sinceMs(ts, t.sinceTs);
       t.sinceTs = ts;
     });
-    state.matchClock.baseElapsedMs += (ts - state.matchClock.sinceTs);
-    state.matchClock.sinceTs = ts;
+    s.matchClock.baseElapsedMs += sinceMs(ts, s.matchClock.sinceTs);
+    s.matchClock.sinceTs = ts;
+  }
+
+  /** @param {AppState} s @param {number} ts */
+  function startClocksOf(s, ts){
+    Object.keys(s.fieldTimers).forEach(function(id){ s.fieldTimers[id].sinceTs = ts; });
+    Object.keys(s.benchTimers).forEach(function(id){ s.benchTimers[id].sinceTs = ts; });
+    s.matchClock.sinceTs = ts;
+  }
+
+  // Start and stop are the only places the clocks change state, and they have to
+  // be applied to the undo/redo snapshots as well. A snapshot is the match as it
+  // would have been without one action, and that alternative match stopped and
+  // started at the same moments as this one. Left alone, a snapshot from before a
+  // pause comes back "running since before the pause": undoing a swap after a
+  // 10-minute break started the clock and added the 10 minutes to every player.
+  /** @param {number} ts */
+  function stopClockAt(ts){
+    freezeClocksOf(state, ts);
+    state.globalRunning = false;
+    undoStack.concat(redoStack).forEach(function(snap){
+      if (!snap.globalRunning) return;
+      freezeClocksOf(snap, ts);
+      snap.globalRunning = false;
+    });
+  }
+  /** @param {number} ts */
+  function startClockAt(ts){
+    startClocksOf(state, ts);
+    state.globalRunning = true;
+    undoStack.concat(redoStack).forEach(function(snap){
+      if (snap.globalRunning) return;
+      startClocksOf(snap, ts);
+      snap.globalRunning = true;
+    });
   }
 
   // Removes `ms` of elapsed time from the match clock and from every
@@ -3635,11 +4577,11 @@
   // can never wrap negative; re-anchoring sinceTs to `now` afterward (only
   // if still running) is what stops the trimmed amount from silently
   // growing back the moment time keeps advancing.
-  /** @param {number} ms */
-  function subtractDeadTime(ms){
+  /** @param {number} ms @param {boolean} [continueReset] */
+  function subtractDeadTime(ms, continueReset){
     if (!(ms > 0)) return;
     pushUndoSnapshot();
-    trimElapsedTime(ms);
+    recordOp({ t: 'trim', ms: ms, continueReset: !!continueReset });
     saveState();
     renderAll();
   }
@@ -3650,7 +4592,7 @@
   // redundant intermediate states.
   /** @param {number} ms */
   function trimElapsedTime(ms){
-    var now = Date.now();
+    var now = nowTs();
     if (state.globalRunning) freezeTimersAt(now);
     state.matchClock.baseElapsedMs = Math.max(0, state.matchClock.baseElapsedMs - ms);
     Object.keys(state.fieldTimers).forEach(function(id){
@@ -3705,7 +4647,7 @@
   // Hvor mye som kan fjernes for å komme tilbake til kampslutt (0 om ingenting).
   /** @returns {number} */
   function matchOvertimeMs(){
-    var now = Date.now();
+    var now = nowTs();
     return Math.max(0, matchClockElapsed(now) - matchEndTargetMs(now));
   }
 
@@ -3728,7 +4670,7 @@
   /** @param {number} [excess] */
   function rollBackToMatchEnd(excess){
     if (excess === undefined){
-      var now = Date.now();
+      var now = nowTs();
       excess = matchClockElapsed(now) - matchEndTargetMs(now);
     }
     if (excess > 0) trimElapsedTime(excess);
@@ -3736,8 +4678,15 @@
 
   function pauseClock(){
     if (!state.globalRunning) return;
-    freezeTimersAt(Date.now());
-    state.globalRunning = false;
+    stopClockAt(nowTs());
+  }
+
+  // Klokketid siden siste spillhandling - det eneste «dødtid» kan være. Står
+  // klokka, har ingenting gått siden den ble stoppet, uansett hvor lenge pausen varte.
+  /** @param {number} now @returns {number} */
+  function deadTimeSinceLastPlay(now){
+    if (!state.globalRunning) return 0;
+    return Math.max(0, matchClockElapsed(now) - clockAtLastPlay(now));
   }
 
   // Kort melding øverst (samme felt som auto-pause-varselet, bare med egen tekst).
@@ -3788,7 +4737,7 @@
   }
   // Tegnes på nytt hvert sekund mens arket er åpent - klokka går videre i bakgrunnen.
   function fillForgottenSheet(){
-    var now = Date.now(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
+    var now = nowTs(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
     var trim = Math.max(0, clock - target);
     els.forgottenTitle.textContent = forgottenCtx.auto ? '⏸ Kampen er satt på pause' : 'Still klokka tilbake til kampslutt';
     els.forgottenInfo.textContent = (forgottenCtx.auto
@@ -3811,12 +4760,11 @@
     if (!canEdit()) return;
     var excess = matchOvertimeMs(); // før pushUndoSnapshot() stempler lastPlayAt
     pushUndoSnapshot();
-    rollBackToMatchEnd(excess);
-    pauseClock(); // kampen er over - uten pause ville klokka bare begynt å telle overtid på nytt
-    state.continueCount = 0;
+    // Pause: kampen er over - uten den ville klokka bare begynt å telle overtid på nytt.
+    recordOp({ t: 'trim', ms: Math.max(0, excess), pause: true, continueReset: true });
     saveState();
     renderAll();
-    showNotice('Klokka er stilt tilbake til kampslutt (' + formatMs(matchClockElapsed(Date.now())) + '). Du kan angre.');
+    showNotice('Klokka er stilt tilbake til kampslutt (' + formatMs(matchClockElapsed(nowTs())) + '). Du kan angre.');
     if (thenEnd) els.endBtn.click();
   }
 
@@ -3825,9 +4773,7 @@
     closeForgottenSheet();
     if (!ctx.auto) return;
     if (canEdit()){
-      state.continueCount = (state.continueCount || 0) + 1; // neste spørsmål krever lenger stille
-      state.lastPlayAt = Date.now();
-      saveState();
+      setShared({ continueCount: (state.continueCount || 0) + 1, lastPlayAt: nowTs() }); // neste spørsmål krever lenger stille
     }
     if (ctx.thenEnd) els.endBtn.click(); else showClockHint();
   }
@@ -3841,15 +4787,16 @@
     if (document.querySelector('.modal.open, .history-screen.open')) return false;
     if (!els.launcherScreen.classList.contains('hidden')) return false;
     if (selected || multiMode || document.querySelector('.ghost-token')) return false;
-    if (!forgottenMatchInfo(Date.now())) return false;
+    if (!forgottenMatchInfo(nowTs())) return false;
     openForgottenSheet({ auto: true, thenEnd: false });
     return true;
   }
   // Hvert sekund: oppdater arket hvis det er åpent (lukk det om en annen
   // enhet allerede har svart), ellers se om regelen er oppfylt.
   function forgottenTick(){
+    runTips();
     if (forgottenOpen){
-      if (forgottenCtx.auto && !forgottenMatchInfo(Date.now())) closeForgottenSheet();
+      if (forgottenCtx.auto && !forgottenMatchInfo(nowTs())) closeForgottenSheet();
       else fillForgottenSheet();
       return;
     }
@@ -3879,7 +4826,7 @@
   }
   /** @param {string} tab @param {boolean} [thenEnd] */
   function openManualClock(tab, thenEnd){
-    var now = Date.now(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
+    var now = nowTs(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
     manual.clockSec = Math.floor(clock / 1000);
     manual.sub = Math.max(0, Math.floor((clock - target) / 1000));
     manual.set = Math.floor(target / 1000);
@@ -3891,35 +4838,20 @@
   function applyManualClock(){
     els.manualClockModal.classList.remove('open');
     if (!canEdit()) return;
-    var clock = matchClockElapsed(Date.now());
+    var clock = matchClockElapsed(nowTs());
     var subMs = manual.tab === 'sub' ? manual.sub * 1000 : clock - manual.set * 1000;
     subMs = Math.max(0, Math.min(clock, subMs));
     if (subMs > 0){
-      state.continueCount = 0; // årsaken er rettet - neste gang kan det spørres som vanlig
-      subtractDeadTime(subMs);
+      subtractDeadTime(subMs, true); // årsaken er rettet - neste gang kan det spørres som vanlig
     }
-    els.removeDeadTimeBtn.hidden = (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
+    els.removeDeadTimeBtn.hidden = deadTimeSinceLastPlay(nowTs()) < 60000;
     if (manual.thenEnd) els.endBtn.click();
   }
 
   function togglePlayPause(){
     if (!canEdit()) return;
     ensureAudioUnlocked();
-    var now = Date.now();
-    state.lastPlayAt = now;
-    if (state.globalRunning){
-      freezeTimersAt(now);
-      state.globalRunning = false;
-    } else {
-      Object.keys(state.fieldTimers).forEach(function(id){
-        state.fieldTimers[id].sinceTs = now;
-      });
-      Object.keys(state.benchTimers).forEach(function(id){
-        state.benchTimers[id].sinceTs = now;
-      });
-      state.matchClock.sinceTs = now;
-      state.globalRunning = true;
-    }
+    recordOp({ t: 'clock', run: !state.globalRunning });
     saveState();
     updatePlayPauseUI();
     updateTimersOnly();
@@ -3933,7 +4865,7 @@
   // clocks at the last known-good instant instead of "now" and pause, with
   // a brief on-screen explanation so the sudden stop isn't a mystery.
   function checkIdleAutoPause(){
-    if (!state.globalRunning) return;
+    if (!state.globalRunning || !canEdit()) return;
     var last = Number(localStorage.getItem(LAST_ALIVE_KEY)) || Date.now();
     var gap = Date.now() - last;
     if (gap > IDLE_AUTO_PAUSE_MS){
@@ -3946,10 +4878,9 @@
       // match that's actually still live on another screen would wipe out
       // real, current playtime for everyone - so trust the synced state
       // as-is instead of touching it.
-      var activityGap = Date.now() - (state.lastActivityAt || 0);
+      var activityGap = nowTs() - (state.lastActivityAt || 0);
       if (activityGap <= IDLE_AUTO_PAUSE_MS) return;
-      freezeTimersAt(last);
-      state.globalRunning = false;
+      stopClockAt(last + clockOffsetMs);
       // flushState(), not saveState() - this is a system correction, not a
       // real action by anyone, and checkLongIdleSuggestion() runs right
       // after this at both call sites (see finishStartup()) and needs the
@@ -4006,7 +4937,7 @@
     if (idleSuggestShown) return;
     if (!canEdit()) return; // nothing a read-only viewer could act on anyway
     if (state.players.length === 0) return; // nothing to end/reset yet
-    var gap = Date.now() - (state.lastActivityAt || 0);
+    var gap = nowTs() - (state.lastActivityAt || 0);
     if (gap > IDLE_RESET_SUGGEST_MS){
       if (!isMaster()) return; // only the owner can actually reset a shared session
       if (isIdleSuggestSnoozed('reset')) return;
@@ -4014,8 +4945,8 @@
       openIdleSuggestModal('reset');
       return;
     }
-    var hasElapsedTime = state.globalRunning || matchClockElapsed(Date.now()) > 0;
-    if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime && !forgottenMatchInfo(Date.now())){
+    var hasElapsedTime = state.globalRunning || matchClockElapsed(nowTs()) > 0;
+    if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime && !forgottenMatchInfo(nowTs())){
       if (isIdleSuggestSnoozed('endPeriod')) return;
       idleSuggestShown = true;
       openIdleSuggestModal('endPeriod');
@@ -4032,7 +4963,7 @@
       els.idleSuggestConfirmBtn.textContent = 'Nullstill';
     } else {
       els.idleSuggestText.textContent = 'Det har ikke skjedd noe i denne økten på over en time. Vil du avslutte perioden (Kampslutt)?' +
-        (matchOvertimeMs() > 0 ? ' Klokka settes tilbake til kampslutt (' + formatMs(matchEndTargetMs(Date.now())) + ').' : '');
+        (matchOvertimeMs() > 0 ? ' Klokka settes tilbake til kampslutt (' + formatMs(matchEndTargetMs(nowTs())) + ').' : '');
       els.idleSuggestConfirmBtn.textContent = 'Kampslutt';
     }
     els.idleSuggestModal.classList.add('open');
@@ -4115,96 +5046,31 @@
     Array.prototype.forEach.call(els.fieldFormatSeg.children, function(btn){
       btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === modalDraft.fieldSize);
     });
+    Array.prototype.forEach.call(qs('keeperSeg').children, function(btn){
+      btn.classList.toggle('active', (btn.dataset.keeper === 'on') === modalDraft.keeper);
+    });
+    Array.prototype.forEach.call(qs('halvesSeg').children, function(btn){
+      btn.classList.toggle('active', parseInt(btn.dataset.halves, 10) === modalDraft.halves);
+    });
   }
 
   /* ---------------- Match duration picker (tap the match clock) ---------------- */
 
   var durationPickerValue = 20; // live value while the popup is open, minutes
-
-  function setDurationPickerDisplay(mins){
-    durationPickerValue = Math.max(1, Math.min(180, mins));
-    els.durationPickerValue.textContent = String(durationPickerValue);
-  }
+  /** @type {any} */
+  var durationStep = null;
 
   function commitDurationPickerValue(){
-    state.matchDurationMs = durationPickerValue * 60000;
-    state.continueCount = 0; // kamptiden er rettet - årsaken til «Fortsett» er borte
-    saveState();
+    setShared({ matchDurationMs: durationPickerValue * 60000, continueCount: 0 }); // kamptiden er rettet - årsaken til «Fortsett» er borte
     renderAll();
   }
 
   function openDurationPicker(){
     if (!canEdit()) return;
     hideClockHint();
-    setDurationPickerDisplay(Math.max(1, Math.round(state.matchDurationMs / 60000)));
+    durationPickerValue = Math.max(1, Math.min(180, Math.round(state.matchDurationMs / 60000)));
+    durationStep.refresh();
     els.matchDurationPickerModal.classList.add('open');
-  }
-
-  // Eased "spin down" for a fast flick - animates from the value the drag
-  // ended on to a further value (capped in openDurationPicker's caller),
-  // decelerating like a wheel losing momentum, then commits.
-  function animateDurationSpin(from, to){
-    to = Math.max(1, Math.min(180, to));
-    if (to === from){ commitDurationPickerValue(); return; }
-    var start = /** @type {number} */ (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    var duration = 420;
-    function frame(){
-      var now = /** @type {number} */ (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      var t = Math.min(1, (now - start) / duration);
-      var eased = 1 - Math.pow(1 - t, 3);
-      setDurationPickerDisplay(Math.round(from + (to - from) * eased));
-      if (t < 1){
-        requestAnimationFrame(frame);
-      } else {
-        commitDurationPickerValue();
-      }
-    }
-    requestAnimationFrame(frame);
-  }
-
-  var DURATION_PX_PER_MIN = 14;
-
-  function initDurationPickerDrag(){
-    els.durationPickerWheel.addEventListener('pointerdown', function(e){
-      e.preventDefault();
-      var startY = e.clientY;
-      var startVal = durationPickerValue;
-      var pointerId = e.pointerId;
-      var lastY = startY;
-      var lastT = performance.now();
-      var velocity = 0; // minutes-per-ms equivalent, up = positive
-
-      try { els.durationPickerWheel.setPointerCapture(pointerId); } catch(err){}
-
-      function onMove(ev){
-        var dy = startY - ev.clientY; // dragging up = positive = increase
-        var steps = Math.round(dy / DURATION_PX_PER_MIN);
-        setDurationPickerDisplay(startVal + steps);
-        var now = performance.now();
-        var dt = now - lastT;
-        if (dt > 0) velocity = (lastY - ev.clientY) / dt / DURATION_PX_PER_MIN;
-        lastY = ev.clientY;
-        lastT = now;
-      }
-      function onUp(){
-        els.durationPickerWheel.removeEventListener('pointermove', onMove);
-        els.durationPickerWheel.removeEventListener('pointerup', onUp);
-        els.durationPickerWheel.removeEventListener('pointercancel', onUp);
-        try { els.durationPickerWheel.releasePointerCapture(pointerId); } catch(err){}
-        // A careful, slow drag ends with velocity ~0 -> commits exactly
-        // where the finger left it. A fast flick keeps "spinning" a bit
-        // further, capped at 20 extra minutes either direction.
-        var flingSteps = Math.max(-20, Math.min(20, Math.round(velocity * 55)));
-        if (Math.abs(flingSteps) >= 2){
-          animateDurationSpin(durationPickerValue, durationPickerValue + flingSteps);
-        } else {
-          commitDurationPickerValue();
-        }
-      }
-      els.durationPickerWheel.addEventListener('pointermove', onMove);
-      els.durationPickerWheel.addEventListener('pointerup', onUp);
-      els.durationPickerWheel.addEventListener('pointercancel', onUp);
-    });
   }
 
   /** @param {boolean} [isFirstRun] @param {boolean} [joinedEmpty] */
@@ -4226,6 +5092,10 @@
       state.reorgUsesLastMatch = coachDefaults.reorgUsesLastMatch;
       state.swapSuggestionBasis = coachDefaults.swapSuggestionBasis;
       state.swapSuggestionBenchMode = coachDefaults.swapSuggestionBenchMode;
+      state.homeTeamName = coachDefaults.homeTeamName;
+      state.homeTeamAbbr = coachDefaults.homeTeamAbbr;
+      state.hasKeeper = keeperDefaultFor(coachDefaults.fieldSize, coachDefaults.keeper);
+      state.halves = coachDefaults.halves;
     }
     els.settingsModal.classList.add('open');
     els.cancelBtn.style.display = isFirstRun ? 'none' : '';
@@ -4247,8 +5117,19 @@
     // Kamptid and Kampformat are only chosen when the session is set up; during a
     // running match kamptid is changed by tapping the clock.
     var setup = isFirstRun && master;
+    modalDraft.setup = !!setup;
+    modalDraft.keeper = state.hasKeeper === true || (state.hasKeeper === undefined && fieldFormationRows(state.fieldSize).hasKeeper);
+    modalDraft.halves = state.halves === 2 ? 2 : 1;
     els.matchDurationRow.hidden = !setup;
     els.fieldFormatRow.hidden = !setup;
+    qs('keeperRow').hidden = !setup;
+    qs('halvesRow').hidden = !setup;
+    qs('modalTeamRow').hidden = !master;
+    /** @type {HTMLInputElement} */ (qs('modalHomeName')).value = homeName();
+    /** @type {HTMLInputElement} */ (qs('modalHomeAbbr')).value = homeAbbr();
+    qs('openShareBtn').hidden = !sessionCode;
+    qs('attendanceWrap').hidden = !setup || roster.length === 0;
+    if (setup) renderAttendance();
     updateModalFormatButtons();
     modalSteps.match.refresh(); modalSteps.swap.refresh();
     modalSteps.match.setLocked(!master); modalSteps.swap.setLocked(!master);
@@ -4272,8 +5153,7 @@
     var rollBackMs = matchOvertimeMs();
     els.rollBackBtn.hidden = !master || isFirstRun || rollBackMs <= 0;
     els.rollBackBtn.textContent = '⏪ Still klokka tilbake til kampslutt (fjerner ' + formatMs(rollBackMs) + ')';
-    els.removeDeadTimeBtn.hidden = isFirstRun || !master ||
-      (Date.now() - (state.lastActivityAt || Date.now())) < 60000;
+    els.removeDeadTimeBtn.hidden = isFirstRun || !master || deadTimeSinceLastPlay(nowTs()) < 60000;
     // "Bli med i delt økt" only makes sense when this device isn't already
     // in a session - once it is, leaving/closing is "Forlat økt" under
     // "Avslutt" instead, not a re-labelled join button (that used to say
@@ -4284,47 +5164,42 @@
     transferOwnerConfirm.disarm();
     var transferTarget = master ? longestTenuredOtherParticipant() : null;
     els.transferOwnerRow.hidden = !transferTarget;
+    els.joinedEmptyNote.hidden = !joinedEmpty;
     if (transferTarget) els.transferOwnerNote.textContent = 'Til enheten som ' + formatJoinedAgo(transferTarget.joinedAt);
   }
 
   /** @param {string|null} id @param {string} name @param {number} indexHint @param {boolean} [locked] @param {boolean} [fadeIn] @returns {HTMLElement} */
   function addNameRow(id, name, indexHint, locked, fadeIn){
-    // Two independent reasons a row can be locked: on the field right now
-    // (locked - everyone, including the master, can't touch it here), or
-    // this device just isn't the session master (masterLocked - everyone
-    // BUT the master, regardless of field/bench). Same grey styling either
-    // way, different tooltip so it's clear which applies.
-    var masterLocked = !locked && !isMaster();
-    var anyLocked = locked || masterLocked;
+    // Kun økt-eieren kan endre navn. En spiller på banen kan få navnet rettet (en skrivefeil skal ikke
+    // måtte vente), men ikke fjernes herfra.
+    var masterLocked = !isMaster();
+    var fieldLocked = !!locked && !masterLocked;
     var row = document.createElement('div');
-    row.className = 'name-row' + (anyLocked ? ' locked' : '') + (fadeIn ? ' name-row-enter' : '');
+    row.className = 'name-row' + (masterLocked ? ' locked' : '') + (fieldLocked ? ' on-field' : '') + (fadeIn ? ' name-row-enter' : '');
     row.dataset.id = id || '';
-    // The "x" shows on every editable row, blank or not - not just filled
-    // ones - so a spare row added via "+ Legg til spiller" (or any of the
-    // fixed starting rows) can always be closed again. There's no minimum
-    // enforced here; saveSettings already rejects the form if it ends up
-    // with zero named players.
     row.innerHTML =
       '<div class="name-input-wrap">' +
-        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (anyLocked ? ' disabled' : '') + '>' +
-        (anyLocked ? '' :
+        '<input type="text" value="' + escapeHtml(name||'') + '" placeholder="Spiller ' + indexHint + '" autocomplete="off"' + (masterLocked ? ' disabled' : '') + '>' +
+        (masterLocked || fieldLocked ? '' :
           '<span class="name-row-clear-divider" aria-hidden="true"></span>' +
           '<button type="button" class="name-row-clear-btn" aria-label="Fjern">×</button>') +
       '</div>' +
-      (anyLocked
-        ? '<span class="locked-row-note" title="' + (locked ? 'Utespillere kan ikke endres eller fjernes her mens de er på banen' : 'Kun økt-eieren kan endre spillernavn') + '">🔒</span>'
+      (masterLocked || fieldLocked
+        ? '<span class="locked-row-note" title="' + (masterLocked ? 'Kun økt-eieren kan endre spillernavn' : 'På banen: kan ikke fjernes her') + '">🔒</span>'
         : '');
     els.nameRows.appendChild(row);
     var wrap = row.querySelector('.name-input-wrap');
-    if (anyLocked) return row;
+    if (masterLocked) return row;
     var input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
-    var removeBtn = /** @type {HTMLElement} */ (row.querySelector('.name-row-clear-btn'));
-    removeBtn.addEventListener('click', function(){
+    var removeBtn = /** @type {HTMLElement|null} */ (row.querySelector('.name-row-clear-btn'));
+    if (removeBtn) removeBtn.addEventListener('click', function(){
       row.remove();
       settingsDirty = true;
+      if (modalDraft.setup) renderAttendance();
     });
     input.addEventListener('input', function(){
       clearFieldInvalid(wrap);
+      if (modalDraft.setup) renderAttendance();
     });
     attachSuggestions(input, wrap);
     return row;
@@ -4554,6 +5429,12 @@
     Array.prototype.forEach.call(els.settingsFieldFormat.children, function(btn){
       btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === settingsDraftFieldSize);
     });
+    Array.prototype.forEach.call(qs('settingsHalvesSeg').children, function(btn){
+      btn.classList.toggle('active', parseInt(btn.dataset.halves, 10) === settingsDraftHalves);
+    });
+    Array.prototype.forEach.call(qs('settingsKeeperSeg').children, function(btn){
+      btn.classList.toggle('active', btn.dataset.keeper === settingsDraftKeeper);
+    });
   }
   /** @param {string} [prefillTeamName] */
   function openSettingsScreen(prefillTeamName){
@@ -4567,7 +5448,14 @@
     // innstillingsvindu's own number input, so an odd saved value (e.g. 4)
     // just lands on the nearest preset here rather than matching none.
     settingsDraftFieldSize = nearestFormat(d.fieldSize);
+    settingsDraftHalves = d.halves;
+    settingsDraftKeeper = d.keeper;
     updateSettingsStepperUI();
+    renderStallList();
+    renderDesignPicker();
+    /** @type {HTMLInputElement} */ (qs('settingsWhistleToggle')).checked = soundPref('whistle');
+    /** @type {HTMLInputElement} */ (qs('settingsPrewarnToggle')).checked = soundPref('prewarn');
+    qs('deleteAccountWrap').hidden = !isTeamAccountSignedIn();
     els.settingsWakeLockToggle.checked = wakeLockWanted();
     els.settingsDefaultRankCumulative.checked = d.rankByCumulative;
     els.settingsDefaultReorgLastMatch.checked = d.reorgUsesLastMatch;
@@ -4582,8 +5470,8 @@
     els.settingsScreen.classList.remove('open');
   }
   function saveSettingsScreen(){
-    var name = els.settingsHomeName.value.trim() || 'Nøtterøy';
-    var abbr = (els.settingsHomeAbbr.value.trim() || 'NØT').toUpperCase();
+    var name = els.settingsHomeName.value.trim() || 'Hjemmelag';
+    var abbr = (els.settingsHomeAbbr.value.trim() || deriveAbbrFromName(name)).toUpperCase();
     /** @type {CoachDefaults} */
     var defaults = {
       homeTeamName: name,
@@ -4594,21 +5482,26 @@
       rankByCumulative: els.settingsDefaultRankCumulative.checked,
       reorgUsesLastMatch: els.settingsDefaultReorgLastMatch.checked,
       swapSuggestionBasis: els.settingsDefaultSwapBasisCumulative.checked ? 'cumulative' : 'match',
-      swapSuggestionBenchMode: els.settingsDefaultSwapBenchByPlaytime.checked ? 'cumulative' : 'waited'
+      swapSuggestionBenchMode: els.settingsDefaultSwapBenchByPlaytime.checked ? 'cumulative' : 'waited',
+      halves: settingsDraftHalves,
+      keeper: settingsDraftKeeper
     };
     // Local cache always gets written, signed in or not - see this
     // function's own doc comment above initAccountAndSettings.
     saveCoachDefaults(defaults);
+    els.settingsSavedNote.textContent = 'Lagret ✓';
     els.settingsSavedNote.hidden = false;
     if (isTeamAccountSignedIn()){
       upsertTeamSettings(adminUser.id, defaults).then(function(ok){
         if (!ok) els.settingsSavedNote.textContent = 'Lagret lokalt, men kontoen kunne ikke oppdateres akkurat nå.';
         else els.settingsSavedNote.textContent = 'Lagret ✓';
       });
+      saveTeamExtras();
     }
   }
 
   function initAccountAndSettings(){
+    migrateOldDefaultTeam();
     var startupDefaults = loadCoachDefaults();
     applyHomeTeamName(startupDefaults.homeTeamName, startupDefaults.homeTeamAbbr);
 
@@ -4640,7 +5533,7 @@
       sb.auth.signInWithPassword({ email: email, password: password }).then(function(res){
         els.accountLoginBtn.disabled = false;
         if (res.error){
-          els.accountLoginNote.textContent = 'Feil e-post eller passord.';
+          els.accountLoginNote.textContent = authErrorMessage(res.error);
           els.accountLoginNote.style.display = '';
           return;
         }
@@ -4653,6 +5546,10 @@
         // the signed-in state - no race with the note it renders.
         closeAccountLoginModal();
         openSettingsScreen();
+      }).catch(function(e){
+        els.accountLoginBtn.disabled = false;
+        els.accountLoginNote.textContent = authErrorMessage(e);
+        els.accountLoginNote.style.display = '';
       });
     });
 
@@ -4682,8 +5579,10 @@
         return;
       }
       els.registerSubmitBtn.disabled = true;
+      registrationInProgress = true; // see onAuthStateChange
       sb.auth.signUp({ email: email, password: password }).then(function(res){
         els.registerSubmitBtn.disabled = false;
+        registrationInProgress = false;
         if (res.error){
           // Supabase's own messages are specific enough to be worth
           // showing (wrong email format, too-short password, rate limit) -
@@ -4707,6 +5606,12 @@
         }
         var user = res.data && res.data.user;
         var session = res.data && res.data.session;
+        // Saved locally right away, in both cases below: without a session the
+        // first real login seeds the account from this local copy.
+        var defaults = loadCoachDefaults();
+        defaults.homeTeamName = teamName;
+        defaults.homeTeamAbbr = deriveAbbrFromName(teamName).slice(0, 4) || defaults.homeTeamAbbr;
+        saveCoachDefaults(defaults);
         // No session back means the project requires e-post-bekreftelse
         // first (a Supabase project setting, not something this app
         // controls) - can't create the team_settings row yet since RLS
@@ -4716,13 +5621,15 @@
           els.registerNote.style.display = '';
           return;
         }
-        var defaults = loadCoachDefaults();
-        defaults.homeTeamName = teamName;
         upsertTeamSettings(user.id, defaults).then(function(){
-          saveCoachDefaults(defaults);
           closeRegisterScreen();
           openSettingsScreen();
         });
+      }).catch(function(e){
+        els.registerSubmitBtn.disabled = false;
+        registrationInProgress = false;
+        els.registerNote.textContent = authErrorMessage(e);
+        els.registerNote.style.display = '';
       });
     });
 
@@ -4739,6 +5646,76 @@
       btn.addEventListener('click', function(){
         settingsDraftFieldSize = parseInt(btn.dataset.size, 10);
         updateSettingsStepperUI();
+      });
+    });
+    Array.prototype.forEach.call(qs('settingsHalvesSeg').children, function(btn){
+      btn.addEventListener('click', function(){ settingsDraftHalves = btn.dataset.halves === '2' ? 2 : 1; updateSettingsStepperUI(); });
+    });
+    Array.prototype.forEach.call(qs('settingsKeeperSeg').children, function(btn){
+      btn.addEventListener('click', function(){ settingsDraftKeeper = btn.dataset.keeper; updateSettingsStepperUI(); });
+    });
+    qs('settingsWhistleToggle').addEventListener('change', function(e){ setSoundPref('whistle', e.target.checked); });
+    qs('settingsPrewarnToggle').addEventListener('change', function(e){ setSoundPref('prewarn', e.target.checked); });
+    qs('stallAddBtn').addEventListener('click', addStallFromInput);
+    qs('stallAddInput').addEventListener('keydown', function(e){ if (e.key === 'Enter') addStallFromInput(); });
+    qs('accountForgotLink').addEventListener('click', function(){
+      var email = els.accountLoginEmail.value.trim();
+      if (!email){
+        els.accountLoginNote.textContent = 'Skriv inn e-posten din først.';
+        els.accountLoginNote.style.display = '';
+        return;
+      }
+      if (!sb) return;
+      sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/' }).then(function(/** @type {any} */ res){
+        els.accountLoginNote.textContent = res && res.error && res.error.status !== 400
+          ? authErrorMessage(res.error)
+          : 'Finnes kontoen, kommer det en e-post med en lenke. Sjekk også søppelpost.';
+        els.accountLoginNote.style.display = '';
+      }).catch(function(/** @type {any} */ e){
+        els.accountLoginNote.textContent = authErrorMessage(e);
+        els.accountLoginNote.style.display = '';
+      });
+    });
+    els.newPasswordModal = qs('newPasswordModal');
+    if (pendingPasswordRecovery) els.newPasswordModal.classList.add('open');
+    qs('newPasswordSaveBtn').addEventListener('click', function(){
+      var input = /** @type {HTMLInputElement} */ (qs('newPasswordInput'));
+      var note = qs('newPasswordNote');
+      if (!sb || !input.value) return;
+      sb.auth.updateUser({ password: input.value }).then(function(/** @type {any} */ res){
+        if (res && res.error){
+          note.textContent = res.error.code === 'weak_password' ? 'Passordet er for svakt.' : authErrorMessage(res.error);
+          note.style.display = '';
+          return;
+        }
+        els.newPasswordModal.classList.remove('open');
+        showNotice('Passordet er endret.');
+      }).catch(function(/** @type {any} */ e){
+        note.textContent = authErrorMessage(e);
+        note.style.display = '';
+      });
+    });
+    var deleteArm = createConfirmArm({
+      armedEls: [qs('deleteAccountBtn')],
+      labelEl: qs('deleteAccountBtn'),
+      restingLabel: 'Slett konto',
+      confirmLabel: 'Trykk igjen for å slette kontoen for godt'
+    });
+    qs('deleteAccountBtn').addEventListener('click', function(){
+      if (!deleteArm.press() || !sb) return;
+      var note = qs('deleteAccountNote');
+      sb.rpc('delete_my_account').then(function(/** @type {any} */ res){
+        if (res && res.error){
+          note.textContent = isRpcMissing(res) ? 'Sletting er ikke tilgjengelig ennå. Be admin oppdatere databasen.' : 'Kunne ikke slette kontoen akkurat nå.';
+          note.hidden = false;
+          return;
+        }
+        sb.auth.signOut();
+        closeSettingsScreen();
+        showNotice('Kontoen er slettet.');
+      }).catch(function(){
+        note.textContent = 'Kunne ikke slette kontoen akkurat nå.';
+        note.hidden = false;
       });
     });
   }
@@ -4824,11 +5801,10 @@
     // The tile itself only exists in the DOM for a signed-in account now
     // (see updateHistoryTileVisibility()) - openHistoryScreen() adapts its
     // own rendering for admin vs. a regular signed-in visitor, so there's
-    // nothing left to branch on here. openHistoryLoginModal() stays as a
-    // defensive fallback only - practically unreachable through this tile.
+    // nothing left to branch on here.
     els.historyTile.addEventListener('click', function(){
       if (isTeamAccountSignedIn()) openHistoryScreen();
-      else openHistoryLoginModal();
+      else openAccountLoginModal();
     });
     els.historyCloseBtn.addEventListener('click', function(){ els.historyScreen.classList.remove('open'); });
     els.historySelectModeBtn.addEventListener('click', function(){
@@ -4877,15 +5853,6 @@
         renderHistoryList();
       });
     });
-    // Admin login popup - only an account listed in Supabase's admins
-    // table can actually read/delete match_history (enforced by row-level
-    // security, not this form) - a wrong password just comes back as a
-    // normal Supabase auth error, same as any other login form.
-    els.historyLoginCloseBtn.addEventListener('click', closeHistoryLoginModal);
-    els.historyLoginBtn.addEventListener('click', attemptHistoryLogin);
-    var historyLoginEnterHandler = function(e){ if (e.key === 'Enter') attemptHistoryLogin(); };
-    els.historyLoginEmail.addEventListener('keydown', historyLoginEnterHandler);
-    els.historyLoginPassword.addEventListener('keydown', historyLoginEnterHandler);
     els.historyLogoutBtn.addEventListener('click', function(){
       if (sb) sb.auth.signOut();
       // onAuthStateChange above closes historyScreen and flips the badge.
@@ -4947,32 +5914,36 @@
       return;
     }
 
-    state.players.forEach(function(p){
-      if (!keptIds[p.id]){
-        state.onField = state.onField.filter(function(x){ return x !== p.id; });
-        delete state.fieldTimers[p.id];
-        delete state.benchTimers[p.id];
-        delete state.cumulative[p.id];
-        state.onBench = state.onBench.filter(function(x){ return x !== p.id; });
-      }
-    });
-
+    // Undo snapshots refer to the old team: restoring one would bring back a
+    // removed player's place on the field, or lose a new player from both zones.
     var oldIds = {};
     state.players.forEach(function(p){ oldIds[p.id] = true; });
-    newPlayers.forEach(function(p){
-      if (!oldIds[p.id]){
-        state.onBench.push(p.id);
-        state.benchTimers[p.id] = { baseElapsedMs: 0, sinceTs: Date.now() };
-      }
-    });
+    var rosterChanged = newPlayers.length !== state.players.length ||
+      newPlayers.some(function(p){ return !oldIds[p.id]; });
+    if (rosterChanged) clearUndoHistory();
 
-    state.players = newPlayers;
-    addNamesToRoster(newPlayers.map(function(p){ return p.name; }));
-
+    /** @type {Object<string, any>} */
+    var rosterOp = { t: 'roster', players: newPlayers, keptIds: keptIds };
     // Only overwritten when actually changed - see modalDraft.
-    if (modalDraft.matchMin !== modalDraft.matchMinInit){ state.matchDurationMs = modalDraft.matchMin * 60000; state.continueCount = 0; }
-    if (modalDraft.swapMin !== modalDraft.swapMinInit) state.defaultDurationMs = modalDraft.swapMin * 60000;
-    if (modalDraft.fieldSize !== modalDraft.fieldSizeInit) state.fieldSize = modalDraft.fieldSize;
+    if (modalDraft.matchMin !== modalDraft.matchMinInit) rosterOp.matchDurationMs = modalDraft.matchMin * 60000;
+    if (modalDraft.swapMin !== modalDraft.swapMinInit) rosterOp.defaultDurationMs = modalDraft.swapMin * 60000;
+    if (modalDraft.fieldSize !== modalDraft.fieldSizeInit) rosterOp.fieldSize = modalDraft.fieldSize;
+    if (modalDraft.setup){
+      rosterOp.hasKeeper = modalDraft.keeper;
+      rosterOp.halves = modalDraft.halves;
+    }
+    var teamName = /** @type {HTMLInputElement} */ (qs('modalHomeName')).value.trim();
+    var teamAbbr = /** @type {HTMLInputElement} */ (qs('modalHomeAbbr')).value.trim().toUpperCase();
+    if (teamName) rosterOp.homeTeamName = teamName;
+    if (teamAbbr) rosterOp.homeTeamAbbr = teamAbbr;
+    recordOp(rosterOp);
+    // Et nytt lag står på banen fra start: de første i lista, så justerer treneren etterpå.
+    if (wasEmpty){
+      state.players.slice(0, state.fieldSize || 3).forEach(function(p){ recordOp({ t: 'toField', p: p.id }); });
+      state.eventLog = [];
+    }
+        addNamesToRoster(newPlayers.map(function(p){ return p.name; }));
+    saveTeamExtras();
 
     saveState();
     els.settingsModal.classList.remove('open');
@@ -4984,8 +5955,39 @@
     if (wasEmpty) openOpponentModal();
   }
 
+  /** @param {any} op */
+  function applyRoster(op){
+    var newPlayers = op.players, keptIds = {};
+    newPlayers.forEach(function(/** @type {Player} */ p){ keptIds[p.id] = true; });
+    state.players.forEach(function(p){
+      if (!keptIds[p.id]){
+        state.onField = state.onField.filter(function(x){ return x !== p.id; });
+        delete state.fieldTimers[p.id];
+        delete state.benchTimers[p.id];
+        delete state.cumulative[p.id];
+        state.onBench = state.onBench.filter(function(x){ return x !== p.id; });
+      }
+    });
+    var oldIds = {};
+    state.players.forEach(function(p){ oldIds[p.id] = true; });
+    newPlayers.forEach(function(/** @type {Player} */ p){
+      if (!oldIds[p.id]){
+        state.onBench.push(p.id);
+        state.benchTimers[p.id] = { baseElapsedMs: 0, sinceTs: op.at };
+      }
+    });
+    state.players = newPlayers.map(function(/** @type {Player} */ p){ return { id: p.id, name: p.name }; });
+    if (typeof op.matchDurationMs === 'number'){ state.matchDurationMs = op.matchDurationMs; state.continueCount = 0; }
+    if (typeof op.defaultDurationMs === 'number') state.defaultDurationMs = op.defaultDurationMs;
+    if (typeof op.fieldSize === 'number') state.fieldSize = op.fieldSize;
+    if (typeof op.hasKeeper === 'boolean') state.hasKeeper = op.hasKeeper;
+    if (op.halves === 1 || op.halves === 2) state.halves = op.halves;
+    if (typeof op.homeTeamName === 'string') state.homeTeamName = op.homeTeamName;
+    if (typeof op.homeTeamAbbr === 'string') state.homeTeamAbbr = op.homeTeamAbbr;
+  }
+
   function buildExportText(){
-    var now = Date.now();
+    var now = nowTs();
     var rows = state.players.map(function(p){
       return {
         name: p.name,
@@ -5032,36 +6034,56 @@
 
 
   function renderEndMatchSummary(){
-    var now = Date.now();
+    var now = nowTs();
     var goalBadges = computeGoalBadges();
     var rows = state.players.map(function(p){
-      return {
-        id: p.id,
-        name: p.name,
-        fieldMs: cumulativeFieldMs(p.id, now),
-        benchMs: cumulativeBenchMs(p.id, now),
-        goals: goalBadges.counts[p.id] || 0
-      };
+      return { name: p.name, k: currentPeriodFieldMs(p.id, now), t: cumulativeFieldMs(p.id, now), goals: goalBadges.counts[p.id] || 0 };
     });
-    rows.sort(function(a,b){ return b.fieldMs - a.fieldMs; });
-    if (rows.length === 0){
-      els.endMatchSummary.innerHTML = '';
-      return;
-    }
+    rows.sort(function(a,b){ return b.k - a.k; });
     els.endMatchSummary.innerHTML = rows.map(function(r){
       return '<div class="ems-row">' +
-        '<span class="ems-name-wrap">' +
-          '<span class="ems-name">' + escapeHtml(r.name) + (r.goals > 0 ? ' (' + r.goals + ' mål)' : '') + '</span>' +
-          (r.goals > 0
-            ? '<button type="button" class="goal-time-btn" data-id="' + r.id + '" aria-label="Vis måltidspunkt for ' + escapeHtml(r.name) + '">🕐</button>'
-            : '') +
-        '</span>' +
-        '<span class="ems-time">spilt: ' + formatCumulative(r.fieldMs) + ' - benk: ' + formatCumulative(r.benchMs) + '</span>' +
+        '<span class="ems-name">' + escapeHtml(r.name) + (r.goals > 0 ? ' <span class="ems-goals">' + r.goals + ' mål</span>' : '') + '</span>' +
+        '<span class="ems-time">' + formatCumulative(r.k) + '</span>' +
+        '<span class="ems-time">' + formatCumulative(r.t) + '</span>' +
       '</div>';
     }).join('');
-    Array.prototype.forEach.call(els.endMatchSummary.querySelectorAll('.goal-time-btn'), function(btn){
-      btn.addEventListener('click', function(){ openGoalTimesModal(btn.getAttribute('data-id')); });
-    });
+  }
+
+  // Kampslutt på ett ark: alt som trengs for å avslutte, uten en rekke spørsmål etter hverandre.
+  var END_PREFS_KEY = 'spillerbytte_end_prefs_v1';
+  function openEndSheet(){
+    var now = nowTs();
+    var home = teamGoalCount('home'), away = teamGoalCount('away');
+    els.endSheetScore.textContent = homeAbbr() + ' ' + home + ' – ' + away + ' ' + (state.opponentAbbr || state.opponentName || '?');
+    var swaps = state.swapCount || 0;
+    els.endSheetMeta.textContent = formatMs(matchClockElapsed(now)) + ' spilt · ' + swaps + (swaps === 1 ? ' bytte' : ' bytter');
+    var nameById = {};
+    state.players.forEach(function(p){ nameById[p.id] = firstName(p.name); });
+    var goals = state.goalLog.filter(function(g){ return g.team === 'home'; }).slice().sort(function(a,b){ return a.matchMs - b.matchMs; });
+    els.endSheetGoals.hidden = goals.length === 0;
+    els.endSheetGoals.textContent = goals.length ? 'Mål: ' + goals.map(function(g){ return (nameById[g.playerId || ''] || 'Ukjent') + ' ' + formatMs(g.matchMs); }).join(', ') : '';
+    renderEndMatchSummary();
+    var nextKeeper = suggestNextKeeper(now);
+    els.endSheetKeeper.hidden = !nextKeeper;
+    els.endSheetKeeper.textContent = nextKeeper ? 'Neste i mål: ' + firstName(nextKeeper.name) + ' (har stått ' + formatCumulative(nextKeeper.ms) + ')' : '';
+    /** @type {any} */
+    var prefs = {};
+    try { prefs = JSON.parse(localStorage.getItem(END_PREFS_KEY) || '{}') || {}; } catch(e){}
+    els.endSaveToggle.checked = prefs.save !== false;
+    els.endReorgToggle.checked = !!prefs.reorg;
+    var next = cupNextMatch(now);
+    els.endNextOpponent.value = next ? next.opponent : '';
+    var editable = canEdit();
+    els.endChoices.hidden = !editable;
+    els.endPeriodWrap.hidden = !editable;
+    els.endResetWrap.hidden = !isMaster();
+    els.closeSessionRow.hidden = !sessionCode;
+    els.endSheetTitle.textContent = editable ? 'Kampslutt' : 'Stillingen nå';
+    avsluttConfirm.disarm();
+    els.endMatchModal.classList.add('open');
+  }
+  function saveEndPrefs(){
+    try { localStorage.setItem(END_PREFS_KEY, JSON.stringify({ save: els.endSaveToggle.checked, reorg: els.endReorgToggle.checked })); } catch(e){}
   }
 
   // "Hvilke motstandere har vi spilt mot, og hva ble stillingen" (see
@@ -5071,7 +6093,7 @@
   // cross-match totals in .end-match-summary below this in the same modal.
   // A player who has since been removed from the roster still shows (by
   // whatever name they had then) rather than silently vanishing from a
-  // match they actually played in.
+  // match they actually played in. Shown in the Cup window.
   function renderMatchHistorySummary(){
     if (!els.matchHistorySummary) return;
     var history = state.matchHistory || [];
@@ -5096,7 +6118,7 @@
       return '<div class="mh-match">' +
         '<div class="mh-header">' +
           '<span>vs ' + escapeHtml(opponent) + '</span>' +
-          '<span class="mh-score">' + m.homeScore + ' - ' + m.awayScore + '</span>' +
+          '<span class="mh-score">' + (Number(m.homeScore) || 0) + ' - ' + (Number(m.awayScore) || 0) + '</span>' +
         '</div>' +
         '<div class="mh-players">' + playerRows + '</div>' +
       '</div>';
@@ -5171,25 +6193,13 @@
     // Always computes the summary (for the "Kampen er ferdig" popup right
     // after this, see lastMatchSummary/showMatchSummaryThen) - only the
     // Supabase save itself is conditional on the coach's answer.
-    var now = Date.now();
+    var now = nowTs();
     var calc = computeMatchScoreAndPlayerMs(now);
     var entry = buildHistoryArchiveEntry(now, calc);
     entry.durationMs = matchClockElapsed(now);
+    entry.events = state.eventLog.slice();
     lastMatchSummary = entry;
-    // The insert resolves after showMatchSummaryThen() has already opened
-    // the popup below - a failure (e.g. a schema mismatch on match_history,
-    // network hiccup) used to only ever reach console.warn, so a coach who
-    // explicitly asked to save a match had no way of knowing it silently
-    // never made it to the shared Historikk. Surfaced here instead, in the
-    // same popup that's already on screen when the answer comes back.
-    if (saveToHistory){
-      if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
-      saveMatchToHistory(entry).then(function(ok){
-        if (ok || !els.matchSummaryHistoryNote) return;
-        els.matchSummaryHistoryNote.textContent = 'Kunne ikke lagre kampen til delt Historikk - sjekk nettforbindelsen, eller be admin sjekke databasen.';
-        els.matchSummaryHistoryNote.hidden = false;
-      });
-    }
+    if (saveToHistory) saveToHistoryWithNote(entry);
   }
 
   /** @type {(() => void)|null} */
@@ -5213,7 +6223,7 @@
     if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
     var opponent = entry.opponentName || (entry.opponentAbbr ? entry.opponentAbbr : 'Ukjent motstander');
     els.matchSummaryHeadline.textContent =
-      HOME_TEAM_NAME + ' vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore;
+      homeName() + ' vs ' + opponent + ' · ' + entry.homeScore + ' - ' + entry.awayScore;
     els.matchSummaryDuration.textContent = formatMs(entry.durationMs || 0) + ' spilt';
     var swapCount = entry.swapCount || 0;
     els.matchSummarySwaps.textContent = swapCount + (swapCount === 1 ? ' bytte' : ' bytter');
@@ -5230,7 +6240,7 @@
     var goals = entry.goals || [];
     els.matchSummaryGoalsTitle.hidden = goals.length === 0;
     els.matchSummaryGoals.innerHTML = goals.map(function(g){
-      return '<div class="match-summary-goal match-summary-goal-' + g.team + '">' +
+      return '<div class="match-summary-goal match-summary-goal-' + (g.team === 'away' ? 'away' : 'home') + '">' +
         '<span class="match-summary-goal-time">' + formatMs(g.matchMs) + '</span>' +
         '<span class="match-summary-goal-scorer">' + escapeHtml(g.scorerName) + '</span>' +
       '</div>';
@@ -5243,7 +6253,27 @@
         '<span class="match-summary-player-t">' + formatCumulative(p.totalMs || 0) + '</span>' +
       '</div>';
     }).join('') || '<div class="match-summary-empty">Ingen spillerdata registrert.</div>';
+    var timeline = buildTimelineHtml(entry);
+    els.matchSummaryTimeline.innerHTML = timeline;
+    els.matchSummaryTimeline.hidden = !timeline;
+    els.matchSummaryTimelineTitle.hidden = !timeline;
     els.matchSummaryModal.classList.add('open');
+  }
+
+  /** @param {HistoryMatchEntry} entry @returns {string} */
+  function buildTimelineHtml(entry){
+    var nameById = {};
+    (entry.players || []).forEach(function(p){ nameById[p.id] = firstName(p.name); });
+    var nm = function(/** @type {string|null} */ id){ return escapeHtml((id && nameById[id]) || 'Ukjent'); };
+    return (entry.events || []).map(function(ev){
+      var text = ev.k === 'swap' ? nm(ev.a) + ' ut, ' + nm(ev.b) + ' inn'
+        : ev.k === 'goal' ? (ev.team === 'home' ? 'Mål: ' + nm(ev.a) : 'Mål til motstanderen')
+        : ev.k === 'toField' ? nm(ev.a) + ' inn'
+        : ev.k === 'toBench' ? nm(ev.a) + ' ut'
+        : ev.k === 'ungoal' ? 'Mål fjernet'
+        : '';
+      return text ? '<div class="timeline-row' + (ev.k === 'goal' ? ' goal' : '') + '"><span>' + formatMs(ev.ms) + '</span><span>' + text + '</span></div>' : '';
+    }).join('');
   }
 
   /** @type {((saveToHistory: boolean) => void)|null} */
@@ -5258,53 +6288,42 @@
     els.saveHistoryModal.classList.add('open');
   }
 
-  /** @param {boolean} reorganize @param {boolean} saveToHistory */
-  function endMatchPeriod(reorganize, saveToHistory){
-    var now = Date.now();
-    // commitFieldStint/commitBenchStint bank the current stint's elapsed
-    // time into state.cumulative, but - unlike every other caller (a swap
-    // removes the player from onField/deletes their timer entirely; a
-    // pause runs the same freeze through freezeTimersAt, which also
-    // advances sinceTs) - this player is still sitting in state.onField
-    // with a stale fieldTimers[id].sinceTs right up until computeMatch-
-    // ScoreAndPlayerMs() runs a few lines down. That call's own
-    // cumulativeFieldMs() re-adds fieldElapsed() for anyone still on the
-    // field, double-counting the exact same stint on top of what was just
-    // committed - real bug, reproduces on every ordinary Kampslutt with
-    // anyone still on the field (i.e. almost always), found by actually
-    // starting a match, waiting a few seconds and ending it, nothing
-    // exotic. Advancing sinceTs here too closes the window: a fieldElapsed
-    // call an instant later correctly reads ~0 additional.
-    // baseElapsedMs has to be zeroed too, not just sinceTs: once the clock has
-    // ever been paused (e.g. at halftime, or paused right before pressing
-    // Kampslutt) the stint's time lives in baseElapsedMs, not in the
-    // (now - sinceTs) part - leaving it in place made computeMatchScoreAnd-
-    // PlayerMs() below add the same stint a second time (a 10 min match
-    // showed as 20 min in the summary/history).
-    state.onField.forEach(function(id){
-      commitFieldStint(id, now);
-      if (state.fieldTimers[id]) state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-    });
-    state.onBench.forEach(function(id){
-      commitBenchStint(id, now);
-      if (state.benchTimers[id]) state.benchTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-    });
+  /** @param {boolean} reorganize @param {boolean} saveToHistory @param {{name:string, abbr:string}} [nextOpponent] */
+  function endMatchPeriod(reorganize, saveToHistory, nextOpponent){
+    var now = nowTs();
+    // Built before anything is reset, and only here: if this end has to be replayed on top of a
+    // newer state (another coach changed something at the same moment), the match must not be
+    // saved to Historikk twice.
+    var summaryEntry = buildHistoryArchiveEntry(now, computeMatchScoreAndPlayerMs(now));
+    summaryEntry.durationMs = matchClockElapsed(now);
+    summaryEntry.events = state.eventLog.slice();
+    lastMatchSummary = summaryEntry;
+    syncKeeperTime(now);
+    bankKeeperHistory(now);
+    // The shared Supabase archive - state.matchHistory is synced shared-session state and gets wiped
+    // by resetMatch() same as everything else, which is right for "this session's matches so far"
+    // but wrong for a durable record.
+    if (saveToHistory) saveToHistoryWithNote(summaryEntry);
+    recordOp({ t: 'endMatch', at: now, reorganize: reorganize, nextOpponentName: nextOpponent ? nextOpponent.name : '', nextOpponentAbbr: nextOpponent ? nextOpponent.abbr : '' });
+    selected = null;
+    suggestedPartnerId = null;
+    undoStack = [];
+    redoStack = [];
+    multiMode = false;
+    multiSelected = [];
+    saveState();
+  }
 
-    // Archive this match before wiping its scoreboard - "Kampslutt" means
-    // exactly that (a cup day is several separate matches back to back, not
-    // halves of one match), so the goal tally must NOT carry over into the
-    // next match either (see goalLog reset below - this used to be a bug:
-    // goals kept accumulating across what the coach clearly meant as
-    // separate matches).
+  // The state half of Kampslutt. Runs again if the end is replayed, so it only depends on state.
+  /** @param {boolean} reorganize @param {number} now @param {string} [nextName] @param {string} [nextAbbr] */
+  function applyEndMatch(reorganize, now, nextName, nextAbbr){
+    // Each player's time in this match, read before the stints are banked.
     var calc = computeMatchScoreAndPlayerMs(now);
     var homeScore = calc.homeScore, awayScore = calc.awayScore, playerMs = calc.playerMs;
-    // Built once here (before goalLog/matchClock/onField are touched below)
-    // and reused both for the optional Supabase archive AND the "Kampen er
-    // ferdig" summary shown right after this - see showMatchSummaryThen()
-    // at every call site of endMatchPeriod/archiveInProgressMatch.
-    var summaryEntry = buildHistoryArchiveEntry(now, calc);
-    summaryEntry.durationMs = matchClockElapsed(now);
-    lastMatchSummary = summaryEntry;
+    // commitFieldStint/commitBenchStint bank the current stint into state.cumulative; the timers
+    // are replaced below, so nothing can count it a second time.
+    state.onField.forEach(function(id){ commitFieldStint(id, now); });
+    state.onBench.forEach(function(id){ commitBenchStint(id, now); });
     if (!Array.isArray(state.matchHistory)) state.matchHistory = [];
     state.matchHistory.push({
       id: uid(),
@@ -5314,11 +6333,8 @@
       awayScore: awayScore,
       endedAt: now,
       playerMs: playerMs,
-      // Snapshots the scorer's name (not just id, like playerMs above) so
-      // "Eksporter spillerdata" (buildExportText) still shows who scored
-      // and when even after a player is later removed from the roster -
-      // away-team goals have no playerId (see recordGoal/computeGoalBadges,
-      // never attributed to an individual) and are skipped here.
+      // Snapshots the scorer's name (not just id) so "Eksporter spillerdata" still shows who scored
+      // even after a player is later removed from the roster. Away goals have no playerId.
       goals: state.goalLog
         .filter(function(g){ return g.team === 'home' && g.playerId; })
         .map(function(g){
@@ -5327,38 +6343,20 @@
           return { playerId: id, playerName: p ? p.name : '(fjernet spiller)', matchMs: g.matchMs };
         })
     });
-    // Separate from the above: the shared Supabase archive - state.matchHistory
-    // is synced shared-session state and gets wiped by resetMatch() same as
-    // everything else, which is right for "this session's matches so far"
-    // but wrong for a durable record admins can look back on later. Gated
-    // on the coach's answer to the "lagre denne kampen til historikk?"
-    // prompt shown right before this runs (see saveHistoryModal), not a
-    // standing setting - a coach who always says no just doesn't add a row.
-    if (saveToHistory){
-      if (els.matchSummaryHistoryNote) els.matchSummaryHistoryNote.hidden = true;
-      saveMatchToHistory(summaryEntry).then(function(ok){
-        if (ok || !els.matchSummaryHistoryNote) return;
-        els.matchSummaryHistoryNote.textContent = 'Kunne ikke lagre kampen til delt Historikk - sjekk nettforbindelsen, eller be admin sjekke databasen.';
-        els.matchSummaryHistoryNote.hidden = false;
-      });
-    }
+    // "Kampslutt" means a new match (a cup day is several, not halves of one), so the goals,
+    // the swap count and the opponent don't carry over.
     state.goalLog = [];
+    state.eventLog = [];
     state.swapCount = 0;
     state.continueCount = 0;
-    // Next match likely means a next opponent (cup format) - clearing this
-    // brings the "?" back on the scoreboard and re-arms the opponent prompt
-    // (see openOpponentModal's call sites) rather than silently keeping the
-    // just-finished opponent's name on the new match.
-    state.opponentName = '';
-    state.opponentAbbr = '';
+    state.halfStage = 1;
+    state.keeperMs = {};
+    state.keeperNow = null;
+    state.opponentName = nextName || '';
+    state.opponentAbbr = nextAbbr || '';
 
     if (reorganize){
-      // Default (false): total cumulative time, same as always. The
-      // Innstillinger screen's "Bytt om bruker siste kamp" toggle switches
-      // this to `playerMs` instead - each player's time in the match that
-      // just ended alone (see computeMatchScoreAndPlayerMs above), so a
-      // player who's played a lot overall but sat out the last match still
-      // gets set up first next time.
+      // reorgUsesLastMatch: each player's time in the match that just ended; otherwise the total.
       var all = state.players.map(function(p){
         var ms = state.reorgUsesLastMatch
           ? (playerMs[p.id] || 0)
@@ -5374,30 +6372,15 @@
     state.fieldTimers = {};
     state.benchTimers = {};
     timeUpNotified = {};
-    state.onField.forEach(function(id){
-      state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-    });
-    state.onBench.forEach(function(id){
-      state.benchTimers[id] = { baseElapsedMs: 0, sinceTs: now };
-    });
-
+    state.onField.forEach(function(id){ state.fieldTimers[id] = { baseElapsedMs: 0, sinceTs: now }; });
+    state.onBench.forEach(function(id){ state.benchTimers[id] = { baseElapsedMs: 0, sinceTs: now }; });
     state.matchClock = { baseElapsedMs: 0, sinceTs: now };
     state.globalRunning = false;
-    // Baseline for "current period" rank badges (see currentPeriodFieldMs) -
-    // the period that's about to start counts from here, not from 0 in the
-    // lifetime cumulative.
+    // Baseline for "current period" (see currentPeriodFieldMs): the next match counts from here.
     state.periodStartCumulative = cloneStateValue(state.cumulative);
-    selected = null;
-    suggestedPartnerId = null;
-    swapSuggestionArmed = false;
-    undoStack = [];
-    redoStack = [];
-    multiMode = false;
-    multiSelected = [];
-    saveState();
   }
 
-  function animateReorganization(mutateFn){
+    function animateReorganization(mutateFn){
     var tokens = Array.prototype.slice.call(document.querySelectorAll('.token'));
     tokens.forEach(function(el){ el.classList.add('reorg-out'); });
     setTimeout(function(){
@@ -5426,7 +6409,6 @@
     if (!isMaster()) return;
     selected = null;
     suggestedPartnerId = null;
-    swapSuggestionArmed = false;
     undoStack = [];
     redoStack = [];
     timeUpNotified = {};
@@ -5435,37 +6417,10 @@
     // defaultState() sets these back to null/[] - losing sessionOwnerDeviceId
     // here would silently un-master the very device that's allowed to call
     // this function, locking everyone (including the real owner) out of
-    // isMaster()-gated controls for the rest of the shared session.
-    var keepOwnerDeviceId = state.sessionOwnerDeviceId;
-    var keepParticipants = state.participants;
-    // Same reasoning as sessionOwnerDeviceId/participants above, for a
-    // different failure mode: defaultState() starts state.rev back at 0,
-    // but every OTHER device still connected to this session has already
-    // seen this session's real rev count (however high a match's worth of
-    // swaps/goals pushed it to). isNewerRevision() on their end rejects
-    // anything with a lower rev than what they've already got as stale -
-    // so without carrying this over, the reset itself (pushed at rev 1)
-    // would be silently ignored by every other device, leaving them stuck
-    // showing the just-ended match forever (found by actually running a
-    // shared session through several swaps and then "Avslutt og
-    // nullstill" in the test harness - the reset never reached the other
-    // device, logging exactly the "foreldet delt tilstand" warning
-    // isNewerRevision's own comment describes, just triggered by this
-    // instead of the dormant-tab case it was written for).
-    var keepRev = state.rev;
-    // defaultDurationMs/matchDurationMs/fieldSize/rankByCumulative are
-    // deliberately NOT carried over from the old state here (they used to
-    // be) - defaultState() above already reads them fresh from
-    // loadCoachDefaults(), which is exactly Innstillingers "Standardverdier
-    // for ny kamp" group. Carrying over the pre-reset values instead meant
-    // "Ny økt"/"Avslutt og nullstill" silently ignored any Innstillinger
-    // change made since the session started - e.g. switching to 5er-fotball
-    // in Innstillinger still left the next match at 3 på banen, since this
-    // stale value overwrote the fresh default defaultState() had just set.
-    state = defaultState();
-    state.sessionOwnerDeviceId = keepOwnerDeviceId;
-    state.participants = keepParticipants;
-    state.rev = keepRev;
+    // isMaster()-gated controls for the rest of the shared session. Only inside
+    // a session, though: after leaving someone else's, a new local match has
+    // nothing to do with that session's owner and devices.
+    recordOp({ t: 'reset' });
     saveState();
     updateUndoUI();
     updateMultiSelectUI();
@@ -5473,6 +6428,25 @@
     els.settingsModal.classList.remove('open');
     renderAll();
     openSettings(true);
+  }
+
+  // A new, empty match. Inside a shared session the session itself lives on: losing the owner would
+  // lock everyone out of the owner's controls, and a lower rev would make every other device reject
+  // the reset as out of date. After leaving someone else's session, none of that carries over.
+  // Kamptid, byttetid and format come fresh from defaultState(), so a change in Innstillinger
+  // applies to the very next match.
+  function applyReset(){
+    var keepOwnerDeviceId = sessionCode ? state.sessionOwnerDeviceId : null;
+    var keepParticipants = sessionCode ? state.participants : [];
+    var keepSessionUid = sessionCode ? state.sessionUid : undefined;
+    var keepRev = state.rev;
+    var keepOpIds = state.opIds;
+    state = defaultState();
+    state.sessionOwnerDeviceId = keepOwnerDeviceId;
+    state.participants = keepParticipants;
+    if (keepSessionUid) state.sessionUid = keepSessionUid;
+    state.rev = keepRev;
+    state.opIds = keepOpIds;
   }
 
   // Belt-and-suspenders against iOS's rubber-band bounce: touch-action:none
@@ -5508,6 +6482,767 @@
   }, { passive: false });
 
   /* ---------------- Init ---------------- */
+
+  /* ---------------- Stripe nederst: bekreftelse med Angre ---------------- */
+
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  var toastTimer;
+  /** @type {(() => void)|null} */
+  var toastAction = null;
+  /** @param {string} text @param {string|null} [actionLabel] @param {(() => void)|null} [action] @param {number} [ms] */
+  function showToast(text, actionLabel, action, ms){
+    if (!els.undoToast) return;
+    els.undoToastText.textContent = text;
+    els.undoToastBtn.hidden = !actionLabel;
+    if (actionLabel) els.undoToastBtn.textContent = actionLabel;
+    toastAction = action || null;
+    els.undoToast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, ms || 5000);
+  }
+  function hideToast(){
+    clearTimeout(toastTimer);
+    toastAction = null;
+    if (els.undoToast) els.undoToast.classList.remove('show');
+  }
+  /** @param {string} text */
+  function showUndoToast(text){
+    showToast(text, 'Angre', function(){ undoLastAction(); });
+  }
+  /** @param {string} name @returns {string} */
+  function firstName(name){
+    return String(name || '').trim().split(/\s+/)[0] || '';
+  }
+
+  /* ---------------- Tips første gang ---------------- */
+
+  var TIPS = {
+    swap: 'Dra en spiller over en annen for å bytte, eller trykk på begge.',
+    goal: 'Trykk på tallet ved klokka for å registrere mål. Hold inne for å fjerne.',
+    due: 'Merket betyr at byttetiden er nådd. «Bytt» ved benken bytter den som har spilt lengst.'
+  };
+  var TIPS_KEY = 'spillerbytte_tips_seen_v1';
+  var lastTipAt = 0;
+  /** @param {string} key */
+  function maybeTip(key){
+    if (spectatorCode || !canEdit() || !els.launcherScreen || !els.launcherScreen.classList.contains('hidden')) return;
+    if (Date.now() - lastTipAt < 15000 || (els.undoToast && els.undoToast.classList.contains('show'))) return;
+    /** @type {any} */
+    var seen = {};
+    try { seen = JSON.parse(localStorage.getItem(TIPS_KEY) || '{}') || {}; } catch(e){}
+    if (seen[key] || !TIPS[key]) return;
+    seen[key] = true;
+    try { localStorage.setItem(TIPS_KEY, JSON.stringify(seen)); } catch(e){}
+    lastTipAt = Date.now();
+    showToast(TIPS[key], null, null, 7000);
+  }
+  function runTips(){
+    if (state.players.length === 0 || document.querySelector('.modal.open')) return;
+    if (state.onBench.length > 0 && state.onField.length > 0) maybeTip('swap');
+    else maybeTip('goal');
+    if (matchClockElapsed(nowTs()) > 60000) maybeTip('goal');
+  }
+
+  /* ---------------- Alarmer: omganger, full tid, forvarsel ---------------- */
+
+  var PREWARN_MS = 30000;
+  /** @type {Object<string, boolean>} */
+  var prewarned = {};
+  var fullTimeNotified = false;
+  /** @param {string} id @param {number} elapsed */
+  function notePrewarn(id, elapsed){
+    var d = state.defaultDurationMs;
+    if (elapsed < d - PREWARN_MS){ delete prewarned[id]; return; }
+    if (elapsed >= d || prewarned[id] || !state.globalRunning) return;
+    prewarned[id] = true;
+    if (!spectatorCode && soundPref('prewarn')) playTones([[1320, 0, 0.14]]);
+  }
+  /** @param {number} now */
+  function checkMatchAlarms(now){
+    var clock = matchClockElapsed(now), d = state.matchDurationMs;
+    if (state.halves === 2 && state.halfStage !== 2 && clock >= d / 2 && canEdit()){
+      // Stoppes nøyaktig på halvtid, også om telefonen var låst akkurat da.
+      recordOp({ t: 'halftime', at: now - (clock - d / 2) });
+      saveState();
+      updatePlayPauseUI();
+      updateTimersOnly();
+      if (soundPref('whistle')) playWhistle();
+      showNotice('Første omgang er ferdig. Klokka står til du trykker Start.');
+      return;
+    }
+    if (clock >= d){
+      if (fullTimeNotified) return;
+      fullTimeNotified = true;
+      if (!spectatorCode && soundPref('whistle')) playWhistle();
+      if (!spectatorCode) showNotice('Full tid');
+    } else {
+      fullTimeNotified = false;
+    }
+  }
+
+  /* ---------------- Neste bytte og rettferdighet ---------------- */
+
+  var lastPanelsSecond = -1;
+  /** @type {{at:number, rev:number, plan:any}|null} */
+  var planCache = null;
+
+  // Kampens spilletid fram til full tid hvis planen følges, regnet fra stillingen akkurat nå. Keeperen
+  // står utenfor rotasjonen. Hver gang byttetiden er nådd byttes så mange som det er rettferdig å bytte.
+  /** @param {number} now */
+  function computeRotationPlan(now){
+    var clock = matchClockElapsed(now), total = state.matchDurationMs;
+    var interval = Math.max(60000, state.defaultDurationMs);
+    var keeper = keeperIdNow();
+    /** @type {Object<string, number>} */
+    var played = {};
+    /** @type {Object<string, number>} */
+    var stint = {};
+    state.players.forEach(function(p){ played[p.id] = currentPeriodFieldMs(p.id, now); });
+    var field = state.onField.slice(), bench = state.onBench.slice();
+    field.forEach(function(id){ stint[id] = fieldElapsed(id, now); });
+    var rotating = field.filter(function(id){ return id !== keeper; });
+    var t = clock;
+    /** @type {{atMs:number, pairs:{out:string, in:string}[]}[]} */
+    var changes = [];
+    if (bench.length > 0 && rotating.length > 0){
+      for (var guard = 0; guard < 200; guard++){
+        var longest = 0;
+        rotating.forEach(function(id){ if (stint[id] > longest) longest = stint[id]; });
+        var dt = Math.max(30000, interval - longest);
+        if (t + dt >= total - 30000) break; // ingen bytter det siste halve minuttet
+        field.forEach(function(id){ played[id] += dt; stint[id] = (stint[id] || 0) + dt; });
+        t += dt;
+        rotating.sort(function(a, b){ return played[b] - played[a]; });
+        bench.sort(function(a, b){ return played[a] - played[b]; });
+        var pairs = [];
+        for (var i = 0; i < bench.length && i < rotating.length; i++){
+          if (stint[rotating[i]] < interval * 0.75 || played[rotating[i]] <= played[bench[i]]) break;
+          pairs.push({ out: rotating[i], in: bench[i] });
+        }
+        pairs.forEach(function(pair){
+          rotating[rotating.indexOf(pair.out)] = pair.in;
+          field[field.indexOf(pair.out)] = pair.in;
+          bench[bench.indexOf(pair.in)] = pair.out;
+          stint[pair.in] = 0;
+        });
+        if (pairs.length > 0) changes.push({ atMs: t, pairs: pairs });
+      }
+    }
+    if (total > t) field.forEach(function(id){ played[id] += total - t; });
+    var values = state.players.filter(function(p){ return p.id !== keeper; }).map(function(p){ return played[p.id]; });
+    var max = values.length ? Math.max.apply(null, values) : 0, min = values.length ? Math.min.apply(null, values) : 0;
+    var sum = values.reduce(function(a, b){ return a + b; }, 0);
+    return { changes: changes, projected: played, keeper: keeper, average: values.length ? sum / values.length : 0, spread: max - min };
+  }
+  /** @param {number} now */
+  function cachedPlan(now){
+    if (!planCache || planCache.rev !== state.rev || now - planCache.at > 5000 || now < planCache.at){
+      planCache = { at: now, rev: state.rev, plan: computeRotationPlan(now) };
+    }
+    return planCache.plan;
+  }
+
+  /** @param {number} now @returns {{fieldId:string, benchId:string, inMs:number}|null} */
+  function computeNextSwap(now){
+    if (state.onBench.length === 0 || state.onField.length === 0) return null;
+    if (state.planEnabled){
+      var plan = cachedPlan(now);
+      if (plan.changes.length > 0){
+        var c = plan.changes[0];
+        return { fieldId: c.pairs[0].out, benchId: c.pairs[0].in, inMs: Math.max(0, c.atMs - matchClockElapsed(now)) };
+      }
+    }
+    var due = computeSwapSuggestion(now);
+    if (due) return { fieldId: due.fieldId, benchId: due.benchId, inMs: 0 };
+    var keeper = keeperIdNow();
+    /** @type {any} */
+    var soonest = null;
+    state.onField.forEach(function(id){
+      if (id !== keeper && (!soonest || fieldElapsed(id, now) > fieldElapsed(soonest, now))) soonest = id;
+    });
+    if (!soonest) return null;
+    var benchId = state.swapSuggestionBenchMode === 'cumulative'
+      ? pickByMetric(state.onBench, function(id){ return currentPeriodFieldMs(id, now); }, true)
+      : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); });
+    if (!benchId) return null;
+    return { fieldId: soonest, benchId: benchId, inMs: Math.max(0, state.defaultDurationMs - fieldElapsed(soonest, now)) };
+  }
+
+  /** @type {string} */
+  var lastNextPair = '';
+  /** @param {number} now */
+  function renderMatchPanels(now){
+    if (!els.nextSwapBar) return;
+    var next = spectatorCode ? null : computeNextSwap(now);
+    els.nextSwapBar.hidden = !next;
+    var pair = '';
+    if (next){
+      var out = playerById(next.fieldId), inn = playerById(next.benchId);
+      if (out && inn){
+        pair = next.fieldId + '|' + next.benchId;
+        els.nextSwapLabel.textContent = next.inMs > 0 ? 'Neste bytte om ' + formatMs(next.inMs) : 'Neste bytte';
+        els.nextSwapNames.textContent = firstName(out.name) + ' ut ⇄ ' + firstName(inn.name) + ' inn';
+        els.nextSwapBar.classList.toggle('ready', next.inMs === 0);
+        els.nextSwapBtn.hidden = !canEdit() || multiMode;
+      }
+    }
+    if (pair !== lastNextPair || document.querySelector('.token') && !document.querySelector('.token.next-out, .token.next-in')){
+      lastNextPair = pair;
+      Array.prototype.forEach.call(document.querySelectorAll('.token.next-out, .token.next-in'), function(el){ el.classList.remove('next-out', 'next-in'); });
+      if (next){
+        var a = els.field.querySelector('[data-id="' + next.fieldId + '"]'), b = els.bench.querySelector('[data-id="' + next.benchId + '"]');
+        if (a) a.classList.add('next-out');
+        if (b) b.classList.add('next-in');
+      }
+    }
+    renderFairness(now);
+  }
+
+  /** @param {number} now */
+  function renderFairness(now){
+    var line = els.fairnessLine;
+    if (!line) return;
+    var clock = matchClockElapsed(now);
+    var nextMatch = clock === 0 ? cupNextMatch(now) : null;
+    if (nextMatch){
+      var mins = cupMinutesUntil(nextMatch, now);
+      line.textContent = 'Neste kamp ' + nextMatch.time + (nextMatch.opponent ? ' mot ' + nextMatch.opponent : '') + (mins > 0 ? ' (om ' + mins + ' min)' : '');
+      line.hidden = false;
+      return;
+    }
+    if (clock < 60000 || state.players.length <= (state.fieldSize || 3)){
+      line.hidden = true;
+      return;
+    }
+    var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
+    var keeper = keeperIdNow();
+    /** @type {any} */
+    var hi = null;
+    /** @type {any} */
+    var lo = null;
+    state.players.forEach(function(p){
+      if (p.id === keeper) return;
+      if (!hi || msFor(p.id, now) > msFor(hi.id, now)) hi = p;
+      if (!lo || msFor(p.id, now) < msFor(lo.id, now)) lo = p;
+    });
+    if (!hi || !lo) return;
+    var gap = msFor(hi.id, now) - msFor(lo.id, now);
+    line.textContent = 'Størst forskjell ' + formatCumulative(gap) + ': ' + firstName(hi.name) + ' mest, ' + firstName(lo.name) + ' minst';
+    line.hidden = false;
+  }
+
+  /* ---------------- Bytteplan ---------------- */
+
+  function openPlanModal(){
+    renderPlanModal();
+    els.planModal.classList.add('open');
+  }
+  function renderPlanModal(){
+    var now = nowTs();
+    planCache = null;
+    var plan = cachedPlan(now);
+    var nameOf = function(/** @type {string} */ id){ var p = playerById(id); return p ? firstName(p.name) : '?'; };
+    qs('planSummary').textContent = state.onBench.length === 0
+      ? 'Ingen på benken, så det er ingen bytter å planlegge.'
+      : 'Alle får rundt ' + formatCumulative(plan.average) + ' i denne kampen, med ' + formatCumulative(plan.spread) + ' mellom mest og minst. Planen regnes på nytt ut fra stillingen nå.';
+    var toggle = /** @type {HTMLInputElement} */ (qs('planEnabledToggle'));
+    toggle.checked = !!state.planEnabled;
+    toggle.disabled = !canEdit();
+    qs('planList').innerHTML = plan.changes.map(function(/** @type {any} */ c){
+      return '<div class="plan-row"><span class="plan-time">' + formatMs(c.atMs) + '</span><span>' +
+        c.pairs.map(function(/** @type {any} */ pair){ return escapeHtml(nameOf(pair.out)) + ' ut, ' + escapeHtml(nameOf(pair.in)) + ' inn'; }).join('<br>') +
+      '</span></div>';
+    }).join('') || '<p class="sub">Ingen flere bytter før full tid.</p>';
+    qs('planPlayers').innerHTML = state.players.slice().sort(function(a, b){ return plan.projected[b.id] - plan.projected[a.id]; }).map(function(p){
+      return '<div class="plan-row"><span>' + escapeHtml(p.name) + (p.id === plan.keeper ? ' <span class="plan-tag">Keeper</span>' : '') + '</span><span class="plan-time">' + formatCumulative(plan.projected[p.id] || 0) + '</span></div>';
+    }).join('');
+    var next = suggestNextKeeper(now);
+    var keeperBox = qs('planKeeper');
+    keeperBox.hidden = !next;
+    if (next){
+      qs('planKeeperText').textContent = 'Neste i mål: ' + next.name + ' (har stått ' + formatCumulative(next.ms) + ')';
+      var btn = qs('planKeeperBtn');
+      btn.hidden = !canEdit();
+      btn.textContent = 'Sett i mål nå';
+      btn.dataset.id = next.id;
+    }
+  }
+  /** @param {string} id */
+  function putInGoal(id){
+    if (!canEdit()) return;
+    var keeper = keeperIdNow();
+    if (!keeper || keeper === id) return;
+    if (state.onField.indexOf(id) !== -1){
+      performPositionSwap(keeper, id);
+    } else {
+      animateAndPerformSwap(keeper, id); // en innbytter arver plassen til den som går ut
+    }
+  }
+
+  /* ---------------- Cup ---------------- */
+
+  /** @returns {{id:string, time:string, opponent:string}[]} */
+  function cupMatches(){
+    return state.cup && Array.isArray(state.cup.matches) ? state.cup.matches : [];
+  }
+  /** @param {{time:string}} match @param {number} now @returns {number} */
+  function cupMinutesUntil(match, now){
+    var parts = match.time.split(':');
+    var d = new Date(now);
+    d.setHours(Number(parts[0]) || 0, Number(parts[1]) || 0, 0, 0);
+    return Math.round((d.getTime() - now) / 60000);
+  }
+  /** @param {number} now */
+  function cupNextMatch(now){
+    var upcoming = cupMatches().filter(function(m){ return m.time && cupMinutesUntil(m, now) > 0; })
+      .sort(function(a, b){ return a.time < b.time ? -1 : 1; });
+    return upcoming[0] || null;
+  }
+  /** @param {any} cup */
+  function saveCup(cup){
+    setShared({ cup: cup });
+    renderFairness(nowTs());
+  }
+  function openCupModal(){
+    renderCupModal();
+    els.cupModal.classList.add('open');
+  }
+  function renderCupModal(){
+    var now = nowTs();
+    var editable = canEdit();
+    var next = cupNextMatch(now);
+    qs('cupNext').textContent = next
+      ? 'Neste kamp ' + next.time + (next.opponent ? ' mot ' + next.opponent : '') + ' (om ' + cupMinutesUntil(next, now) + ' min)'
+      : 'Legg inn kampene, så teller appen ned til neste og foreslår motstanderen ved kampslutt.';
+    var nameInput = /** @type {HTMLInputElement} */ (qs('cupNameInput'));
+    nameInput.value = state.cup ? state.cup.name : '';
+    nameInput.disabled = !editable;
+    var list = qs('cupList');
+    list.innerHTML = '';
+    cupMatches().forEach(function(m){
+      var row = document.createElement('div');
+      row.className = 'cup-row';
+      row.innerHTML = '<input type="time" class="mini-input cup-time" aria-label="Klokkeslett">' +
+        '<input type="text" class="mini-input" placeholder="Motstander" maxlength="40" autocomplete="off" aria-label="Motstander">' +
+        '<button type="button" class="name-row-clear-btn cup-del" aria-label="Fjern kamp">×</button>';
+      var inputs = row.querySelectorAll('input');
+      var time = /** @type {HTMLInputElement} */ (inputs[0]), opp = /** @type {HTMLInputElement} */ (inputs[1]);
+      time.value = m.time;
+      opp.value = m.opponent;
+      time.disabled = opp.disabled = !editable;
+      var commit = function(){
+        saveCup({ name: state.cup ? state.cup.name : '', matches: cupMatches().map(function(x){
+          return x.id === m.id ? { id: x.id, time: time.value, opponent: opp.value.trim() } : x;
+        }) });
+      };
+      time.addEventListener('change', commit);
+      opp.addEventListener('change', commit);
+      /** @type {HTMLElement} */ (row.querySelector('.cup-del')).addEventListener('click', function(){
+        if (!editable) return;
+        saveCup({ name: state.cup ? state.cup.name : '', matches: cupMatches().filter(function(x){ return x.id !== m.id; }) });
+        renderCupModal();
+      });
+      list.appendChild(row);
+    });
+    qs('cupAddBtn').hidden = !editable;
+    renderMatchHistorySummary();
+    qs('cupPlayedTitle').hidden = (state.matchHistory || []).length === 0;
+    var nowMs = nowTs();
+    var goalsByPlayer = {};
+    (state.matchHistory || []).forEach(function(m){
+      (m.goals || []).forEach(function(g){ goalsByPlayer[g.playerId] = (goalsByPlayer[g.playerId] || 0) + 1; });
+    });
+    var liveGoals = computeGoalBadges().counts;
+    qs('cupTotals').innerHTML = state.players.slice().sort(function(a, b){ return cumulativeFieldMs(b.id, nowMs) - cumulativeFieldMs(a.id, nowMs); }).map(function(p){
+      var g = (goalsByPlayer[p.id] || 0) + (liveGoals[p.id] || 0);
+      return '<div class="plan-row"><span>' + escapeHtml(p.name) + (g > 0 ? ' <span class="plan-tag">' + g + ' mål</span>' : '') + '</span><span class="plan-time">' + formatCumulative(cumulativeFieldMs(p.id, nowMs)) + '</span></div>';
+    }).join('');
+  }
+
+  /* ---------------- Fast stall og frammøte ---------------- */
+
+  function renderAttendance(){
+    var box = qs('attendanceChips');
+    var inRows = {};
+    Array.prototype.forEach.call(els.nameRows.querySelectorAll('.name-row input'), function(inp){
+      var v = inp.value.trim().toLowerCase();
+      if (v) inRows[v] = true;
+    });
+    box.innerHTML = roster.map(function(name){
+      var on = !!inRows[name.toLowerCase()];
+      return '<button type="button" class="att-chip' + (on ? ' on' : '') + '" aria-pressed="' + on + '">' + (on ? '✓ ' : '') + escapeHtml(name) + '</button>';
+    }).join('');
+    Array.prototype.forEach.call(box.children, function(btn, i){
+      btn.addEventListener('click', function(){ toggleAttendance(roster[i]); });
+    });
+  }
+  /** @param {string} name */
+  function toggleAttendance(name){
+    var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
+    var lower = name.toLowerCase();
+    var existing = rows.filter(function(r){ return r.querySelector('input').value.trim().toLowerCase() === lower; })[0];
+    if (existing){
+      /** @type {any} */ (existing.querySelector('input')).value = '';
+    } else {
+      var empty = rows.filter(function(r){ return !r.querySelector('input').value.trim(); })[0];
+      if (!empty) empty = addNameRow(null, '', rows.length + 1, false, true);
+      /** @type {any} */ (empty.querySelector('input')).value = name;
+    }
+    settingsDirty = true;
+    renderAttendance();
+  }
+  function renderStallList(){
+    var box = qs('stallList');
+    box.innerHTML = roster.length === 0
+      ? '<p class="toggle-row-sub">Ingen ennå. Navn du bruker i en kamp havner her automatisk.</p>'
+      : roster.map(function(name){
+          return '<div class="stall-row"><span>' + escapeHtml(name) + '</span><button type="button" class="name-row-clear-btn stall-del" aria-label="Fjern ' + escapeHtml(name) + '">×</button></div>';
+        }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.stall-del'), function(btn, i){
+      btn.addEventListener('click', function(){
+        roster.splice(i, 1);
+        saveRoster();
+        saveTeamExtras();
+        renderStallList();
+      });
+    });
+  }
+  function addStallFromInput(){
+    var input = /** @type {HTMLInputElement} */ (qs('stallAddInput'));
+    var name = input.value.trim();
+    if (!name) return;
+    addNamesToRoster([name]);
+    saveTeamExtras();
+    input.value = '';
+    renderStallList();
+  }
+
+  /* ---------------- Deling: lenke, QR og foreldrevisning ---------------- */
+
+  /** @param {string} code @returns {boolean} */
+  function isValidSessionCode(code){
+    return /^[0-9]{3}$/.test(code) || /^[A-Z][A-Z2-9]{5}$/.test(code);
+  }
+  /** @returns {boolean} */
+  function isStandalone(){
+    return !!(/** @type {any} */ (navigator).standalone) || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  }
+  /** @param {() => void} done */
+  function loadQrLibrary(done){
+    if (/** @type {any} */ (window).qrcode){ done(); return; }
+    var tag = document.createElement('script');
+    tag.src = '/vendor/qrcode-generator-2.0.4.js';
+    tag.onload = done;
+    document.head.appendChild(tag);
+  }
+  /** @param {HTMLElement} host @param {string} url */
+  function drawQr(host, url){
+    host.innerHTML = '';
+    loadQrLibrary(function(){
+      var lib = /** @type {any} */ (window).qrcode;
+      if (!lib) return;
+      var qr = lib(0, 'M');
+      qr.addData(url);
+      qr.make();
+      host.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 8, scalable: true }); // bare vår egen lenke, ingen data utenfra
+    });
+  }
+  /** @param {string} text @param {HTMLElement} btn */
+  function copyWithReceipt(text, btn){
+    var original = btn.textContent;
+    var done = function(){
+      btn.textContent = 'Kopiert ✓';
+      setTimeout(function(){ btn.textContent = original; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(function(){});
+  }
+  /** @param {{title:string, text?:string, url?:string, file?:File|null}} data @param {HTMLElement} btn */
+  function shareOrCopy(data, btn){
+    /** @type {any} */
+    var payload = { title: data.title };
+    if (data.text) payload.text = data.text;
+    if (data.url) payload.url = data.url;
+    if (data.file && navigator.canShare && navigator.canShare({ files: [data.file] })) payload.files = [data.file];
+    var fallback = function(){ copyWithReceipt([data.text, data.url].filter(Boolean).join('\n'), btn); };
+    if (!navigator.share){ fallback(); return; }
+    navigator.share(payload).catch(function(/** @type {any} */ e){
+      if (e && e.name === 'AbortError') return; // treneren ombestemte seg
+      fallback();
+    });
+  }
+  function openShareSheet(){
+    if (!sessionCode) return;
+    var joinUrl = location.origin + '/?okt=' + encodeURIComponent(sessionCode);
+    // «Kun les»: da gis ikke skrivekoden videre.
+    var readOnly = state.shareEditable === false;
+    qs('shareEditBlock').hidden = readOnly;
+    qs('shareCode').textContent = sessionCode;
+    if (!readOnly) drawQr(qs('shareEditQr'), joinUrl);
+    /** @type {any} */ (qs('shareEditLinkBtn')).onclick = function(){
+      shareOrCopy({ title: 'Bli med i kampen', url: joinUrl }, qs('shareEditLinkBtn'));
+    };
+    /** @type {any} */ (qs('shareCopyCodeBtn')).onclick = function(){ copyWithReceipt(/** @type {string} */ (sessionCode), qs('shareCopyCodeBtn')); };
+    qs('shareViewBlock').hidden = !sessionViewCode;
+    qs('shareViewMissing').hidden = !!sessionViewCode;
+    if (sessionViewCode){
+      var viewUrl = location.origin + '/?se=' + encodeURIComponent(sessionViewCode);
+      drawQr(qs('shareViewQr'), viewUrl);
+      /** @type {any} */ (qs('shareViewLinkBtn')).onclick = function(){
+        shareOrCopy({ title: 'Følg kampen', url: viewUrl }, qs('shareViewLinkBtn'));
+      };
+    }
+    els.shareModal.classList.add('open');
+  }
+
+  // Foreldrelenken. Egen kode som bare kan lese. Ingenting lagres, ingen deltaker registreres, og en
+  // kamp som ligger på telefonen fra før røres ikke (se saveStateLocally og canEdit).
+  /** @param {string} code */
+  function startSpectator(code){
+    spectatorCode = code;
+    document.documentElement.classList.add('spectator');
+    state = defaultState();
+    els.launcherScreen.classList.add('hidden');
+    els.spectatorBar.hidden = false;
+    els.sessionCodeBar.style.display = 'none';
+    renderAll();
+    fetchSpectatorState();
+    if (sb){
+      sb.channel('view-' + code).on('broadcast', { event: 'changed' }, fetchSpectatorState).subscribe();
+    }
+    setInterval(function(){ if (!document.hidden) fetchSpectatorState(); }, 15000);
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) fetchSpectatorState(); });
+  }
+  function fetchSpectatorState(){
+    if (!sb || !spectatorCode) return;
+    var sentAt = Date.now();
+    sb.rpc('get_session_view', { p_view_code: spectatorCode }).then(function(/** @type {any} */ res){
+      if (!res || res.error){
+        els.spectatorText.textContent = 'Ingen kontakt akkurat nå';
+        return;
+      }
+      var row = Array.isArray(res.data) ? res.data[0] : res.data;
+      if (!row){
+        els.spectatorText.textContent = 'Fant ikke kampen. Be om en ny lenke.';
+        return;
+      }
+      noteServerTime(row.server_now, sentAt, Date.now());
+      var incoming = normalizeState(row.data);
+      if (!incoming) return;
+      state = incoming;
+      dropStaleSelection();
+      els.spectatorText.textContent = 'Direkte: ' + homeName() + (state.opponentName ? ' mot ' + state.opponentName : '');
+      renderAll();
+    }).catch(function(){ els.spectatorText.textContent = 'Ingen kontakt akkurat nå'; });
+  }
+
+  /* ---------------- Kamprapport ---------------- */
+
+  /** @param {HistoryMatchEntry} e @returns {string} */
+  function buildReportText(e){
+    var opponent = e.opponentName || e.opponentAbbr || 'motstanderen';
+    var lines = [homeName() + ' ' + e.homeScore + '–' + e.awayScore + ' ' + opponent];
+    var scorers = (e.goals || []).filter(function(g){ return g.team === 'home'; });
+    if (scorers.length) lines.push('Mål: ' + scorers.map(function(g){ return firstName(g.scorerName) + ' (' + formatMs(g.matchMs) + ')'; }).join(', '));
+    var players = (e.players || []).slice().sort(function(a, b){ return b.ms - a.ms; });
+    if (players.length) lines.push('Spilletid: ' + players.map(function(p){ return firstName(p.name) + ' ' + formatCumulative(p.ms); }).join(', '));
+    return lines.join('\n');
+  }
+  /** @param {HistoryMatchEntry} e @returns {Promise<File|null>} */
+  function buildReportImage(e){
+    return new Promise(function(resolve){
+      try {
+        var c = document.createElement('canvas');
+        c.width = 1080;
+        c.height = 1080;
+        /** @type {any} */
+        var g = c.getContext('2d');
+        if (!g || !c.toBlob){ resolve(null); return; }
+        var font = '-apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif';
+        var bg = g.createLinearGradient(0, 0, 0, 1080);
+        bg.addColorStop(0, '#16294a');
+        bg.addColorStop(1, '#081120');
+        g.fillStyle = bg;
+        g.fillRect(0, 0, 1080, 1080);
+        g.fillStyle = '#ffffff';
+        g.textAlign = 'center';
+        g.font = '600 48px ' + font;
+        g.fillText(homeName() + ' mot ' + (e.opponentName || e.opponentAbbr || 'motstanderen'), 540, 170, 960);
+        g.font = '700 220px ' + font;
+        g.fillText(e.homeScore + ' – ' + e.awayScore, 540, 430);
+        g.font = '500 40px ' + font;
+        g.fillStyle = 'rgba(255,255,255,.72)';
+        g.fillText(new Date(e.endedAt).toLocaleDateString('nb-NO', { day: 'numeric', month: 'long', year: 'numeric' }), 540, 510);
+        var scorers = (e.goals || []).filter(function(x){ return x.team === 'home'; });
+        g.fillStyle = '#ffffff';
+        g.font = '500 44px ' + font;
+        scorers.slice(0, 7).forEach(function(x, i){
+          g.fillText(firstName(x.scorerName) + '  ' + formatMs(x.matchMs), 540, 620 + i * 62, 960);
+        });
+        c.toBlob(function(blob){
+          resolve(blob ? new File([blob], 'kamprapport.png', { type: 'image/png' }) : null);
+        }, 'image/png');
+      } catch(err){ resolve(null); }
+    });
+  }
+  /** @param {HTMLElement} btn */
+  function shareMatchReport(btn){
+    var entry = lastMatchSummary;
+    if (!entry) return;
+    var text = buildReportText(entry);
+    buildReportImage(entry).then(function(file){
+      shareOrCopy({ title: 'Kamprapport', text: text, file: file }, btn);
+    });
+  }
+
+  /* ---------------- Sesongstatistikk ---------------- */
+
+  /** @param {HistoryMatchEntry[]} list */
+  function computeSeasonStats(list){
+    /** @type {Object<string, {name:string, matches:number, ms:number, goals:number}>} */
+    var byName = {};
+    var wins = 0, draws = 0, losses = 0, gf = 0, ga = 0;
+    list.forEach(function(m){
+      if (m.homeScore > m.awayScore) wins++; else if (m.homeScore < m.awayScore) losses++; else draws++;
+      gf += m.homeScore;
+      ga += m.awayScore;
+      (m.players || []).forEach(function(p){
+        var key = p.name.trim().toLowerCase();
+        if (!key) return;
+        if (!byName[key]) byName[key] = { name: p.name, matches: 0, ms: 0, goals: 0 };
+        if (p.ms > 0) byName[key].matches++;
+        byName[key].ms += p.ms;
+        byName[key].goals += p.goals || 0;
+      });
+    });
+    var players = Object.keys(byName).map(function(k){ return byName[k]; }).sort(function(a, b){ return b.ms - a.ms; });
+    return { players: players, matches: list.length, wins: wins, draws: draws, losses: losses, goalsFor: gf, goalsAgainst: ga };
+  }
+  var statsVisible = false;
+  function renderSeasonStats(){
+    var box = els.historyStats;
+    var stats = computeSeasonStats(historyListCache);
+    box.innerHTML = '<p class="stats-head">' + stats.matches + (stats.matches === 1 ? ' kamp' : ' kamper') + ': ' + stats.wins + ' seier, ' + stats.draws + ' uavgjort, ' + stats.losses + ' tap · mål ' + stats.goalsFor + '–' + stats.goalsAgainst + '</p>' +
+      '<div class="stats-row stats-title"><span>Spiller</span><span>Kamper</span><span>Spilletid</span><span>Snitt</span><span>Mål</span></div>' +
+      stats.players.map(function(p){
+        return '<div class="stats-row"><span>' + escapeHtml(p.name) + '</span><span>' + p.matches + '</span><span>' + formatCumulative(p.ms) + '</span><span>' + formatCumulative(p.matches ? p.ms / p.matches : 0) + '</span><span>' + p.goals + '</span></div>';
+      }).join('') +
+      '<button type="button" id="statsExportBtn" class="add-player-row-btn">Eksporter som tabell</button>';
+    qs('statsExportBtn').addEventListener('click', function(){
+      var csv = ['Spiller;Kamper;Spilletid (min);Snitt (min);Mål'].concat(stats.players.map(function(p){
+        return [p.name.replace(/;/g, ','), p.matches, (p.ms / 60000).toFixed(1).replace('.', ','), (p.matches ? p.ms / p.matches / 60000 : 0).toFixed(1).replace('.', ','), p.goals].join(';');
+      })).join('\n');
+      els.exportText.value = csv;
+      els.exportModal.classList.add('open');
+    });
+  }
+
+  /* ---------------- Design ---------------- */
+
+  var DESIGN_KEY = 'spillerbytte_design_v1';
+  var DESIGNS = [
+    { id: 'a', name: 'Klassisk', desc: 'Slik appen har sett ut til nå.' },
+    { id: 'b', name: 'Forfinet', desc: 'Samme uttrykk, strammere og mørkere gjennom hele appen.' },
+    { id: 'c', name: 'Stadion', desc: 'Resultattavle øverst, ring rundt spillerne og knappene nederst.' },
+    { id: 'd', name: 'Natt', desc: 'Svart og klart, med store tall og aktivitetsringer.' },
+    { id: 'e', name: 'Oversikt', desc: 'Liste i stedet for bane: hvem som står for tur, med tiden som stolper.' }
+  ];
+  /** @returns {string} */
+  function currentDesign(){
+    try {
+      var d = localStorage.getItem(DESIGN_KEY);
+      if (DESIGNS.some(function(x){ return x.id === d; })) return /** @type {string} */ (d);
+    } catch(e){}
+    return 'a';
+  }
+  /** @param {string} id */
+  function applyDesign(id){
+    document.documentElement.setAttribute('data-design', id);
+    try { localStorage.setItem(DESIGN_KEY, id); } catch(e){}
+    renderDesignPicker();
+    if (state && els.field){
+      renderAll();
+      renderPitchMarkings();
+    }
+  }
+  function renderDesignPicker(){
+    var box = qs('designPicker');
+    if (!box) return;
+    var active = currentDesign();
+    box.innerHTML = DESIGNS.map(function(d){
+      var on = d.id === active;
+      return '<button type="button" role="radio" aria-checked="' + on + '" data-design-id="' + d.id + '" class="design-card' + (on ? ' on' : '') + '">' +
+        '<span class="dp dp-' + d.id + '" aria-hidden="true"><i></i><i></i><i></i><b></b></span>' +
+        '<span class="design-name">' + escapeHtml(d.name) + '</span>' +
+      '</button>';
+    }).join('');
+    var cur = DESIGNS.filter(function(x){ return x.id === active; })[0];
+    qs('designNote').textContent = cur ? cur.desc + ' Valget gjelder denne enheten.' : '';
+  }
+  function initDesignPicker(){
+    qs('designPicker').addEventListener('click', function(e){
+      var b = /** @type {HTMLElement} */ (e.target).closest('[data-design-id]');
+      if (b) applyDesign(/** @type {HTMLElement} */ (b).dataset.designId || 'a');
+    });
+    renderDesignPicker();
+  }
+
+  /* ---------------- Hjemskjerm: rett inn i kampen ---------------- */
+
+  function updateLauncherResume(){
+    if (!els.launcherResumeBtn) return;
+    var has = state.players.length > 0 && !spectatorCode;
+    els.launcherResumeBtn.hidden = !has;
+    if (has){
+      els.launcherResumeSub.textContent = homeAbbr() + ' ' + teamGoalCount('home') + '–' + teamGoalCount('away') + (state.opponentAbbr ? ' ' + state.opponentAbbr : '') + ' · ' + formatMs(matchClockDisplayMs(nowTs()));
+    }
+  }
+
+  function initMatchExtras(){
+    els.undoToastBtn.addEventListener('click', function(){
+      var action = toastAction;
+      hideToast();
+      if (action) action();
+    });
+    els.nextSwapBtn.addEventListener('click', function(){
+      if (!canEdit() || multiMode) return;
+      var next = computeNextSwap(nowTs());
+      if (next) animateAndPerformSwap(next.fieldId, next.benchId);
+    });
+    els.planBtn.addEventListener('click', openPlanModal);
+    qs('openPlanBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openPlanModal(); });
+    qs('planCloseBtn').addEventListener('click', function(){ els.planModal.classList.remove('open'); });
+    qs('planEnabledToggle').addEventListener('change', function(e){
+      if (!canEdit()) return;
+      setShared({ planEnabled: e.target.checked });
+      planCache = null;
+      renderMatchPanels(nowTs());
+    });
+    qs('planKeeperBtn').addEventListener('click', function(e){
+      putInGoal(e.target.dataset.id);
+      renderPlanModal();
+    });
+    qs('openCupBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openCupModal(); });
+    qs('cupCloseBtn').addEventListener('click', function(){ els.cupModal.classList.remove('open'); });
+    qs('cupAddBtn').addEventListener('click', function(){
+      if (!canEdit()) return;
+      saveCup({ name: state.cup ? state.cup.name : '', matches: cupMatches().concat([{ id: uid(), time: '', opponent: '' }]) });
+      renderCupModal();
+    });
+    qs('cupNameInput').addEventListener('change', function(e){
+      if (!canEdit()) return;
+      saveCup({ name: e.target.value.trim(), matches: cupMatches() });
+    });
+    qs('openShareBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openShareSheet(); });
+    qs('shareCloseBtn').addEventListener('click', function(){ els.shareModal.classList.remove('open'); });
+    els.matchSummaryShareBtn.addEventListener('click', function(){ shareMatchReport(els.matchSummaryShareBtn); });
+    els.historyStatsBtn.addEventListener('click', function(){
+      statsVisible = !statsVisible;
+      els.historyStatsBtn.classList.toggle('active', statsVisible);
+      els.historyStats.hidden = !statsVisible;
+      els.historyList.hidden = statsVisible;
+      if (statsVisible) renderSeasonStats();
+    });
+  }
 
   /* ---------------- Kampoppførsel: to-knapps-valg ---------------- */
 
@@ -5862,12 +7597,44 @@
       get: function(){ return manualSecs() % 60; },
       set: function(v){ setManualSecs(Math.floor(manualSecs() / 60) * 60 + v); }
     });
+    durationStep = setupNumStep(qs('durationPickerStep'), {
+      label: 'Kamptid', unit: 'min', min: 1, max: 180,
+      get: function(){ return durationPickerValue; },
+      set: function(v){ durationPickerValue = v; }
+    });
+    [10, 15, 20, 25, 30, 40, 50, 60, 70, 90].forEach(function(min){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'duration-preset';
+      b.textContent = String(min);
+      b.addEventListener('click', function(){ durationPickerValue = min; durationStep.refresh(); });
+      qs('durationPresets').appendChild(b);
+    });
+    qs('durationPickerSaveBtn').addEventListener('click', function(){
+      els.matchDurationPickerModal.classList.remove('open');
+      commitDurationPickerValue();
+    });
     Array.prototype.forEach.call(els.fieldFormatSeg.children, function(/** @type {HTMLElement} */ btn){
       btn.addEventListener('click', function(){
         modalDraft.fieldSize = parseInt(btn.dataset.size || '3', 10);
+        modalDraft.keeper = keeperDefaultFor(modalDraft.fieldSize, loadCoachDefaults().keeper);
         settingsDirty = true;
         updateModalFormatButtons();
         syncNameRows();
+      });
+    });
+    Array.prototype.forEach.call(qs('keeperSeg').children, function(/** @type {HTMLElement} */ btn){
+      btn.addEventListener('click', function(){
+        modalDraft.keeper = btn.dataset.keeper === 'on';
+        settingsDirty = true;
+        updateModalFormatButtons();
+      });
+    });
+    Array.prototype.forEach.call(qs('halvesSeg').children, function(/** @type {HTMLElement} */ btn){
+      btn.addEventListener('click', function(){
+        modalDraft.halves = btn.dataset.halves === '2' ? 2 : 1;
+        settingsDirty = true;
+        updateModalFormatButtons();
       });
     });
     els.choiceFoldBtn.addEventListener('click', function(){
@@ -5979,17 +7746,6 @@
     els.historyDeleteCancelBtn = qs('historyDeleteCancelBtn');
     els.historyDeleteConfirmBtn = qs('historyDeleteConfirmBtn');
     els.historyLogoutBtn = qs('historyLogoutBtn');
-    els.historyLoginModal = qs('historyLoginModal');
-    els.historyLoginCloseBtn = qs('historyLoginCloseBtn');
-    els.historyLoginFormFields = qs('historyLoginFormFields');
-    els.historyLoginEmailWrap = qs('historyLoginEmailWrap');
-    els.historyLoginEmail = qs('historyLoginEmail');
-    els.historyLoginPasswordWrap = qs('historyLoginPasswordWrap');
-    els.historyLoginPassword = qs('historyLoginPassword');
-    els.historyLoginError = qs('historyLoginError');
-    els.historyLoginBtn = qs('historyLoginBtn');
-    els.historyLoginLockedNote = qs('historyLoginLockedNote');
-    els.historyLoginLockedText = qs('historyLoginLockedText');
     els.multiSwapWarning = qs('multiSwapWarning');
     els.settingsBtn = qs('settingsBtn');
     els.settingsModal = qs('settingsModal');
@@ -5997,8 +7753,6 @@
     els.masterOnlyNote = qs('masterOnlyNote');
     els.shareSessionRow = qs('shareSessionRow');
     els.rankCumulativeRow = qs('rankCumulativeRow');
-    els.swapSuggestionBasisRow = qs('swapSuggestionBasisRow');
-    els.swapSuggestionBenchModeRow = qs('swapSuggestionBenchModeRow');
     els.transferOwnerRow = qs('transferOwnerRow');
     els.transferOwnerWrap = qs('transferOwnerWrap');
     els.transferOwnerBtn = qs('transferOwnerBtn');
@@ -6051,7 +7805,6 @@
     els.choiceFold = qs('choiceFold');
     els.choiceFoldBtn = qs('choiceFoldBtn');
     els.choiceFoldSummary = qs('choiceFoldSummary');
-    els.reorgLastMatchToggle = qs('reorgLastMatchToggle');
     els.okBtn = qs('settingsOkBtn');
     els.cancelBtn = qs('settingsCancelBtn');
     els.settingsCloseBtn = qs('settingsCloseBtn');
@@ -6062,7 +7815,11 @@
     els.settingsCloseCancelBtn = qs('settingsCloseCancelBtn');
     els.endMatchModal = qs('endMatchModal');
     els.endMatchSummary = qs('endMatchSummary');
-    els.matchHistorySummary = qs('matchHistorySummary');
+    els.matchHistorySummary = qs('cupPlayed');
+    ['endSheetTitle','endSheetScore','endSheetMeta','endSheetGoals','endSheetKeeper','endChoices','endSaveToggle','endReorgToggle','endNextOpponent',
+     'matchSummaryTimeline','matchSummaryTimelineTitle','matchSummaryShareBtn','undoToast','undoToastText','undoToastBtn','spectatorBar','spectatorText',
+     'nextSwapBar','nextSwapLabel','nextSwapNames','nextSwapBtn','fairnessLine','planBtn','launcherResumeBtn','launcherResumeSub','shareModal','planModal','cupModal',
+     'historyStatsBtn','historyStats'].forEach(function(id){ els[id] = qs(id); });
     els.endMatchCancelBtn = qs('endMatchCancelBtn');
     els.endPeriodBtn = qs('endPeriodBtn');
     els.endPeriodWrap = qs('endPeriodWrap');
@@ -6070,9 +7827,6 @@
     els.endResetBtn = qs('endResetBtn');
     els.endResetWrap = qs('endResetWrap');
     els.endResetInfoBtn = qs('endResetInfoBtn');
-    els.reorgPromptModal = qs('reorgPromptModal');
-    els.reorgNoBtn = qs('reorgNoBtn');
-    els.reorgYesBtn = qs('reorgYesBtn');
     els.saveHistoryModal = qs('saveHistoryModal');
     els.saveHistoryYesBtn = qs('saveHistoryYesBtn');
     els.saveHistoryNoBtn = qs('saveHistoryNoBtn');
@@ -6091,9 +7845,6 @@
     els.multiSelectBtn = qs('multiSelectBtn');
     els.multiSelectBtnLabel = qs('multiSelectBtnLabel');
     els.multiSelectCancelBtn = qs('multiSelectCancelBtn');
-    els.swapSuggestionBtn = qs('swapSuggestionBtn');
-    els.swapSuggestionBtnLabel = qs('swapSuggestionBtnLabel');
-    els.swapSuggestionCancelBtn = qs('swapSuggestionCancelBtn');
     els.matchClock = qs('matchClock');
     els.matchCountdown = qs('matchCountdown');
     els.homeScoreBtn = qs('homeScoreBtn');
@@ -6136,8 +7887,6 @@
     els.infoPopupCloseBtn = qs('infoPopupCloseBtn');
     els.matchDurationPickerModal = qs('matchDurationPickerModal');
     els.durationPickerCloseBtn = qs('durationPickerCloseBtn');
-    els.durationPickerWheel = qs('durationPickerWheel');
-    els.durationPickerValue = qs('durationPickerValue');
     els.sessionCodeBar = qs('sessionCodeBar');
     els.sessionCodeText = qs('sessionCodeText');
     els.autoPauseNotice = qs('autoPauseNotice');
@@ -6155,7 +7904,12 @@
     els.rankByCumulativeToggle = qs('rankByCumulativeToggle');
     els.swapSuggestionBasisToggle = qs('swapSuggestionBasisToggle');
     els.swapSuggestionBenchModeToggle = qs('swapSuggestionBenchModeToggle');
+    els.reorgLastMatchToggle = qs('reorgLastMatchToggle');
     els.joinExistingBtn = qs('joinExistingBtn');
+    els.joinConfirmModal = qs('joinConfirmModal');
+    els.joinConfirmText = qs('joinConfirmText');
+    els.joinConfirmCancelBtn = qs('joinConfirmCancelBtn');
+    els.joinConfirmYesBtn = qs('joinConfirmYesBtn');
     els.joinCodeModal = qs('joinCodeModal');
     els.joinCodeInput = qs('joinCodeInput');
     els.joinCodeInputWrap = qs('joinCodeInputWrap');
@@ -6168,6 +7922,7 @@
     els.versionHistoryList = qs('versionHistoryList');
     els.versionHistoryCloseBtn = qs('versionHistoryCloseBtn');
     els.launcherVersionBtn.addEventListener('click', function(){
+      qs('checkUpdateNote').textContent = 'Du har versjon ' + APP_VERSION + '.';
       els.versionHistoryList.innerHTML = VERSION_HISTORY.map(function(entry){
         return '<div class="version-history-entry">' +
           '<p class="version-history-entry-version">v' + escapeHtml(entry.version) + '</p>' +
@@ -6176,6 +7931,7 @@
       }).join('');
       els.versionHistoryModal.classList.add('open');
     });
+    qs('checkUpdateBtn').addEventListener('click', checkForUpdateNow);
     els.versionHistoryCloseBtn.addEventListener('click', function(){
       els.versionHistoryModal.classList.remove('open');
     });
@@ -6185,9 +7941,8 @@
     window.addEventListener('online', function(){
       networkOnline = true;
       updateSessionCodeUI();
-      // canEdit() gate - see the matching comment on the realtime reconnect
-      // push in subscribeToSession, same reasoning applies here.
-      if (sessionCode && canEdit()) pushRemoteState(); // push whatever changed while offline right away
+      reconcileWithServer(); // catches up in whichever direction is behind - see subscribeToSession
+      flushHistoryQueue();
     });
     window.addEventListener('offline', function(){
       networkOnline = false;
@@ -6196,38 +7951,20 @@
 
     initSettingsControls();
     initChoices();
-    checkForUpdate();
-    window.addEventListener('pageshow', function(e){
-      if (e.persisted) checkForUpdate();
-    });
 
     state = loadState();
     roster = loadRoster();
+    initAppUpdates();
 
     // Assigned here (not at module scope, where els.* don't exist yet) but
     // still module-scope vars - openSettings() (defined outside init())
     // calls transferOwnerConfirm.disarm() every render, and this runs
     // before any code path that could call openSettings() during startup
     // (the empty-roster bootstrap near the end of init()).
-    kampsluttConfirm = createConfirmArm({
-      armedEls: [els.endPeriodWrap],
-      labelEl: els.endPeriodBtn,
-      restingLabel: 'Kampslutt, ny kamp',
-      onArm: function(){
-        els.endPeriodInfoBtn.textContent = '×';
-        els.endPeriodInfoBtn.classList.add('is-cancel');
-        els.endPeriodInfoBtn.setAttribute('aria-label', 'Avbryt Kampslutt');
-      },
-      onDisarm: function(){
-        els.endPeriodInfoBtn.textContent = 'i';
-        els.endPeriodInfoBtn.classList.remove('is-cancel');
-        els.endPeriodInfoBtn.setAttribute('aria-label', 'Om Kampslutt');
-      }
-    });
     avsluttConfirm = createConfirmArm({
       armedEls: [els.endResetWrap],
       labelEl: els.endResetBtn,
-      restingLabel: 'Avslutt',
+      restingLabel: 'Avslutt økten',
       onArm: function(){
         els.endResetInfoBtn.textContent = '×';
         els.endResetInfoBtn.classList.add('is-cancel');
@@ -6348,31 +8085,13 @@
     });
     els.endBtn.addEventListener('click', function(){
       // Glemt kampslutt? Spør først (klokka stilles tilbake før noe arkiveres/avsluttes), og fortsett så til vanlig Avslutt.
-      if (canEdit() && state.players.length > 0 && forgottenMatchInfo(Date.now())){
+      if (canEdit() && state.players.length > 0 && forgottenMatchInfo(nowTs())){
         openForgottenSheet({ auto: true, thenEnd: true });
         return;
       }
-      // No canEdit() gate here anymore - "Forlat kampen"/"Forlat delt økt"
-      // below need to stay reachable even for a read-only viewer (see
-      // .view-only's comment in style.css), so the modal itself opens for
-      // everyone; each individual action inside is gated on its own.
-      kampsluttConfirm.disarm();
-      avsluttConfirm.disarm();
-      renderEndMatchSummary();
-      renderMatchHistorySummary();
-      // "Avslutt og nullstill" wipes the whole match for every connected
-      // device at once - master-only, same as the other session-wide
-      // administration in settings. "Kampslutt" (next period) needs real
-      // edit rights. Neither "Forlat kampen" (pure navigation) nor "Forlat
-      // delt økt" (detaches this device, never the match itself) touch the
-      // match at all, so neither needs a canEdit()/isMaster() gate.
-      els.endPeriodWrap.hidden = !canEdit();
-      els.endResetWrap.hidden = !isMaster();
-      els.closeSessionRow.hidden = !sessionCode;
-      els.endMatchModal.classList.add('open');
+      openEndSheet();
     });
     els.endMatchCancelBtn.addEventListener('click', function(){
-      kampsluttConfirm.disarm();
       avsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
     });
@@ -6392,29 +8111,25 @@
       // reachable by everyone now, so this can't lean on canEdit() having
       // already been checked before the modal even opened.
       if (!canEdit()) return;
-      if (!kampsluttConfirm.press()) return; // just armed ("Er du sikker?") - wait for the second press
+      var save = els.endSaveToggle.checked, reorg = els.endReorgToggle.checked;
+      var nextName = els.endNextOpponent.value.trim();
+      var next = nextName ? { name: nextName, abbr: deriveAbbrFromName(nextName) } : undefined;
+      saveEndPrefs();
       avsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
-      askSaveToHistory(function(saveToHistory){
-        pendingSaveToHistory = saveToHistory;
-        els.reorgPromptModal.classList.add('open');
-      });
-    });
-    els.reorgNoBtn.addEventListener('click', function(){
-      els.reorgPromptModal.classList.remove('open');
-      endMatchPeriod(false, pendingSaveToHistory);
-      renderAll();
-      // next match, likely a different opponent (cup format) - see
-      // endMatchPeriod - deferred until the "Kampen er ferdig" summary
-      // (see showMatchSummaryThen) is dismissed.
-      showMatchSummaryThen(openOpponentModal);
-    });
-    els.reorgYesBtn.addEventListener('click', function(){
-      els.reorgPromptModal.classList.remove('open');
-      animateReorganization(function(){
-        endMatchPeriod(true, pendingSaveToHistory);
-        showMatchSummaryThen(openOpponentModal);
-      });
+      var ended = function(){
+        showToast('Kampen er avsluttet', 'Se rapport', function(){ showMatchSummaryThen(); }, 8000);
+      };
+      if (reorg){
+        animateReorganization(function(){
+          endMatchPeriod(true, save, next);
+          ended();
+        });
+      } else {
+        endMatchPeriod(false, save, next);
+        renderAll();
+        ended();
+      }
     });
     els.saveHistoryYesBtn.addEventListener('click', function(){
       els.saveHistoryModal.classList.remove('open');
@@ -6466,24 +8181,19 @@
     els.endResetBtn.addEventListener('click', function(){
       if (!isMaster()) return;
       if (!avsluttConfirm.press()) return; // just armed - wait for the second press
-      kampsluttConfirm.disarm();
       els.endMatchModal.classList.remove('open');
-      askSaveToHistory(function(saveToHistory){
-        archiveInProgressMatch(saveToHistory);
-        resetMatch();
-        // resetMatch() itself opens settings (the same first-run flow "Ny
-        // økt" relies on, to set up a fresh roster right away) - "Avslutt"
-        // instead sends the user back to the home screen, same as "Forlat
-        // kampen", since they're mid-match here and more likely to want a
-        // clean slate than to fill in a new roster immediately.
-        els.settingsModal.classList.remove('open');
-        showMatchSummaryThen(showLauncherMenu);
-      });
+      saveEndPrefs();
+      archiveInProgressMatch(els.endSaveToggle.checked);
+      resetMatch();
+      // resetMatch() itself opens settings (the same first-run flow "Ny
+      // økt" relies on, to set up a fresh roster right away) - this instead
+      // goes back to the home screen, since they're mid-match here and more
+      // likely to want a clean slate than to fill in a new roster immediately.
+      els.settingsModal.classList.remove('open');
+      showMatchSummaryThen(showLauncherMenu);
     });
     els.multiSelectBtn.addEventListener('click', onMultiSelectBtnClick);
     els.multiSelectCancelBtn.addEventListener('click', cancelMultiSelect);
-    els.swapSuggestionBtn.addEventListener('click', onSwapSuggestionBtnClick);
-    els.swapSuggestionCancelBtn.addEventListener('click', cancelSwapSuggestion);
     els.settingsWakeLockToggle.addEventListener('change', function(){ setWakeLockWanted(els.settingsWakeLockToggle.checked); });
     els.exportBtn.addEventListener('click', function(){
       els.exportText.value = buildExportText();
@@ -6491,10 +8201,10 @@
     });
     els.removeDeadTimeBtn.addEventListener('click', function(){
       if (!isMaster()) return;
-      var ms = Date.now() - (state.lastActivityAt || Date.now());
+      var ms = deadTimeSinceLastPlay(nowTs());
       if (ms < 1000) return; // button is hidden well before this in practice - just a safety guard
       els.removeDeadTimeConfirmText.textContent =
-        'Fjerner ' + formatCumulative(ms) + ' fra kampklokka og fra spillerne som er aktive akkurat nå (siden siste registrerte handling - bytte, mål, e.l.).';
+        'Fjerner ' + formatCumulative(ms) + ' fra kampklokka og fra spillerne som er aktive akkurat nå (tiden klokka har gått siden siste bytte, mål e.l.).';
       els.removeDeadTimeConfirmModal.classList.add('open');
     });
     els.removeDeadTimeCancelBtn.addEventListener('click', function(){
@@ -6506,8 +8216,7 @@
       // Re-read now, right before applying - the confirm modal may have sat
       // open for a while, and the amount should reflect the actual gap at
       // the moment of the tap, not whatever it measured when the modal opened.
-      var ms = Date.now() - (state.lastActivityAt || Date.now());
-      subtractDeadTime(ms);
+      subtractDeadTime(deadTimeSinceLastPlay(nowTs()));
       els.removeDeadTimeBtn.hidden = true;
     });
     els.rollBackBtn.addEventListener('click', function(){
@@ -6542,15 +8251,14 @@
       openForgottenSheet({ auto: false, thenEnd: false });
     });
     els.exportCloseBtn.addEventListener('click', function(){ els.exportModal.classList.remove('open'); });
+    initMatchExtras();
     els.legendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
     els.settingsLegendBtn.addEventListener('click', function(){ els.legendModal.classList.add('open'); });
     els.legendCloseBtn.addEventListener('click', function(){ els.legendModal.classList.remove('open'); });
-    // Kampslutt/Avslutt og nullstill repurpose their info-btn as a cancel
-    // "×" while armed (see kampsluttConfirm/avsluttConfirm's onArm above) -
+    // Avslutt økten repurposes its info-btn as a cancel "×" while armed -
     // this map lets the one generic click handler below know, by the
     // button's own id, to disarm instead of opening the info popup.
     var infoBtnConfirmArms = {
-      endPeriodInfoBtn: kampsluttConfirm,
       endResetInfoBtn: avsluttConfirm
     };
     Array.prototype.forEach.call(document.querySelectorAll('.info-btn'), function(btn){
@@ -6647,7 +8355,6 @@
     });
     els.goalTimesCloseBtn.addEventListener('click', function(){ els.goalTimesModal.classList.remove('open'); });
     els.durationPickerCloseBtn.addEventListener('click', function(){ els.matchDurationPickerModal.classList.remove('open'); });
-    initDurationPickerDrag();
     els.exportCopyBtn.addEventListener('click', function(){
       els.exportText.select();
       if (navigator.clipboard && navigator.clipboard.writeText){
@@ -6666,8 +8373,13 @@
           if (!code) els.shareSessionToggle.checked = false; // couldn't create (offline?) - revert
           updateSessionCodeUI();
           updateShareModeUI();
+          if (code){
+            qs('openShareBtn').hidden = false;
+            openShareSheet();
+          }
         });
       } else {
+        handOffOwnershipIfOwner();
         leaveSession();
       }
       updateShareModeUI();
@@ -6676,39 +8388,33 @@
       if (!isMaster()) return;
       var btn = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('.segmented-btn'));
       if (!btn) return;
-      state.shareEditable = btn.dataset.mode !== 'read';
-      saveState();
+      setShared({ shareEditable: btn.dataset.mode !== 'read' });
       updateShareModeUI();
       updateSessionCodeUI();
     });
     els.reorgLastMatchToggle.addEventListener('change', function(){
       if (!isMaster()){ els.reorgLastMatchToggle.checked = !!state.reorgUsesLastMatch; return; }
-      state.reorgUsesLastMatch = els.reorgLastMatchToggle.checked;
-      saveState();
+      setShared({ reorgUsesLastMatch: els.reorgLastMatchToggle.checked });
     });
     els.rankByCumulativeToggle.addEventListener('change', function(){
       if (!isMaster()){ els.rankByCumulativeToggle.checked = !!state.rankByCumulative; return; }
-      state.rankByCumulative = els.rankByCumulativeToggle.checked;
-      saveState();
+      setShared({ rankByCumulative: els.rankByCumulativeToggle.checked });
       renderAll();
     });
     els.swapSuggestionBasisToggle.addEventListener('change', function(){
       if (!isMaster()){ els.swapSuggestionBasisToggle.checked = state.swapSuggestionBasis === 'cumulative'; return; }
-      state.swapSuggestionBasis = els.swapSuggestionBasisToggle.checked ? 'cumulative' : 'match';
-      saveState();
+      setShared({ swapSuggestionBasis: els.swapSuggestionBasisToggle.checked ? 'cumulative' : 'match' });
     });
     els.swapSuggestionBenchModeToggle.addEventListener('change', function(){
       if (!isMaster()){ els.swapSuggestionBenchModeToggle.checked = state.swapSuggestionBenchMode === 'cumulative'; return; }
-      state.swapSuggestionBenchMode = els.swapSuggestionBenchModeToggle.checked ? 'cumulative' : 'waited';
-      saveState();
+      setShared({ swapSuggestionBenchMode: els.swapSuggestionBenchModeToggle.checked ? 'cumulative' : 'waited' });
     });
     els.transferOwnerBtn.addEventListener('click', function(){
       if (!isMaster()) return;
       var target = longestTenuredOtherParticipant();
       if (!target){ shakeElement(els.transferOwnerBtn); return; }
       if (!transferOwnerConfirm.press()) return; // just armed - wait for the second press
-      state.sessionOwnerDeviceId = target.deviceId;
-      saveState();
+      setShared({ sessionOwnerDeviceId: target.deviceId });
       // Rebuild the modal in place - this device is now a slave, so every
       // isMaster()-gated field/row needs to flip to its locked/hidden state
       // immediately, same as if a slave had just opened settings fresh.
@@ -6749,13 +8455,7 @@
       // else around, the match itself is left completely untouched (see
       // the confirm text above); leaveSession() below just detaches this
       // device, the same as it does for a non-owner.
-      if (isMaster()){
-        var target = longestTenuredOtherParticipant();
-        if (target){
-          state.sessionOwnerDeviceId = target.deviceId;
-          saveState();
-        }
-      }
+      handOffOwnershipIfOwner();
       leaveSession();
       els.endMatchModal.classList.remove('open');
       showLauncherMenu();
@@ -6781,9 +8481,9 @@
       els.settingsModal.classList.add('open');
     });
     function attemptJoinCode(){
-      var code = els.joinCodeInput.value.trim();
-      if (!/^[0-9]{3}$/.test(code)){
-        els.joinCodeError.textContent = 'Skriv inn en gyldig tresifret kode.';
+      var code = els.joinCodeInput.value.trim().toUpperCase();
+      if (!isValidSessionCode(code)){
+        els.joinCodeError.textContent = 'Skriv inn en gyldig kode.';
         els.joinCodeError.style.display = '';
         markFieldInvalid(els.joinCodeInputWrap);
         shakeElement(els.joinCodeModal.querySelector('.modal-card'));
@@ -6816,8 +8516,25 @@
         // starts fresh instead of the person having to select-all/backspace
         // three wrong digits before retyping.
         els.joinCodeInput.value = '';
+      }, function(){
+        els.joinCodeError.textContent = 'Fikk ikke kontakt med databasen. Sjekk nettet og prøv igjen.';
+        els.joinCodeError.style.display = '';
+        shakeElement(els.joinCodeModal.querySelector('.modal-card'));
+        els.joinCodeInput.value = '';
       });
     }
+    els.joinConfirmCancelBtn.addEventListener('click', function(){
+      els.joinConfirmModal.classList.remove('open');
+      pendingJoinFinish = null;
+      els.joinCodeInput.value = '';
+      els.launcherJoinInput.value = '';
+    });
+    els.joinConfirmYesBtn.addEventListener('click', function(){
+      els.joinConfirmModal.classList.remove('open');
+      var finish = pendingJoinFinish;
+      pendingJoinFinish = null;
+      if (finish) finish();
+    });
     els.joinCodeInput.addEventListener('input', function(){
       els.joinCodeError.style.display = 'none';
       clearFieldInvalid(els.joinCodeInputWrap);
@@ -6825,21 +8542,22 @@
       // nothing left to type, so waiting for an explicit OK tap is just an
       // extra step. Only real 3-digit input triggers this (not e.g. a
       // paste that already failed the regex elsewhere).
-      if (/^[0-9]{3}$/.test(els.joinCodeInput.value.trim())) attemptJoinCode();
+      if (isValidSessionCode(els.joinCodeInput.value.trim().toUpperCase())) attemptJoinCode();
     });
     els.joinCodeConfirmBtn.addEventListener('click', attemptJoinCode);
     els.sessionCodeBar.addEventListener('click', function(){
-      if (!sessionCode) return;
-      if (navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(sessionCode).catch(function(){});
-      }
+      if (sessionCode) openShareSheet();
     });
 
-    // Unlock audio on the very first tap anywhere, not just Play/Pause - a
-    // device that joins a session already running (and only ever drags/taps
-    // players to swap) would otherwise never get an unlocked AudioContext
-    // and silently never beep on time-up.
-    document.addEventListener('pointerdown', ensureAudioUnlocked, { once: true });
+    // Unlock audio on any tap anywhere, not just Play/Pause - a device that
+    // joins a session already running (and only ever drags/taps players to swap)
+    // would otherwise never get an unlocked AudioContext and silently never beep
+    // on time-up. touchend/click, not pointerdown: iOS doesn't count pointerdown
+    // as a gesture that may start audio. And every time, not once: iOS suspends
+    // the context again after a screen lock. Cheap, since it does nothing while
+    // the context is running.
+    document.addEventListener('touchend', ensureAudioUnlocked, true);
+    document.addEventListener('click', ensureAudioUnlocked, true);
 
     function enterAppFromLauncher(){
       closeLauncherChoice();
@@ -6905,9 +8623,9 @@
     }
 
     function submitLauncherJoin(){
-      var code = els.launcherJoinInput.value.trim();
-      if (!/^[0-9]{3}$/.test(code)){
-        els.launcherJoinError.textContent = 'Skriv inn en gyldig tresifret kode.';
+      var code = els.launcherJoinInput.value.trim().toUpperCase();
+      if (!isValidSessionCode(code)){
+        els.launcherJoinError.textContent = 'Skriv inn en gyldig kode.';
         els.launcherJoinError.hidden = false;
         markFieldInvalid(els.launcherJoinInputWrap);
         shakeElement(els.launcherChoiceOverlay);
@@ -6940,6 +8658,11 @@
         // Wrong/non-existent code - clear the digits so the next attempt
         // starts fresh instead of having to clear three wrong digits first.
         els.launcherJoinInput.value = '';
+      }, function(){
+        els.launcherJoinError.textContent = 'Fikk ikke kontakt med databasen. Sjekk nettet og prøv igjen.';
+        els.launcherJoinError.hidden = false;
+        shakeElement(els.launcherChoiceOverlay);
+        els.launcherJoinInput.value = '';
       });
     }
 
@@ -6965,17 +8688,21 @@
       // their own fresh one - resetMatch() below still pushes to whatever
       // sessionCode is current, and a slave should never be able to wipe
       // the master's session data just by tapping "Ny økt" (see isMaster()).
-      if (!isMaster() && sessionCode) leaveSession();
+      // Only at the point of no return: the first of two presses just asks
+      // "Er du sikker?", and backing out of that must not have left the session.
+      var leaveIfGuest = function(){ if (!isMaster() && sessionCode) leaveSession(); };
       if (state.players.length === 0){
+        leaveIfGuest();
         enterAppFromLauncher();
         openSettings(true);
         return;
       }
-      if (!state.globalRunning && matchClockElapsed(Date.now()) === 0){
+      if (!state.globalRunning && matchClockElapsed(nowTs()) === 0){
         // A team exists but the match clock has never run - nothing about
         // an actual match to lose, so skip the confirm-shake below (same
         // reasoning as the empty-roster case above).
         newSessionConfirm.disarm();
+        leaveIfGuest();
         resetMatch();
         enterAppFromLauncher();
         return;
@@ -6988,6 +8715,7 @@
       closeLauncherChoice();
       askSaveToHistory(function(saveToHistory){
         archiveInProgressMatch(saveToHistory);
+        leaveIfGuest();
         resetMatch();
         enterAppFromLauncher();
       });
@@ -7000,15 +8728,18 @@
       clearFieldInvalid(els.launcherJoinInputWrap);
       // Auto-advance the moment the 3rd digit lands - see the identical
       // comment on joinCodeInput's handler.
-      if (/^[0-9]{3}$/.test(els.launcherJoinInput.value.trim())) submitLauncherJoin();
+      if (isValidSessionCode(els.launcherJoinInput.value.trim().toUpperCase())) submitLauncherJoin();
     });
     els.launcherJoinInput.addEventListener('keydown', function(e){
       if (e.key === 'Enter') submitLauncherJoin();
     });
     els.launcherJoinEnterBtn.addEventListener('click', submitLauncherJoin);
 
+    els.launcherResumeBtn.addEventListener('click', enterAppFromLauncher);
+
     initCoinFlip();
     initAccountAndSettings();
+    initDesignPicker();
 
     updateFrameFit();
     applyRealViewportHeight();
@@ -7032,10 +8763,22 @@
     }
 
     try { sessionCode = localStorage.getItem(SESSION_CODE_KEY); } catch(e){ sessionCode = null; }
+    updateSessionCodeUI(); // also without a Supabase client: the code bar then says it isn't synced
+    if (sessionCode){
+      try {
+        var savedOps = JSON.parse(localStorage.getItem(PENDING_OPS_KEY) || '[]');
+        if (Array.isArray(savedOps) && savedOps.length > 0){ pendingOps = savedOps; remoteDirty = true; }
+      } catch(e){}
+    }
 
     function stampLastAlive(){
+      if (spectatorCode) return;
       try { localStorage.setItem(LAST_ALIVE_KEY, String(Date.now())); } catch(e){}
     }
+
+    // While the checks below wait for the server, the heartbeat must not overwrite
+    // the "last alive" stamp they need in order to see how long the app was away.
+    var resumeChecksPending = false;
 
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
@@ -7055,68 +8798,83 @@
       // on the server, which then broadcasts the stale state back out and
       // makes the edit vanish everywhere. Every real mutation already
       // calls saveState() itself right after changing `state`, so this
-      // heartbeat only needs to keep localStorage/LAST_ALIVE_KEY fresh.
-      setInterval(function(){ saveStateLocally(); stampLastAlive(); }, 8000);
+      // heartbeat only needs to keep localStorage/LAST_ALIVE_KEY fresh. It also
+      // retries a write that didn't get through (remoteDirty), without any new rev.
+      setInterval(function(){
+        saveStateLocally();
+        if (!resumeChecksPending) stampLastAlive();
+        if (networkOnline){
+          if (sessionCode && !sessionVerified) reconcileWithServer(); // the first comparison hasn't got through yet
+          flushRemoteIfDirty();
+        }
+      }, 8000);
       document.addEventListener('visibilitychange', function(){
         if (document.hidden){
-          flushState();
+          if (activeDragCancel) activeDragCancel(); // the finger is gone by the time the app is back
+          saveStateLocally();
+          flushRemoteIfDirty();
         } else {
-          checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
-          if (!checkForgottenMatch()) checkLongIdleSuggestion();
-          stampLastAlive();
           updateTimersOnly();
           requestWakeLock();
+          flushHistoryQueue();
+          // After the server has answered: the idle checks judge "has anything
+          // happened?" from state, and this device may have slept through a match.
+          resumeChecksPending = true;
+          afterSessionSync(function(){
+            resumeChecksPending = false;
+            checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
+            if (!checkForgottenMatch()) checkLongIdleSuggestion();
+            stampLastAlive();
+            updateTimersOnly();
+          });
         }
       });
+      flushHistoryQueue();
+      // The ping is a courtesy: a phone that missed it catches up here. More often when the channel is down.
+      setInterval(function(){
+        if (document.hidden || !networkOnline || !sessionCode) return;
+        if (Date.now() - lastReconcileAt >= (realtimeSubscribed ? 30000 : 10000)) reconcileWithServer();
+      }, 10000);
     }
 
+    // Foreldrelenke: bare visning, ingen økt på denne enheten. Medtrenerlenke: vanlig bli-med.
+    var launchParams = new URLSearchParams(location.search);
+    var viewParam = (launchParams.get('se') || '').toUpperCase();
+    var joinParam = (launchParams.get('okt') || '').toUpperCase();
+    if (viewParam && sb){
+      sessionCode = null;
+      finishStartup();
+      startSpectator(viewParam);
+      return;
+    }
+    updateLauncherResume();
+    if (joinParam && isValidSessionCode(joinParam)){
+      try { history.replaceState(null, '', location.pathname); } catch(e){}
+      setTimeout(function(){
+        if (sessionCode === joinParam){ enterAppFromLauncher(); return; }
+        openLauncherChoice();
+        showLauncherJoinPanel();
+        els.launcherJoinInput.value = joinParam;
+        submitLauncherJoin();
+        // En lenke åpner nettleseren, som har et annet lager enn appen på hjemskjermen.
+        if (!isStandalone()) showToast('Har du appen på hjemskjermen? Skriv koden ' + joinParam + ' der i stedet.', null, null, 9000);
+      }, 300);
+    }
+
+    // The local match is drawn right away. With poor coverage at the pitch the
+    // server may take a minute to answer, and the coach can't wait for that with
+    // an empty field: the server's copy replaces it if it turns out to be newer.
+    if (state.players.length > 0) renderAll();
     if (sessionCode && sb){
-      updateSessionCodeUI();
-      sb.from('sessions').select('*').eq('code', sessionCode).maybeSingle().then(function(res){
-        if (res && !res.error && res.data){
-          var wasMaster = isMaster();
-          var normalized = normalizeState(res.data.data);
-          if (!normalized){
-            console.warn('Lagret økt inneholdt ugyldig data, fortsetter med lokal tilstand');
-          } else if (!isNewerRevision(normalized)){
-            // This device's own local copy (from localStorage, e.g. an edit
-            // made just before the app closed) is already at least as new
-            // as what the server has - keep it rather than regressing to
-            // the server's older row. subscribeToSession()'s reconnect
-            // catch-up push just below will bring the server up to date.
-            console.warn('Beholder lokal tilstand, server-kopien var ikke nyere (rev ' + normalized.rev + ' < ' + state.rev + ')');
-          } else {
-            state = normalized;
-            clearUndoHistory(); // harmless no-op this early (nothing's been done yet this load), kept for consistency with the other two "state = normalized" sites
-            if (ensureParticipant()) pushRemoteState();
-            if (!wasMaster && isMaster()) showOwnerTransferredNotice();
-            saveStateLocally();
-            resyncTimeUpNotified();
-          }
-          subscribeToSession(sessionCode);
-        } else if (res && !res.error && !res.data){
-          // Session no longer exists server-side (e.g. deleted/cleaned up) -
-          // stop pretending we're synced, so pushRemoteState() silently
-          // no-op'ing against a missing row doesn't mask that changes
-          // aren't reaching anyone else.
-          sessionCode = null;
-          try { localStorage.removeItem(SESSION_CODE_KEY); } catch(e){}
-          updateSessionCodeUI();
-        } else {
-          subscribeToSession(sessionCode);
-        }
-        if (state.players.length === 0){ if (canEdit()) openSettings(true); else renderAll(); } else { renderAll(); }
-        finishStartup();
-      }).catch(function(){
-        subscribeToSession(sessionCode);
-        if (state.players.length === 0){ if (canEdit()) openSettings(true); else renderAll(); } else { renderAll(); }
+      subscribeToSession(sessionCode);
+      afterSessionSync(function(){
+        if (state.players.length === 0){ if (canEdit()) openSettings(true); else renderAll(); }
         finishStartup();
       });
     } else if (state.players.length === 0){
       openSettings(true);
       finishStartup();
     } else {
-      renderAll();
       finishStartup();
     }
   }

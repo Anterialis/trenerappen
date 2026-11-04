@@ -1,58 +1,41 @@
-name: Supabase maintenance
-
-# Two unrelated jobs that happen to share a schedule and a free-tier
-# Supabase project - see PROSJEKT-OPPSUMMERING.md for the `sessions` table.
+# Holder gratisprosjektet på Supabase våkent, og rydder bort gamle økter.
 #
-# 1. keep-awake: Supabase pauses free-tier projects after ~7 days with no
-#    "sufficient activity". A read twice a week was not enough (Supabase sent
-#    inactivity warnings anyway), so this now WRITES to the one-row
-#    `keepalive` table every day (see supabase/migrations/
-#    20261018120000_create_keepalive.sql - run it in the SQL editor first,
-#    until then the step fails harmlessly).
-# 2. cleanup: session codes are only 3 digits (1000 possible), and nothing
-#    ever deletes a row on its own - a session someone shared once and
-#    never explicitly ended would otherwise sit in the table forever,
-#    eventually exhausting the code space. This deletes any row whose
-#    `updated_at` is more than 60 days old, i.e. one nobody has pushed a
-#    real edit to in two months - safe to assume abandoned, since every
-#    genuine edit (a swap, a goal, even just the 8s local heartbeat's
-#    periodic saveStateLocally) keeps `updated_at` fresh while a session is
-#    in real use. Runs on the daily cadence rather than
-#    literally every 60 days, so a stale row's actual lifetime stays close
-#    to 60 days instead of drifting up to 120 in the worst case.
-#
-# Requires a one-time manual step in the Supabase SQL editor before this
-# job can actually delete anything - the table's RLS policies (see
-# PROSJEKT-OPPSUMMERING.md) only ever granted select/insert/update, no
-# delete. Run this once:
-#   create policy "Public delete access" on sessions for delete using (true);
-# Until that policy exists, the cleanup step below will fail every run
-# (harmless - it just means nothing gets deleted yet).
-#
-# Caveat (both jobs): GitHub auto-disables scheduled workflows after 60
-# days with no repository activity (commits/pushes) - harmless in-season,
-# but if the app goes untouched for two months in the off-season this
-# stops running silently. A free external cron (e.g. cron-job.org or
-# UptimeRobot) hitting the keep-awake URL has no such dependency and is
-# worth adding as a backup for that job specifically (a plain GET is fine):
-#   https://nueguoxkynwgmynccaro.supabase.co/rest/v1/sessions?select=code&limit=1&apikey=sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
-#
-# The key below is Supabase's public "publishable" anon key (see app.js) -
-# safe to commit, it's already shipped in the client-side app.
+# GitHub slår av planlagte jobber etter 60 dager uten aktivitet i repoet, så en vinterpause fra
+# koden kunne stoppet dette uten varsel, og da ville Supabase pauset prosjektet. Jobben slår seg
+# derfor på igjen selv hver dag, uten commit (en commit ville gitt en Netlify-deploy hver gang).
+name: Keep Supabase alive
 
 on:
   schedule:
     - cron: '0 6 * * *' # every day, 06:00 UTC
-  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab to test it
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  SUPABASE_URL: https://nueguoxkynwgmynccaro.supabase.co
+  # Den samme offentlige nøkkelen som ligger i app.js. Ingen hemmelighet.
+  SUPABASE_KEY: sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
 
 jobs:
+  stay-enabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep this scheduled workflow enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --silent --show-error -X PUT \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/keep-supabase-alive.yml/enable"
+
   keep-awake:
     runs-on: ubuntu-latest
     steps:
       - name: Write to keepalive table
-        env:
-          SUPABASE_URL: https://nueguoxkynwgmynccaro.supabase.co
-          SUPABASE_KEY: sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
         run: |
           curl --fail --silent --show-error -X POST \
             -H "apikey: $SUPABASE_KEY" \
@@ -62,16 +45,26 @@ jobs:
             -d "{\"id\":1,\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
             "$SUPABASE_URL/rest/v1/keepalive?on_conflict=id"
 
-  cleanup:
+  cleanup-old-sessions:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete sessions untouched for 60+ days
-        env:
-          SUPABASE_URL: https://nueguoxkynwgmynccaro.supabase.co
-          SUPABASE_KEY: sb_publishable_1Zsq-zFU3nmqYFrSxXzKGQ_k-peb2bV
+      # Funksjonen sletter bare økter uten endring på 60 dager. Før personvernsteg 1 er kjørt finnes
+      # den ikke, og da brukes den gamle veien, så jobben virker i begge tilfeller.
+      - name: Delete sessions older than 60 days
         run: |
-          CUTOFF=$(date -u -d '60 days ago' +%Y-%m-%dT%H:%M:%SZ)
-          curl --fail --silent --show-error -X DELETE \
+          status=$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST \
             -H "apikey: $SUPABASE_KEY" \
             -H "Authorization: Bearer $SUPABASE_KEY" \
-            "$SUPABASE_URL/rest/v1/sessions?updated_at=lt.$CUTOFF"
+            -H "Content-Type: application/json" \
+            -d "{}" \
+            "$SUPABASE_URL/rest/v1/rpc/cleanup_old_sessions")
+          echo "cleanup_old_sessions: $status"
+          if [ "$status" = "404" ]; then
+            CUTOFF=$(date -u -d '60 days ago' +%Y-%m-%dT%H:%M:%SZ)
+            curl --fail --silent --show-error -X DELETE \
+              -H "apikey: $SUPABASE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_KEY" \
+              "$SUPABASE_URL/rest/v1/sessions?updated_at=lt.$CUTOFF"
+          elif [ "$status" -ge 400 ]; then
+            exit 1
+          fi

@@ -8,3 +8,7 @@
 # database with `supabase link` + `supabase db push`.
 supabase/.temp/
 supabase/.branches/
+
+# Testene har egne avhengigheter. Appen selv har ingen.
+tests/node_modules/
+tests/e2e-code.txt

@@ -2319,6 +2319,8 @@
     padding:10px 12px; font-size:13px; font-family:inherit;
     background:#fafbfc; color:var(--ink);
     resize:vertical;
+    /* body har user-select:none - uten dette kan teksten ikke markeres for hånd på iOS. */
+    -webkit-user-select:text; user-select:text;
   }
 
   /* "Om appen" function guide, above the symbol legend in the same modal -
@@ -2512,6 +2514,8 @@
   #legendModal{ z-index:320; }
   #settingsCloseConfirmModal{ z-index:110; }
   #joinCodeModal{ z-index:120; }
+  /* Spørres mens launcheren (z-index:300) fortsatt ligger oppå. */
+  #joinConfirmModal{ z-index:320; }
   #infoPopupModal{ z-index:130; }
   #goalTimesModal{ z-index:140; }
   /* Opened directly from .launcher-version on .launcher-screen (z-index:300)
@@ -2612,7 +2616,6 @@
   .view-only #awayTeamLabel{
     opacity:.35; pointer-events:none;
   }
-  .view-only .token{ pointer-events:none; }
 
   .join-code-input{
     width:100%; margin:12px 0; text-align:center;

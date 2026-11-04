@@ -1,0 +1,138 @@
+// Kjører SQL-filene i ekte Postgres (PGlite) med rollene fra Supabase.
+const { PGlite } = require('@electric-sql/pglite');
+const fs = require('fs'), path = require('path'), assert = require('assert');
+const MIG = path.resolve(__dirname, '../supabase/migrations');
+const BASE = `
+create role anon nologin; create role authenticated nologin; create role service_role nologin;
+create schema auth; create schema realtime;
+create table auth.users (id uuid primary key);
+create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.uid', true), '')::uuid $$;
+grant usage on schema auth to anon, authenticated; grant execute on function auth.uid() to anon, authenticated;
+create table realtime.sent (payload jsonb, event text, topic text, private boolean);
+create or replace function realtime.send(payload jsonb, event text, topic text, private boolean default true) returns void language sql as $$ insert into realtime.sent values (payload, event, topic, private) $$;
+create publication supabase_realtime;
+grant usage on schema public to anon, authenticated;
+create table sessions (code text primary key, data jsonb not null, origin text, updated_at timestamptz not null default now());
+alter table sessions enable row level security;
+create policy "Public read access" on sessions for select using (true);
+create policy "Public insert access" on sessions for insert with check (true);
+create policy "Public update access" on sessions for update using (true);
+create policy "Public delete access" on sessions for delete using (true);
+alter publication supabase_realtime add table sessions;
+create table public.match_history (id uuid primary key default gen_random_uuid(), ended_at timestamptz not null, opponent_name text not null default '', opponent_abbr text not null default '', home_score integer not null default 0, away_score integer not null default 0, players jsonb not null default '[]', goals jsonb not null default '[]', visible_until timestamptz, origin text, created_at timestamptz not null default now());
+alter table public.match_history enable row level security;
+create table public.admins (user_id uuid primary key references auth.users(id) on delete cascade);
+alter table public.admins enable row level security;
+create policy "Users can check their own admin status" on public.admins for select to authenticated using (auth.uid() = user_id);
+create policy "Public insert access" on public.match_history for insert with check (true);
+create policy "Admin select access" on public.match_history for select using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin update access" on public.match_history for update using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Admin delete access" on public.match_history for delete using (exists (select 1 from public.admins where user_id = auth.uid()));
+create policy "Signed-in users can view visibility-flagged matches" on public.match_history for select to authenticated using (visible_until is not null and visible_until > now());
+grant all on all tables in schema public to anon, authenticated;
+`;
+const ADMIN = '00000000-0000-4000-8000-00000000000a', USER = '00000000-0000-4000-8000-00000000000b';
+const files = fs.readdirSync(MIG).filter(f => f.startsWith('202611') && f.includes('team_settings') === false).sort();
+(async () => {
+  const db = new PGlite();
+  await db.exec(BASE);
+  await db.exec(fs.readFileSync(path.join(MIG, '20260920192209_create_team_settings.sql'), 'utf8'));
+  await db.exec(fs.readFileSync(path.join(MIG, '20261104120000_team_settings_swap_suggestion.sql'), 'utf8'));
+  await db.exec(`grant all on all tables in schema public to anon, authenticated; insert into auth.users values ('${ADMIN}'),('${USER}'); insert into public.admins values ('${ADMIN}');`);
+  await db.exec(`insert into sessions (code, data, origin) values ('123', '{"players":[{"id":"p","name":"Barn"}],"rev":5}', 'gammel'), ('456', '{"players":[]}', 'uten-rev');`);
+  const as = async (role, uid, sql, params) => {
+    await db.exec(`reset role; select set_config('request.uid', '${uid || ''}', false); set role ${role};`);
+    try { return (await db.query(sql, params)).rows; } finally { await db.exec('reset role'); }
+  };
+  const fails = async (fn) => { try { await fn(); return false; } catch (e) { return e.message || true; } };
+  let n = 0; const ok = (name, c, x) => { n++; if (!c) { console.log('  FEIL ' + name, x === undefined ? '' : JSON.stringify(x)); process.exitCode = 1; } else console.log('  ok   ' + name); };
+
+  console.log('--- steg 1');
+  const step1 = fs.readFileSync(path.join(MIG, '20261105120000_personvern_steg1_rpc.sql'), 'utf8');
+  await db.exec(step1);
+  await db.exec(step1); ok('steg 1 kan kjøres to ganger', true);
+  // gammel klient fortsetter å virke direkte mot tabellen
+  ok('gammel klient leser fortsatt', (await as('anon', '', `select code from sessions where code='123'`)).length === 1);
+  await as('anon', '', `update sessions set data='{"players":[],"rev":6}' where code='123'`);
+  ok('gammel klient skriver fortsatt', (await as('anon', '', `select data->>'rev' r from sessions where code='123'`))[0].r === '6');
+  const pings0 = (await db.query(`select count(*)::int c from realtime.sent`)).rows[0].c;
+  ok('gammel klients skriving gir ping til nye telefoner', pings0 >= 1, pings0);
+
+  const c = (await as('anon', '', `select * from create_session($1::jsonb,'A')`, [JSON.stringify({ players: [{ id: 'p1', name: 'Emil' }], rev: 1, participants: [{ deviceId: 'd1' }], sessionOwnerDeviceId: 'd1' })]))[0];
+  ok('create_session gir 6 tegns kode, første er bokstav', /^[A-HJKMNP-Z][A-HJKMNP-Z2-9]{5}$/.test(c.code), c);
+  ok('lesekode er egen og lengre', c.view_code.length === 8 && c.view_code !== c.code, c);
+  const g = (await as('anon', '', `select * from get_session($1)`, [c.code]))[0];
+  ok('get_session med kode', g.data.players[0].name === 'Emil' && !!g.server_now);
+  ok('get_session med feil kode gir ingenting', (await as('anon', '', `select * from get_session('XXXXXX')`)).length === 0);
+  ok('lesekoden virker ikke som skrivekode', (await as('anon', '', `select * from get_session($1)`, [c.view_code])).length === 0);
+  const v = (await as('anon', '', `select * from get_session_view($1)`, [c.view_code]))[0];
+  ok('foreldrevisning gir navn, ikke enhets-id', v.data.players[0].name === 'Emil' && v.data.participants === undefined && v.data.sessionOwnerDeviceId === undefined, v.data);
+  ok('foreldrevisning krever lesekode', (await as('anon', '', `select * from get_session_view($1)`, [c.code])).length === 0);
+  const u1 = (await as('anon', '', `select * from update_session($1,$2::jsonb,'A')`, [c.code, JSON.stringify({ players: [], rev: 2 })]))[0];
+  ok('update_session med nyere rev', u1.updated === true, u1);
+  const u2 = (await as('anon', '', `select * from update_session($1,$2::jsonb,'B')`, [c.code, JSON.stringify({ players: [], rev: 2 })]))[0];
+  ok('lik rev avvises', u2.updated === false && u2.row_found === true && Number(u2.current_rev) === 2, u2);
+  const u3 = (await as('anon', '', `select * from update_session($1,$2::jsonb,'B')`, [c.code, JSON.stringify({ players: [], rev: 1 })]))[0];
+  ok('eldre rev avvises', u3.updated === false);
+  const u4 = (await as('anon', '', `select * from update_session('NEIIII',$1::jsonb,'B')`, [JSON.stringify({ rev: 9 })]))[0];
+  ok('ukjent kode svarer row_found=false', u4.updated === false && u4.row_found === false, u4);
+  const u5 = (await as('anon', '', `select * from update_session('456',$1::jsonb,'B')`, [JSON.stringify({ players: [], rev: 1 })]))[0];
+  ok('rad uten rev kan oppdateres', u5.updated === true, u5);
+  const u6 = await fails(() => as('anon', '', `select * from update_session($1,$2::jsonb,'B')`, [c.code, JSON.stringify({ rev: 99, x: 'y'.repeat(600000) })]));
+  ok('for stor økt avvises', !!u6);
+  const pings = (await db.query(`select payload, topic, private from realtime.sent`)).rows;
+  ok('ping inneholder bare rev og opphav', pings.every(p => Object.keys(p.payload).every(k => ['rev', 'origin'].includes(k))), pings[0]);
+  ok('ping går til begge kanaler og er offentlig', pings.some(p => p.topic === 'session-' + c.code) && pings.some(p => p.topic === 'view-' + c.view_code) && pings.every(p => p.private === false));
+  await db.exec(`drop function realtime.send(jsonb,text,text,boolean)`);
+  const u7 = (await as('anon', '', `select * from update_session($1,$2::jsonb,'A')`, [c.code, JSON.stringify({ players: [], rev: 3 })]))[0];
+  ok('lagring virker selv om ping feiler', u7.updated === true, u7);
+  await db.exec(`create or replace function realtime.send(payload jsonb, event text, topic text, private boolean default true) returns void language sql as $$ insert into realtime.sent values (payload, event, topic, private) $$;`);
+
+  console.log('--- historikk: bare admin sletter');
+  await as('anon', '', `insert into match_history (ended_at, players) values (now(), '[{"name":"Emil"}]')`);
+  ok('alle kan lagre en kamp', true);
+  ok('anon leser ingenting', (await as('anon', '', `select * from match_history`)).length === 0);
+  ok('vanlig bruker leser ingenting', (await as('authenticated', USER, `select * from match_history`)).length === 0);
+  await as('anon', '', `delete from match_history`);
+  await as('authenticated', USER, `delete from match_history`);
+  ok('anon og vanlig bruker kan ikke slette', (await db.query(`select count(*)::int c from match_history`)).rows[0].c === 1);
+  ok('admin leser', (await as('authenticated', ADMIN, `select * from match_history`)).length === 1);
+  await as('authenticated', ADMIN, `update match_history set visible_until = now() + interval '1 day'`);
+  ok('delt kamp vises for innlogget', (await as('authenticated', USER, `select * from match_history`)).length === 1);
+  await as('authenticated', USER, `delete from match_history`);
+  ok('vanlig bruker kan fortsatt ikke slette delt kamp', (await db.query(`select count(*)::int c from match_history`)).rows[0].c === 1);
+  await as('authenticated', ADMIN, `delete from match_history`);
+  ok('admin kan slette', (await db.query(`select count(*)::int c from match_history`)).rows[0].c === 0);
+  ok('kjempestor kamp avvises', !!(await fails(() => as('anon', '', `insert into match_history (ended_at, players) values (now(), $1::jsonb)`, [JSON.stringify([{ name: 'x'.repeat(300000) }])]))));
+
+  console.log('--- konto');
+  ok('anon kan ikke slette konto', !!(await fails(() => as('anon', '', `select delete_my_account()`))));
+  await as('authenticated', USER, `insert into team_settings (user_id, extras) values ('${USER}', '{"roster":["Emil"]}')`);
+  await as('authenticated', USER, `select delete_my_account()`);
+  ok('bruker sletter egen konto med innstillinger', (await db.query(`select count(*)::int c from auth.users where id='${USER}'`)).rows[0].c === 0 && (await db.query(`select count(*)::int c from team_settings`)).rows[0].c === 0);
+  ok('admin er urørt', (await db.query(`select count(*)::int c from admins`)).rows[0].c === 1);
+
+  console.log('--- rydding');
+  await db.exec(`update sessions set updated_at = now() - interval '61 days' where code='456'`);
+  ok('rydding sletter bare gamle', (await as('anon', '', `select cleanup_old_sessions() n`))[0].n === 1 && (await db.query(`select count(*)::int c from sessions where code='${c.code}'`)).rows[0].c === 1);
+  ok('hjelpefunksjon er ikke åpen', !!(await fails(() => as('anon', '', `select random_session_code(6)`))));
+
+  console.log('--- steg 2');
+  const step2 = fs.readFileSync(path.join(MIG, '20261112120000_personvern_steg2_las.sql'), 'utf8');
+  await db.exec(step2);
+  await db.exec(step2); ok('steg 2 kan kjøres to ganger', true);
+  ok('anon kan ikke lese tabellen', !!(await fails(() => as('anon', '', `select code from sessions`))));
+  ok('innlogget kan ikke lese tabellen', !!(await fails(() => as('authenticated', ADMIN, `select code from sessions`))));
+  ok('anon kan ikke slette', !!(await fails(() => as('anon', '', `delete from sessions`))));
+  ok('anon kan ikke skrive direkte', !!(await fails(() => as('anon', '', `update sessions set origin='x'`))));
+  ok('tresifrede økter er borte', (await db.query(`select count(*)::int c from sessions where length(code)<6`)).rows[0].c === 0);
+  ok('ute av publication', (await db.query(`select count(*)::int c from pg_publication_tables where pubname='supabase_realtime' and tablename='sessions'`)).rows[0].c === 0);
+  ok('funksjonene virker fortsatt', (await as('anon', '', `select * from get_session($1)`, [c.code])).length === 1);
+  const u8 = (await as('anon', '', `select * from update_session($1,$2::jsonb,'A')`, [c.code, JSON.stringify({ players: [], rev: 50 })]))[0];
+  ok('skriving via funksjon virker', u8.updated === true);
+  const c2 = (await as('anon', '', `select * from create_session('{"rev":0,"players":[]}'::jsonb,'A')`))[0];
+  ok('ny økt via funksjon virker', !!c2.code);
+  ok('foreldrevisning virker', (await as('anon', '', `select * from get_session_view($1)`, [c.view_code])).length === 1);
+  ok('rydding virker', Number.isInteger((await as('anon', '', `select cleanup_old_sessions() n`))[0].n));
+  console.log(`\n${n} sjekker`);
+})().catch(e => { console.error('KRASJ', e); process.exit(1); });

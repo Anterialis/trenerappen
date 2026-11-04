@@ -1,0 +1,17 @@
+{
+  "name": "trenerappen-tests",
+  "private": true,
+  "description": "Tester for Trenerappen. Appen selv har ingen avhengigheter eller byggesteg.",
+  "scripts": {
+    "test": "node app.test.js && HAS_RPC=0 node app.test.js && node sql.test.js && node pw.test.js",
+    "test:app": "node app.test.js",
+    "test:gammel-db": "HAS_RPC=0 node app.test.js",
+    "test:sql": "node sql.test.js",
+    "test:nettleser": "node pw.test.js"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "jsdom": "^26.0.0",
+    "playwright": "1.63.0"
+  }
+}

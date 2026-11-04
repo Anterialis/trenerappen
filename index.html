@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="no">
+<html lang="nb">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -14,45 +14,10 @@
 <link rel="icon" type="image/png" href="/icon-512.png">
 <title>Trenerappen</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/designs.css">
+<script src="/design-init.js"></script>
 </head>
 <body>
-<!-- Shared padlock artwork (defs + two <symbol>s) referenced everywhere a
-     lock icon is needed (see .lock-icon <use> below) - one copy, so the
-     glass/gold/silver gradients aren't duplicated (and their ids don't
-     collide) across the launcher badge, the login popup, and anywhere else. -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <defs>
-    <linearGradient id="lockShackleGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f6f8fa"/>
-      <stop offset=".5" stop-color="#aab2bd"/>
-      <stop offset="1" stop-color="#eef1f4"/>
-    </linearGradient>
-    <linearGradient id="lockBodyGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff3b0"/>
-      <stop offset=".5" stop-color="#ffd93d"/>
-      <stop offset="1" stop-color="#f2b705"/>
-    </linearGradient>
-  </defs>
-  <symbol id="lockClosedSymbol" viewBox="0 0 64 64">
-    <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
-    <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
-    <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
-    <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
-    <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
-  </symbol>
-  <!-- Same closed shackle path, pivoted 55° around the point where its
-       RIGHT leg meets the body (44,29) - that leg stays exactly where the
-       closed version has it (still "plugged in"), and the rest of the loop
-       swings up and clear to the left, like a hook - the classic unlock
-       glyph, not a symmetric flip. -->
-  <symbol id="lockOpenSymbol" viewBox="0 0 64 64">
-    <path d="M20,29 L20,21 A12,12 0 0,1 44,21 L44,29" transform="rotate(55 44 29)" fill="none" stroke="url(#lockShackleGrad)" stroke-width="5.5" stroke-linecap="round"/>
-    <rect x="14" y="27" width="36" height="29" rx="9" fill="url(#lockBodyGrad)" stroke="rgba(255,255,255,.55)" stroke-width="1"/>
-    <path d="M15,31 Q32,25.5 49,31 L49,35.5 Q32,30.5 15,35.5 Z" fill="#fff" opacity=".3"/>
-    <circle cx="32" cy="39" r="4" fill="rgba(112,82,0,.55)"/>
-    <rect x="30.5" y="41.3" width="3" height="6.6" rx="1.3" fill="rgba(112,82,0,.55)"/>
-  </symbol>
-</svg>
 <div id="viewport-frame">
 <div id="app">
   <div id="launcherScreen" class="launcher-screen">
@@ -64,6 +29,10 @@
         </svg>
       </span>
       <span class="account-label">Mitt lag</span>
+    </button>
+    <button type="button" id="launcherResumeBtn" class="launcher-resume" hidden>
+      <span class="launcher-resume-text"><b>Fortsett kampen</b><span id="launcherResumeSub"></span></span>
+      <span aria-hidden="true" class="launcher-resume-arrow">›</span>
     </button>
     <div class="launcher-tiles-row">
       <div class="launcher-tile" id="launcherTile">
@@ -98,9 +67,9 @@
           <div class="launcher-choice-panel" id="launcherChoicePanelJoin" hidden>
             <button type="button" id="launcherChoiceBackBtn" class="launcher-choice-back" aria-label="Tilbake">‹</button>
             <p class="launcher-choice-title">Bli med i økt</p>
-            <p class="launcher-choice-sub">Skriv inn den tresifrede koden</p>
+            <p class="launcher-choice-sub">Skriv inn koden du har fått</p>
             <div class="field-invalid-wrap" id="launcherJoinInputWrap">
-              <input type="text" id="launcherJoinInput" inputmode="numeric" maxlength="3" class="launcher-join-input" placeholder="000">
+              <input type="text" id="launcherJoinInput" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="6" class="launcher-join-input" placeholder="KODE">
             </div>
             <p id="launcherJoinError" class="launcher-join-error" hidden>Fant ingen økt med den koden.</p>
             <button type="button" id="launcherJoinEnterBtn" class="launcher-join-enter" aria-label="Bli med">→</button>
@@ -187,11 +156,13 @@
     <div class="history-header">
       <p class="history-title">Historikk</p>
       <div class="history-header-actions">
+        <button type="button" id="historyStatsBtn" class="history-select-mode-btn">Statistikk</button>
         <button type="button" id="historyLogoutBtn" class="history-select-mode-btn">Logg ut</button>
         <button type="button" id="historySelectModeBtn" class="history-select-mode-btn">Velg flere</button>
       </div>
     </div>
     <div id="historyList" class="history-list"></div>
+    <div id="historyStats" class="history-stats" hidden></div>
     <p id="historyEmpty" class="history-empty" hidden>Ingen kamper lagret ennå. De dukker opp her etter "Kampslutt".</p>
     <div id="historySelectBar" class="history-select-bar" hidden>
       <button type="button" id="historySelectAllBtn" class="history-select-bar-btn">Velg alle</button>
@@ -211,36 +182,7 @@
     </div>
   </div>
 
-  <!-- Shown by tapping "Historikk" on the launcher while logged out (see
-       historyTile's click handler) - gates entry into #historyScreen
-       itself, rather than living inside it, so the screen behind this
-       popup is always the authenticated view once reached. -->
-  <div id="historyLoginModal" class="modal modal-centered">
-    <div class="modal-card modal-card-dark history-login-card">
-      <button type="button" id="historyLoginCloseBtn" class="info-popup-close" aria-label="Avbryt innlogging">×</button>
-      <svg class="lock-icon history-login-card-icon" id="historyLoginCardIcon"><use href="#lockClosedSymbol"></use></svg>
-      <h2>Logg inn</h2>
-      <p class="sub">Kamphistorikken er kun synlig for admin.</p>
-      <div id="historyLoginFormFields">
-        <div class="field-invalid-wrap" id="historyLoginEmailWrap">
-          <input type="text" id="historyLoginEmail" class="text-input" placeholder="E-post eller brukernavn" autocomplete="username">
-        </div>
-        <div class="field-invalid-wrap" id="historyLoginPasswordWrap">
-          <input type="password" id="historyLoginPassword" class="text-input" placeholder="Passord" autocomplete="current-password">
-        </div>
-        <p id="historyLoginError" class="join-code-error" style="display:none;"></p>
-        <button type="button" id="historyLoginBtn" class="glass-choice-btn primary">Logg inn</button>
-      </div>
-      <div id="historyLoginLockedNote" class="history-login-locked-note" hidden>
-        <p id="historyLoginLockedText"></p>
-      </div>
-    </div>
-  </div>
-
-  <!-- "Mitt lag" - opened from the account button on the launcher screen.
-       Placeholder for now (see accountLoginBtn's handler in app.js): no
-       Supabase table for team accounts exists yet, so submitting just shows
-       a note instead of pretending to sign anyone in. -->
+  <!-- "Mitt lag" - opened from the account button on the launcher screen. -->
   <div id="accountLoginModal" class="modal modal-centered">
     <div class="modal-card modal-card-dark">
       <button type="button" id="accountLoginCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
@@ -251,20 +193,34 @@
       <h2>Mitt lag</h2>
       <p class="sub">Logg inn for å laste inn lagets faste innstillinger</p>
       <div class="field-invalid-wrap">
-        <input type="text" id="accountLoginEmail" class="text-input" placeholder="E-post" autocomplete="username">
+        <input type="email" id="accountLoginEmail" class="text-input" placeholder="E-post" autocomplete="username">
       </div>
       <div class="field-invalid-wrap" style="margin-top:10px;">
         <input type="password" id="accountLoginPassword" class="text-input" placeholder="Passord" autocomplete="current-password">
       </div>
       <p id="accountLoginNote" class="join-code-error" style="display:none; color:rgba(255,255,255,.65);"></p>
       <button type="button" id="accountLoginBtn" class="glass-choice-btn primary" style="margin-top:14px;">Logg inn</button>
+      <p class="login-link-row"><button type="button" id="accountForgotLink" class="login-link-btn">Glemt passord?</button></p>
       <p class="login-link-row">Ny hos oss? <button type="button" id="accountGoRegisterLink" class="login-link-btn">Registrer ny bruker</button></p>
+    </div>
+  </div>
+
+  <!-- Vises når noen kommer tilbake fra lenken i «Glemt passord»-e-posten. -->
+  <div id="newPasswordModal" class="modal modal-centered">
+    <div class="modal-card modal-card-dark">
+      <h2>Nytt passord</h2>
+      <p class="sub">Velg et nytt passord for kontoen din.</p>
+      <div class="field-invalid-wrap">
+        <input type="password" id="newPasswordInput" class="text-input" placeholder="Nytt passord" autocomplete="new-password">
+      </div>
+      <p id="newPasswordNote" class="join-code-error" style="display:none; color:rgba(255,255,255,.65);"></p>
+      <button type="button" id="newPasswordSaveBtn" class="glass-choice-btn primary" style="margin-top:14px;">Lagre passord</button>
     </div>
   </div>
 
   <!-- Full-screen (not a popup, like accountLoginModal) since registration
        has a few more fields - see .history-screen for the layout pattern
-       this reuses. Same placeholder status as accountLoginModal above. -->
+       this reuses. -->
   <div id="registerScreen" class="history-screen compact-top">
     <button type="button" id="registerCloseBtn" class="coin-flip-close" aria-label="Lukk registrering">×</button>
     <div class="account-form-wrap">
@@ -276,10 +232,10 @@
         <h2>Registrer lag</h2>
         <p class="sub">Lagnavnet du velger her blir automatisk default hjemmelag i Innstillinger</p>
         <div class="field-invalid-wrap">
-          <input type="text" id="registerTeamName" class="text-input" placeholder="Lagnavn (f.eks. Nøtterøy)">
+          <input type="text" id="registerTeamName" class="text-input" placeholder="Lagnavn">
         </div>
         <div class="field-invalid-wrap" style="margin-top:10px;">
-          <input type="text" id="registerEmail" class="text-input" placeholder="E-post" autocomplete="username">
+          <input type="email" id="registerEmail" class="text-input" placeholder="E-post" autocomplete="username">
         </div>
         <div class="field-invalid-wrap" style="margin-top:10px;">
           <input type="password" id="registerPassword" class="text-input" placeholder="Passord" autocomplete="new-password">
@@ -294,12 +250,8 @@
     </div>
   </div>
 
-  <!-- Reachable two ways: the Innstillinger-flisen (works right away, purely
-       local defaults) and after a future real "Mitt lag" login (syncs the
-       same fields to an account) - see settingsTile/accountLoginBtn in
-       app.js. Values here are read from/written to localStorage only for
-       now (loadCoachDefaults/saveCoachDefaults) - no Supabase table exists
-       yet, on purpose (see the conversation this shipped from). -->
+  <!-- Innstillinger på hjemskjermen: utseende, lagets standarder, stall og denne enheten. Lagres
+       lokalt, og i team_settings for innlogget konto (loadCoachDefaults/saveCoachDefaults). -->
   <div id="settingsScreen" class="history-screen compact-top">
     <div class="history-header compact-header">
       <button type="button" id="settingsScreenCloseBtn" class="screen-back-btn" aria-label="Lukk innstillinger">‹</button>
@@ -308,20 +260,25 @@
     <div class="settings-screen-body">
       <p class="settings-storage-note" id="settingsStorageNote"></p>
       <div class="settings-group">
+        <p class="settings-group-title">Utseende</p>
+        <div class="design-picker" id="designPicker" role="radiogroup" aria-label="Velg design"></div>
+        <p class="choice-rule" id="designNote"></p>
+      </div>
+      <div class="settings-group">
         <p class="settings-group-title">Hjemmelag</p>
         <div class="settings-group-card">
           <div class="settings-field-row">
             <span class="settings-field-label">Lagnavn</span>
             <div class="settings-field-inline">
-              <input type="text" id="settingsHomeName" class="mini-input" placeholder="Nøtterøy">
-              <input type="text" id="settingsHomeAbbr" class="mini-input mini-input-abbr" placeholder="NØT" maxlength="4">
+              <input type="text" id="settingsHomeName" class="mini-input" placeholder="Lagnavn">
+              <input type="text" id="settingsHomeAbbr" class="mini-input mini-input-abbr" placeholder="HJE" maxlength="4">
             </div>
           </div>
         </div>
       </div>
 
       <div class="settings-group">
-        <p class="settings-group-title">Standardverdier for ny kamp</p>
+        <p class="settings-group-title">Lagets standarder</p>
         <div class="settings-group-card">
           <div class="step-row">
             <div class="step-text"><p class="choice-title">Kamptid <span class="sym-lcd" aria-hidden="true">10:00</span></p><p class="choice-q">Lengde på hele kampen</p></div>
@@ -339,6 +296,34 @@
               <button type="button" class="segmented-btn" data-size="7">7v7</button>
               <button type="button" class="segmented-btn" data-size="11">11v11</button>
             </div>
+          </div>
+          <div class="stepper-row settings-field-col">
+            <span class="settings-row-label">Keeper</span>
+            <div class="segmented dark" id="settingsKeeperSeg">
+              <button type="button" class="segmented-btn" data-keeper="auto">Etter format</button>
+              <button type="button" class="segmented-btn" data-keeper="on">Med</button>
+              <button type="button" class="segmented-btn" data-keeper="off">Uten</button>
+            </div>
+            <p class="toggle-row-sub">Etter format: 3v3 uten keeper, 5v5 og større med, slik NFF spiller.</p>
+          </div>
+          <div class="stepper-row settings-field-col">
+            <span class="settings-row-label">Omganger</span>
+            <div class="segmented dark" id="settingsHalvesSeg">
+              <button type="button" class="segmented-btn" data-halves="1">Én periode</button>
+              <button type="button" class="segmented-btn" data-halves="2">To omganger</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <p class="settings-group-title">Fast stall</p>
+        <p class="choice-rule">Navnene du kan krysse av for når du setter opp en kamp.</p>
+        <div class="settings-group-card settings-pad">
+          <div class="stall-list" id="stallList"></div>
+          <div class="stall-add">
+            <input type="text" id="stallAddInput" class="mini-input" placeholder="Legg til spiller" autocomplete="off">
+            <button type="button" id="stallAddBtn" class="stall-add-btn">Legg til</button>
           </div>
         </div>
       </div>
@@ -370,6 +355,26 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <p class="toggle-row-label">Fløyte ved omgang og full tid</p>
+              <p class="toggle-row-sub">Spiller av lyd når tiden er ute. Krever at skjermen er på.</p>
+            </div>
+            <label class="toggle dark">
+              <input type="checkbox" id="settingsWhistleToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <p class="toggle-row-label">Forvarsel før bytte</p>
+              <p class="toggle-row-sub">Et kort pip 30 sekunder før en spiller når byttetiden.</p>
+            </div>
+            <label class="toggle dark">
+              <input type="checkbox" id="settingsPrewarnToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -382,6 +387,10 @@
       <button type="button" id="settingsSaveBtn" class="glass-choice-btn primary settings-save-btn">Lagre</button>
       <p id="settingsSavedNote" class="settings-saved-note" hidden>Lagret ✓</p>
       <button type="button" id="settingsLogoutBtn" class="login-link-btn settings-logout-btn" hidden>Logg ut</button>
+      <div class="confirm-wrap" id="deleteAccountWrap" hidden>
+        <button type="button" id="deleteAccountBtn" class="login-link-btn settings-logout-btn settings-delete-btn">Slett konto</button>
+        <p id="deleteAccountNote" class="toggle-row-sub settings-delete-note" hidden></p>
+      </div>
     </div>
   </div>
 
@@ -414,6 +423,16 @@
 
   <div id="sessionCodeBar" class="session-code-bar" style="display:none;">Delt økt: <span id="sessionCodeText"></span><span id="syncDot" class="sync-dot" title="Synkronisert"></span></div>
 
+  <div id="undoToast" class="undo-toast" role="status" aria-live="polite">
+    <span id="undoToastText"></span>
+    <button type="button" id="undoToastBtn" class="undo-toast-btn">Angre</button>
+  </div>
+  <div id="updateBanner" class="update-banner" role="status" aria-live="polite" hidden>
+    <div class="update-banner-text"><b id="updateBannerTitle">Ny versjon tilgjengelig</b><span id="updateBannerSub"></span></div>
+    <button type="button" id="updateNowBtn" class="update-now-btn">Oppdater nå</button>
+    <button type="button" id="updateLaterBtn" class="update-later-btn" aria-label="Ikke nå">×</button>
+  </div>
+  <div id="spectatorBar" class="spectator-bar" hidden><span class="spectator-dot" aria-hidden="true"></span><span id="spectatorText">Direkte</span></div>
   <div id="autoPauseNotice" class="auto-pause-notice">Kampklokka ble satt på pause – appen var inaktiv en stund.</div>
   <div id="joinedEmptyReadOnlyNotice" class="auto-pause-notice">Denne økten har ingen registrerte spillere. Stemmer koden? Du har kun lesetilgang her – be den som delte koden sjekke den eller legge til spillere.</div>
   <div id="ownerTransferredNotice" class="auto-pause-notice">Du er nå økt-eier – du kan endre spillernavn, kampvarighet, byttetid og delingsinnstillinger.</div>
@@ -422,8 +441,8 @@
     <div id="field-wrap">
       <svg id="pitchLines" class="pitch-lines" viewBox="0 0 100 150" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="matchClockWrap" class="match-clock-wrap">
-        <span class="home-team-label" id="homeTeamLabel" aria-hidden="true">NØT</span>
-        <button type="button" id="homeScoreBtn" class="score-btn" aria-label="Registrer mål for Nøtterøy">0</button>
+        <span class="home-team-label" id="homeTeamLabel" aria-hidden="true"></span>
+        <button type="button" id="homeScoreBtn" class="score-btn" aria-label="Registrer mål for hjemmelaget">0</button>
         <div class="match-clock-center">
           <div id="matchClock">0:00</div>
           <div id="matchCountdown">0:00</div>
@@ -439,14 +458,21 @@
     </div>
 
     <div id="bench-wrap">
+      <div class="next-swap" id="nextSwapBar" hidden>
+        <div class="next-swap-text">
+          <span class="next-swap-label" id="nextSwapLabel">Neste bytte</span>
+          <span class="next-swap-names" id="nextSwapNames"></span>
+        </div>
+        <button type="button" id="nextSwapBtn" class="next-swap-btn">Bytt</button>
+      </div>
+      <p class="fairness-line" id="fairnessLine" hidden></p>
       <div class="bench-label-row">
         <div class="bench-label">Innbytterbenken</div>
         <div class="bench-actions">
           <div class="multi-select-group">
-            <button type="button" id="swapSuggestionBtn" class="bench-action-btn multi-select-btn" aria-label="Bytteforslag">
-              <span class="btn-icon" aria-hidden="true">⇄<span class="btn-badge">?</span></span><span class="btn-label" id="swapSuggestionBtnLabel">Forslag</span>
+            <button type="button" id="planBtn" class="bench-action-btn" aria-label="Bytteplan">
+              <span class="btn-icon" aria-hidden="true">≡</span><span class="btn-label">Plan</span>
             </button>
-            <button type="button" id="swapSuggestionCancelBtn" class="multi-cancel-btn" aria-label="Avbryt bytteforslag">×</button>
           </div>
           <div class="multi-select-group">
             <button type="button" id="multiSelectBtn" class="bench-action-btn multi-select-btn" aria-label="multiBytte">
@@ -464,13 +490,24 @@
   <div class="modal-card modal-card-dark settings-card">
     <button type="button" id="settingsHomeBtn" class="info-popup-close settings-home-btn" aria-label="Til hovedmeny">⌂</button>
     <button type="button" id="settingsCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
-    <h2>Innstillinger</h2>
-    <p class="settings-intro"><b>Gjelder denne økten.</b> Lagnavn, standardverdier og skjerm-våken finner du under Innstillinger på hjemskjermen.</p>
+    <h2>Denne kampen</h2>
+    <p class="settings-intro"><b>Gjelder denne økten.</b> Utseende, standarder og lyd finner du under Innstillinger på hjemskjermen.</p>
     <p id="joinedEmptyNote" class="joined-empty-note" hidden>Denne økten har ingen registrerte spillere ennå. Stemmer koden? Om du prøvde å bli med i en pågående kamp, sjekk koden og prøv igjen - ellers kan du fortsette å sette opp laget her.</p>
     <p id="masterOnlyNote" class="master-only-note" hidden>Du er med i en økt noen andre opprettet. Kun den som opprettet økten kan endre spillernavn, kampvarighet, byttetid og delingsinnstillinger.</p>
 
     <div class="settings-group">
       <p class="settings-group-title">Lag</p>
+      <div class="settings-group-card settings-field-row modal-team-name" id="modalTeamRow">
+        <span class="settings-field-label">Lagnavn og forkortelse</span>
+        <div class="settings-field-inline">
+          <input type="text" id="modalHomeName" class="mini-input" placeholder="Lagnavn" autocomplete="off">
+          <input type="text" id="modalHomeAbbr" class="mini-input mini-input-abbr" placeholder="HJE" maxlength="4" autocomplete="off">
+        </div>
+      </div>
+      <div class="att-wrap" id="attendanceWrap" hidden>
+        <p class="choice-rule">Hvem er her i dag? Trykk på navnene fra stallen.</p>
+        <div class="att-chips" id="attendanceChips"></div>
+      </div>
       <div class="settings-group-card settings-pad">
         <div id="nameRows"></div>
         <button type="button" id="addPlayerRowBtn" class="add-player-row-btn">+ Legg til spiller</button>
@@ -496,6 +533,20 @@
             <button type="button" class="segmented-btn" data-size="5">5v5</button>
             <button type="button" class="segmented-btn" data-size="7">7v7</button>
             <button type="button" class="segmented-btn" data-size="11">11v11</button>
+          </div>
+        </div>
+        <div class="step-col" id="keeperRow" hidden>
+          <p class="choice-title">Keeper</p><p class="choice-q">3v3 spilles uten keeper, 5v5 og større med</p>
+          <div class="segmented dark" id="keeperSeg">
+            <button type="button" class="segmented-btn" data-keeper="on">Med keeper</button>
+            <button type="button" class="segmented-btn" data-keeper="off">Uten keeper</button>
+          </div>
+        </div>
+        <div class="step-col" id="halvesRow" hidden>
+          <p class="choice-title">Omganger</p><p class="choice-q">Med to omganger stopper klokka ved halvtid</p>
+          <div class="segmented dark" id="halvesSeg">
+            <button type="button" class="segmented-btn" data-halves="1">Én periode</button>
+            <button type="button" class="segmented-btn" data-halves="2">To omganger</button>
           </div>
         </div>
       </div>
@@ -541,7 +592,7 @@
     </div>
     <div id="transferOwnerRow" hidden>
       <div class="confirm-wrap" id="transferOwnerWrap">
-        <button type="button" id="transferOwnerBtn" class="export-link-btn">🔁 Overfør økt-eier</button>
+        <button type="button" id="transferOwnerBtn" class="export-link-btn">Overfør økt-eier</button>
         <span class="confirm-wrap-divider" id="transferOwnerDivider" hidden aria-hidden="true"></span>
         <button type="button" id="transferOwnerCancelBtn" class="confirm-wrap-cancel" hidden aria-label="Avbryt overføring">×</button>
       </div>
@@ -558,14 +609,17 @@
     <div id="correctTimeRow" hidden>
       <label class="section-label">Korriger tid</label>
       <p class="toggle-row-sub" style="margin:-4px 0 8px;">Glemte du å avslutte kampen, eller lot klokka gå for lenge? Fjern tiden i etterkant.</p>
-      <button type="button" id="rollBackBtn" class="export-link-btn" hidden>⏪ Still klokka tilbake til kampslutt</button>
-      <button type="button" id="removeDeadTimeBtn" class="export-link-btn" hidden>🕐 Fjern dødtid siden siste handling</button>
-      <button type="button" id="openCorrectTimeBtn" class="export-link-btn">⏱ Still klokka manuelt</button>
+      <button type="button" id="rollBackBtn" class="export-link-btn" hidden>Still klokka tilbake til kampslutt</button>
+      <button type="button" id="removeDeadTimeBtn" class="export-link-btn" hidden>Fjern dødtid siden siste handling</button>
+      <button type="button" id="openCorrectTimeBtn" class="export-link-btn">Still klokka manuelt</button>
     </div>
 
-    <button type="button" id="joinExistingBtn" class="export-link-btn">🔗 Bli med i delt økt</button>
-    <button type="button" id="legendBtn" class="export-link-btn">❔ Symbolforklaring og om appen</button>
-    <button type="button" id="exportBtn" class="export-link-btn">📋 Eksporter spillerdata</button>
+    <button type="button" id="openShareBtn" class="export-link-btn" hidden>Del økten med lenke eller QR</button>
+    <button type="button" id="joinExistingBtn" class="export-link-btn">Bli med i delt økt</button>
+    <button type="button" id="openPlanBtn" class="export-link-btn">Bytteplan</button>
+    <button type="button" id="openCupBtn" class="export-link-btn">Cup-oppsett</button>
+    <button type="button" id="legendBtn" class="export-link-btn">Symbolforklaring</button>
+    <button type="button" id="exportBtn" class="export-link-btn">Eksporter spillerdata</button>
 
     <div class="modal-actions">
       <button type="button" id="settingsCancelBtn" class="secondary">Avbryt</button>
@@ -658,11 +712,22 @@
   </div>
 </div>
 
+<!-- Kampslutt på ett ark: resultat, spilletid, to valg og én knapp. -->
 <div id="endMatchModal" class="modal">
-  <div class="modal-card">
-    <h2>Avslutte?</h2>
-    <div id="matchHistorySummary" class="match-history-summary"></div>
+  <div class="modal-card end-sheet">
+    <h2 id="endSheetTitle">Kampslutt</h2>
+    <p class="end-score" id="endSheetScore"></p>
+    <p class="end-meta" id="endSheetMeta"></p>
+    <div class="end-goals" id="endSheetGoals" hidden></div>
+    <div class="end-table-head" aria-hidden="true"><span>Spilletid</span><span>K</span><span>T</span></div>
     <div id="endMatchSummary" class="end-match-summary"></div>
+    <p class="end-keeper" id="endSheetKeeper" hidden></p>
+    <div id="endChoices" class="end-choices">
+      <label class="end-switch"><span>Lagre i Historikk</span><span class="toggle"><input type="checkbox" id="endSaveToggle"><span class="toggle-slider"></span></span></label>
+      <label class="end-switch"><span>Sett de som spilte minst på banen først</span><span class="toggle"><input type="checkbox" id="endReorgToggle"><span class="toggle-slider"></span></span></label>
+      <label class="end-next-label" for="endNextOpponent">Neste motstander (valgfritt)</label>
+      <input type="text" id="endNextOpponent" class="end-next-input" placeholder="F.eks. Sandefjord BK" autocomplete="off" maxlength="40">
+    </div>
     <div class="modal-actions modal-actions-col">
       <div class="stack-btn-split period" id="endPeriodWrap">
         <button type="button" id="endPeriodBtn" class="stack-btn-split-main">Kampslutt, ny kamp</button>
@@ -670,17 +735,17 @@
         <button type="button" id="endPeriodInfoBtn" class="info-btn" data-info="endPeriod" aria-label="Om Kampslutt">i</button>
       </div>
       <div class="stack-btn-split danger" id="endResetWrap">
-        <button type="button" id="endResetBtn" class="stack-btn-split-main">Avslutt</button>
+        <button type="button" id="endResetBtn" class="stack-btn-split-main">Avslutt økten</button>
         <span class="stack-btn-split-divider" aria-hidden="true"></span>
-        <button type="button" id="endResetInfoBtn" class="info-btn" data-info="endReset" aria-label="Om Avslutt og nullstill">i</button>
+        <button type="button" id="endResetInfoBtn" class="info-btn" data-info="endReset" aria-label="Om Avslutt økten">i</button>
       </div>
       <div class="stack-btn-split">
-        <button type="button" id="leaveMatchBtn" class="stack-btn-split-main">↩ Forlat kampen</button>
+        <button type="button" id="leaveMatchBtn" class="stack-btn-split-main">Til hjemskjermen</button>
         <span class="stack-btn-split-divider" aria-hidden="true"></span>
-        <button type="button" class="info-btn" data-info="leaveMatch" aria-label="Om Forlat kampen">i</button>
+        <button type="button" class="info-btn" data-info="leaveMatch" aria-label="Om Til hjemskjermen">i</button>
       </div>
       <div class="stack-btn-split" id="closeSessionRow" hidden>
-        <button type="button" id="closeSessionBtn" class="stack-btn-split-main">🚪 Forlat delt økt</button>
+        <button type="button" id="closeSessionBtn" class="stack-btn-split-main">Forlat delt økt</button>
         <span class="stack-btn-split-divider" aria-hidden="true"></span>
         <button type="button" class="info-btn" data-info="closeSession" aria-label="Om Forlat delt økt">i</button>
       </div>
@@ -746,20 +811,12 @@
       </div>
       <div id="matchSummaryPlayers" class="match-summary-players"></div>
     </div>
+    <div class="section-label" id="matchSummaryTimelineTitle" hidden>Tidslinje</div>
+    <div id="matchSummaryTimeline" class="match-timeline" hidden></div>
     <p id="matchSummaryHistoryNote" class="match-summary-history-note" hidden></p>
     <div class="modal-actions">
+      <button type="button" id="matchSummaryShareBtn" class="secondary">Del rapport</button>
       <button type="button" id="matchSummaryCloseBtn" class="primary">OK</button>
-    </div>
-  </div>
-</div>
-
-<div id="reorgPromptModal" class="modal">
-  <div class="modal-card">
-    <h2>Ny periode</h2>
-    <p class="sub">Starte med spillerne som har spilt minst på banen i neste kamp, og de som har spilt mest som innbyttere?</p>
-    <div class="modal-actions">
-      <button type="button" id="reorgNoBtn" class="secondary">Nei, behold posisjoner</button>
-      <button type="button" id="reorgYesBtn" class="primary">Ja, bytt om</button>
     </div>
   </div>
 </div>
@@ -778,80 +835,83 @@
 
 <div id="legendModal" class="modal">
   <div class="modal-card">
-    <h2>Symbolforklaring og om appen</h2>
-    <p class="sub">Kort oversikt over appen, og hva symbolene betyr.</p>
-    <div class="func-list">
-      <div class="func-item">
-        <p class="func-title">Bytte spillere</p>
-        <p class="func-text">Dra en spiller til motsatt sone, eller trykk spilleren og så plassen du vil bytte med.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Registrere mål</p>
-        <p class="func-text">Trykk tallet ved klokka for å telle et mål. Trykkes samme lag igjen innen 30 sek, må du bekrefte for å unngå dobbeltregistrering. Langt trykk fjerner ett mål.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Angre eller gå tilbake</p>
-        <p class="func-text">↩ øverst til venstre angrer siste bytte eller mål, gjør det om igjen, eller tar deg til hjemskjermen.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Kampklokke og perioder</p>
-        <p class="func-text">Trykk klokka for å endre kampvarighet. ▶/⏸ styrer alle klokker samtidig. «Kampslutt» starter en ny periode og beholder tallene; «Avslutt og nullstill» starter helt på nytt - begge krever et bekreftende trykk til.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Innstillinger ⚙ og del økt</p>
-        <p class="func-text">Under kampen endrer du spillernavn, byttetid, valgene under Kampoppførsel (trekanter, «Bytt om» og bytteforslag) og deling av økten med en tresifret kode (du velger om andre kan redigere eller bare se). Lagnavn, standardverdier for ny kamp og skjerm-våken finner du under Innstillinger på hjemskjermen.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Myntkast</p>
-        <p class="func-text">Fra startsiden: velg lagfarger, kast en mynt for å avgjøre hvem som starter med ballen.</p>
-      </div>
-      <div class="func-item">
-        <p class="func-title">Målskårere</p>
-        <p class="func-text">Målikonet øverst viser og lar deg redigere hvem som har scoret så langt.</p>
-      </div>
-    </div>
-    <hr class="legend-divider">
-    <p class="legend-section-title">Symboler</p>
+    <h2>Symbolforklaring</h2>
     <div class="legend-list">
-      <div class="legend-row"><span class="legend-swatch warning due">⇅</span><span class="legend-text">Byttetiden er nådd, klar for bytte - pulserer rødlig når spilleren har sittet 50 % lenger enn det.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Rød trekant - spilt mest denne kampen.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-most2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#ff9500" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Oransje trekant - spilt nest mest.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least2"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#7dd3fc" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Lyseblå trekant - spilt nest minst.</span></div>
-      <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text">Blå trekant - spilt minst denne kampen.</span></div>
-      <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text">Markert - trykk en spiller i motsatt sone for å bytte dem.</span></div>
-      <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text">Valgt i multiBytte (grønn ring), klar til å sendes ut.</span></div>
-      <div class="legend-row"><span class="legend-swatch suggest-ring"></span><span class="legend-text">Foreslått byttepartner (pulserende grønn ring) - trykk for å bekrefte.</span></div>
-      <div class="legend-row"><span class="legend-swatch order">→</span><span class="legend-text">Rekkefølge på banen/benken: lengst til høyre har spilt/ventet lengst.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇄<span class="legend-badge">?</span></span><span class="legend-text">Bytteforslag - foreslår å bytte ut spilleren med mest spilletid (som har passert byttetiden) mot innbytteren som har ventet lengst. Trykk for å markere, trykk spilleren for å bekrefte.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">⇅<span class="legend-badge">×2</span></span><span class="legend-text">multiBytte - velg flere ute- og innbyttere, og bytt dem alle samtidig.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="background:var(--danger);">×</span><span class="legend-text">Avbryt multiBytte - fjerner markeringene. Vises kun mens multiBytte er aktivert.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">
-        <svg class="goal-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <line x1="14.9" y1="13" x2="14.9" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="18.3" y1="13" x2="18.3" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="21.7" y1="13" x2="21.7" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="25.1" y1="13" x2="25.1" y2="30.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="11.5" y1="16.5" x2="28.5" y2="16.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="11.5" y1="20" x2="28.5" y2="20" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="11.5" y1="23.5" x2="28.5" y2="23.5" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <line x1="11.5" y1="27" x2="28.5" y2="27" stroke="#fff" stroke-width="0.85" opacity=".45"/>
-          <path d="M11,13 Q20,16.5 29,13" fill="none" stroke="#fff" stroke-width="0.8" opacity=".55"/>
-          <rect x="7.5" y="8.5" width="25" height="3.2" fill="#fff"/>
-          <rect x="7.5" y="8.5" width="3.2" height="23" fill="#fff"/>
-          <rect x="29.3" y="8.5" width="3.2" height="23" fill="#fff"/>
-        </svg>
-      </span><span class="legend-text">Målskårere - vis/rediger hvem som har scoret.</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch" style="font-style:italic; font-weight:700;">i</span><span class="legend-text">I spillerboblen (trykk en spiller) - forklarer T (totaltid gjennom alle kamper) og K (kamptid, kun denne kampen).</span></div>
-      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M8 17V5M8 5L4.7 8.3M8 5L11.3 8.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M16 7v12M16 19l-3.3-3.3M16 19l3.3-3.3" stroke="#32b45a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </span><span class="legend-text">I spillerboblen - forklarer at du kan bytte den valgte spilleren ved å trykke en annen.</span></div>
+      <div class="legend-row"><span class="legend-swatch warning due">⇅</span><span class="legend-text"><b>Byttetiden er nådd.</b> Pulserer og viser BYTT NÅ når spilleren har vært på banen 50 % lenger.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-most"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="7,2 12,12 2,12" fill="#dc2626" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text"><b>Har spilt mest.</b> Oransje trekant er nest mest.</span></div>
+      <div class="legend-row"><span class="legend-swatch rank-least"><svg viewBox="0 0 14 14" width="20" height="20"><polygon points="2,2 12,2 7,12" fill="#2563eb" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="legend-text"><b>Har spilt minst.</b> Lyseblå trekant er nest minst.</span></div>
+      <div class="legend-row"><span class="legend-swatch ring-orange"></span><span class="legend-text"><b>Valgt spiller.</b> Trykk en spiller i motsatt sone for å bytte.</span></div>
+      <div class="legend-row"><span class="legend-swatch check">✓</span><span class="legend-text"><b>Valgt i multiBytte.</b> Velg like mange inn og ut.</span></div>
+      <div class="legend-row"><span class="legend-swatch icon-btn-swatch">K</span><span class="legend-text"><b>K og T.</b> K er denne kampen, T er totalt i økten.</span></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="legendCloseBtn" class="primary">Lukk</button>
     </div>
+  </div>
+</div>
+
+<!-- Del økten: medtrener med kode/lenke, foreldre med egen lesekode. -->
+<div id="shareModal" class="modal modal-centered">
+  <div class="modal-card modal-card-dark share-card">
+    <button type="button" id="shareCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Del økten</h2>
+    <div class="share-block" id="shareEditBlock">
+      <p class="share-title">Medtrener</p>
+      <p class="share-sub">Kan se og endre kampen. Har hen appen på hjemskjermen, må koden skrives inn der.</p>
+      <p class="share-code" id="shareCode"></p>
+      <div class="share-qr" id="shareEditQr"></div>
+      <div class="share-actions">
+        <button type="button" id="shareEditLinkBtn" class="glass-choice-btn">Del lenke</button>
+        <button type="button" id="shareCopyCodeBtn" class="glass-choice-btn">Kopier kode</button>
+      </div>
+    </div>
+    <div class="share-block" id="shareViewBlock">
+      <p class="share-title">Foreldre og tilskuere</p>
+      <p class="share-sub">Ser resultat, klokke og spilletid, men kan ikke endre noe.</p>
+      <div class="share-qr" id="shareViewQr"></div>
+      <div class="share-actions">
+        <button type="button" id="shareViewLinkBtn" class="glass-choice-btn">Del foreldrelenke</button>
+      </div>
+    </div>
+    <p class="share-sub" id="shareViewMissing" hidden>Foreldrelenken blir tilgjengelig når databasen er oppdatert.</p>
+  </div>
+</div>
+
+<!-- Bytteplan: hvem som går inn og ut, slik at alle får like mye. Regnes ut på nytt fra stillingen nå. -->
+<div id="planModal" class="modal">
+  <div class="modal-card modal-card-dark plan-card">
+    <button type="button" id="planCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Bytteplan</h2>
+    <p class="sub" id="planSummary"></p>
+    <label class="end-switch"><span>Bruk planen til «Neste bytte»</span><span class="toggle"><input type="checkbox" id="planEnabledToggle"><span class="toggle-slider"></span></span></label>
+    <div class="plan-keeper" id="planKeeper" hidden>
+      <p id="planKeeperText"></p>
+      <button type="button" id="planKeeperBtn" class="stall-add-btn" hidden></button>
+    </div>
+    <div class="section-label">Bytter</div>
+    <div class="plan-list" id="planList"></div>
+    <div class="section-label">Forventet spilletid i denne kampen</div>
+    <div class="plan-players" id="planPlayers"></div>
+  </div>
+</div>
+
+<!-- Cup-modus: kampoppsett og total spilletid gjennom dagen. -->
+<div id="cupModal" class="modal">
+  <div class="modal-card modal-card-dark cup-card">
+    <button type="button" id="cupCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
+    <h2>Cup</h2>
+    <p class="sub" id="cupNext"></p>
+    <div class="settings-field-row modal-team-name">
+      <span class="settings-field-label">Navn på cupen</span>
+      <input type="text" id="cupNameInput" class="mini-input" placeholder="F.eks. Tønsberg Cup" maxlength="40" autocomplete="off">
+    </div>
+    <div class="section-label">Kampoppsett</div>
+    <div class="cup-list" id="cupList"></div>
+    <button type="button" id="cupAddBtn" class="add-player-row-btn">+ Legg til kamp</button>
+    <div class="section-label" id="cupPlayedTitle" hidden>Spilt så langt</div>
+    <div class="cup-played" id="cupPlayed"></div>
+    <div class="section-label">Total spilletid i dag</div>
+    <div class="plan-players" id="cupTotals"></div>
   </div>
 </div>
 
@@ -866,7 +926,10 @@
 <div id="versionHistoryModal" class="modal modal-centered">
   <div class="modal-card info-popup-card">
     <button type="button" id="versionHistoryCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
-    <h2>Endringslogg</h2>
+    <h2>Versjon</h2>
+    <p class="sub check-update-note" id="checkUpdateNote"></p>
+    <button type="button" id="checkUpdateBtn" class="stack-btn check-update-btn">Se etter oppdatering</button>
+    <h2 class="version-log-title">Endringslogg</h2>
     <div id="versionHistoryList" class="version-history-list"></div>
   </div>
 </div>
@@ -936,11 +999,24 @@
 <div id="matchDurationPickerModal" class="modal">
   <div class="modal-card info-popup-card duration-picker-card">
     <button type="button" id="durationPickerCloseBtn" class="info-popup-close" aria-label="Lukk">×</button>
-    <h2>Kampvarighet</h2>
-    <p class="sub">Dra tallet opp eller ned for å endre. Rask sveip spinner videre.</p>
-    <div class="duration-picker-wheel" id="durationPickerWheel">
-      <div class="duration-picker-value" id="durationPickerValue">20</div>
-      <div class="duration-picker-unit">minutter</div>
+    <h2>Kamptid</h2>
+    <p class="sub">Hele kampens lengde, begge omganger til sammen.</p>
+    <div class="duration-step-wrap"><div id="durationPickerStep"></div></div>
+    <div class="duration-presets" id="durationPresets"></div>
+    <div class="modal-actions">
+      <button type="button" id="durationPickerSaveBtn" class="primary">Lagre</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bli med i delt økt mens en annen kamp ligger på enheten: spør først (koden sendes automatisk på tredje siffer, så en feiltast skal ikke kunne viske ut kampen). -->
+<div id="joinConfirmModal" class="modal modal-centered">
+  <div class="modal-card">
+    <h2>Bytte til delt økt?</h2>
+    <p class="sub" id="joinConfirmText"></p>
+    <div class="modal-actions">
+      <button type="button" id="joinConfirmCancelBtn" class="secondary">Avbryt</button>
+      <button type="button" id="joinConfirmYesBtn" class="primary">Bli med</button>
     </div>
   </div>
 </div>
@@ -948,9 +1024,9 @@
 <div id="joinCodeModal" class="modal">
   <div class="modal-card">
     <h2>Bli med i økt</h2>
-    <p class="sub">Skriv inn den tresifrede koden du har fått.</p>
+    <p class="sub">Skriv inn koden du har fått.</p>
     <div class="field-invalid-wrap" id="joinCodeInputWrap">
-      <input type="text" id="joinCodeInput" inputmode="numeric" maxlength="3" class="join-code-input" placeholder="000">
+      <input type="text" id="joinCodeInput" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="6" class="join-code-input" placeholder="KODE">
     </div>
     <p id="joinCodeError" class="join-code-error" style="display:none;">Fant ingen økt med den koden.</p>
     <div class="modal-actions">
@@ -962,7 +1038,7 @@
 </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="/vendor/supabase-2.118.0.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
