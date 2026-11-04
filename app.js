@@ -315,13 +315,14 @@
 
   // The version shown on the launcher - bump on every push, together with
   // APP_VERSION and CACHE_NAME in sw.js (that change is what phones detect).
-  var APP_VERSION = '2.4.1';
+  var APP_VERSION = '2.4.2';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
   // footer on the launcher) - newest first, one entry per version bump.
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.4.2', text: 'Finjustert avstanden øverst på skjermen. Når telefonen ligger på siden, går innholdet nå helt opp mot kanten.' },
     { version: '2.4.1', text: 'Fikset at navnene du hadde skrevet inn forsvant hvis du trykket på Bytteplan eller Cup-oppsett mens du satte opp en ny økt. Knappene vises nå først når laget er satt opp. «Neste bytte» hopper ikke lenger mellom spillere som står likt. Knapper og tekst øverst er flyttet litt ned, klar av statuslinjen på iPhone.' },
     { version: '2.4.0', text: 'Stor oppdatering: velg mellom fem design under Innstillinger. Kampslutt på ett ark, Angre rett etter hvert bytte, Neste bytte alltid synlig, bytteplan, omganger med fløyte, keeper på 5v5 og større, fast stall, cup-oppsett, statistikk og rapport å dele. Del økten med lenke og QR, og med en egen foreldrelenke. Samtidige bytter fra to trenere går ikke lenger tapt, og økter er ikke lenger åpne for alle. Appen spør nå før den oppdaterer seg.' },
     { version: '2.3.5', text: 'Tryggere på banen: appen starter raskt også med dårlig dekning, en telefon som har sovet kan ikke lenger overskrive kampen, og kamper som ikke får lagret seg uten nett sendes automatisk senere. Angre etter en pause og «Fjern dødtid» endrer ikke lenger spilletiden feil. Du må også bekrefte før en delt økt erstatter kampen på enheten.' },

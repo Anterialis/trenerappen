@@ -330,6 +330,46 @@ for (const design of ['a', 'b', 'c', 'd', 'e']) {
     await br.close(); srv.close();
   });
 }
+// Rotert telefon: touch-sjekken i updateFrameFit må si ja, ellers blir det forhåndsvisning på Mac.
+async function openMatch(srv, br, design, viewport, touch) {
+  const ctx = await br.newContext({ viewport, serviceWorkers: 'block' });
+  const page = await ctx.newPage();
+  await page.addInitScript(([k, s, d, t]) => {
+    if (t) { const mm = window.matchMedia.bind(window); window.matchMedia = (q) => /hover: none/.test(q) ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q); }
+    if (!localStorage.getItem(k)) { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('spillerbytte_design_v1', d); localStorage.setItem('spillerbytte_tips_seen_v1', '{"swap":1,"goal":1,"due":1}'); }
+  }, [KEYS.state, team(), design, touch]);
+  await page.goto(srv.url);
+  await page.waitForSelector('#launcherTile');
+  await page.click('#launcherResumeBtn'); await sleep(700);
+  return page;
+}
+for (const design of ['a', 'b', 'c', 'd', 'e']) {
+  test('T-' + design + '2 rotert telefon: ingen luft mot langsiden, design ' + design, async () => {
+    const srv = await serve({ mockSdk: MOCK_SDK });
+    const br = await webkit.launch();
+    const page = await openMatch(srv, br, design, { width: 844, height: 390 }, true);
+    assert.strictEqual(await page.locator('#viewport-frame.desktop-preview').count(), 0, 'ekte telefon, ikke forhåndsvisning');
+    const topOf = (sel) => page.locator(sel).evaluate(el => el.getBoundingClientRect().top);
+    const sel = (design === 'a' || design === 'b') ? '#undoBtn' : '#matchClock'; // C-E: klokka er høyest i båndet, resten er midtstilt mot den
+    const t = await topOf(sel);
+    assert.ok(t <= 8, sel + ' ligger på ' + t);
+    const clockBottom = await page.locator('#matchCountdown').evaluate(el => el.getBoundingClientRect().bottom);
+    const firstToken = await page.locator('#field .token').first().evaluate(el => el.getBoundingClientRect().top);
+    assert.ok(firstToken >= clockBottom - 2, 'første spiller under klokka: ' + firstToken + ' / ' + clockBottom);
+    await br.close(); srv.close();
+  });
+}
+test('T3 stående avstand, og forhåndsvisning på Mac i et lavt vindu beholder den', async () => {
+  const srv = await serve({ mockSdk: MOCK_SDK });
+  const br = await webkit.launch();
+  const upright = await openMatch(srv, br, 'a', { width: 390, height: 844 }, true);
+  assert.strictEqual(await upright.locator('#undoBtn').evaluate(el => el.getBoundingClientRect().top), 52, 'stående: 20 + 32');
+  const preview = await openMatch(srv, br, 'a', { width: 1100, height: 450 }, false);
+  assert.strictEqual(await preview.locator('#viewport-frame.desktop-preview').count(), 1, 'forhåndsvisning');
+  const offset = await preview.evaluate(() => document.getElementById('undoBtn').getBoundingClientRect().top - document.getElementById('app').getBoundingClientRect().top);
+  assert.ok(offset > 40, 'forhåndsvisningen har stående avstand: ' + offset);
+  await br.close(); srv.close();
+});
 test('S1 _headers: CSP blokkerer ikke noe appen selv gjør, og stopper innsprøytet kode', async () => {
   const lines = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n').filter(l => /^\s+\S+:/.test(l));
   const headers = {}; lines.forEach(l => { const i = l.indexOf(':'); headers[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });

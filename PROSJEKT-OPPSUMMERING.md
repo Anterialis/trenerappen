@@ -96,7 +96,7 @@ Fem design under Innstillinger, per enhet (`*_design_v1`), byttes straks. Samme 
 
 B-E: ingen hvite flater, tilstand står også som tekst (BYTT, BYTT NÅ), kontrast minst 4,5:1 på tidene. Nye komponenter bruker `--ui-*`-tokener. `applyFieldDensity` leser padding og `--token-extra` fra `#field`, så designene kan flytte klokka.
 
-**Statuslinjen:** alt innhold øverst (knapper, klokke, tekst) ligger minst 10 px under statuslinjen, mens bakgrunnen går helt opp, så iOS kan tone innholdet ut bak den ved scrolling. Avstanden settes med `max(env(safe-area-inset-top), 20px) + N` i `style.css` og `designs.css`. Nytt innhold øverst må følge samme regel.
+**Statuslinjen:** innhold øverst (knapper, klokke, tekst) holder seg klar av statuslinjen, mens bakgrunnen går helt opp, så iOS kan tone innholdet ut bak den ved scrolling. Avstanden settes med `--top-clear` og `--top-clear-tight` (`style.css`); nytt innhold øverst skal bruke dem. På rotert telefon (landskap, høyde under 500 px) er begge 4 px, siden det ikke er statuslinje eller øy i den kanten. iPad og forhåndsvisningen på Mac beholder stående verdier.
 
 ## Delt økt (Supabase `sessions`)
 

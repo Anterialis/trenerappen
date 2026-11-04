@@ -13,8 +13,8 @@
 //
 // Lukkes appen helt uten at brukeren har svart, tar nettleseren selv den nye versjonen i bruk neste
 // gang den åpnes. Det er slik service workere virker, og det samme skjer i Anestesiappen.
-var APP_VERSION = '2.4.1';
-var CACHE_NAME = 'trenerapp-app-v2.4.1';
+var APP_VERSION = '2.4.2';
+var CACHE_NAME = 'trenerapp-app-v2.4.2';
 var APP_SHELL = ['/', '/index.html', '/style.css', '/designs.css', '/design-init.js', '/app.js', '/vendor/supabase-2.118.0.min.js', '/vendor/qrcode-generator-2.0.4.js', '/manifest.json', '/icon-180.png', '/icon-512.png'];
 
 self.addEventListener('install', function(event){
