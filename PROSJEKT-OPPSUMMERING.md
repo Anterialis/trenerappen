@@ -45,7 +45,7 @@ Andre `localStorage`-nøkler: `*_session_code_v1`, `*_device_id_v1` (stabil enhe
 **Bane og bytter**
 - Fotballbane med utespillere; innbytterbenk under. 1-11 på banen. Fra 5 på banen har plassene faste posisjoner; en innbytter arver plassen til den som går ut, og to utespillere kan bytte plass. **Keeper:** NFF spiller 3v3 uten keeper, 5v5 og 7v7 med (4+1 og 6+1), og det er standard (`keeperDefaultFor`). Kan overstyres for laget og per økt. Økter fra før 2.4.0 har ikke `hasKeeper` og beholder formasjonen de startet med.
 - **Bytte:** dra over en annen spiller, eller trykk én og så en i motsatt sone. «Slipp for å bytte»-kort mens du drar. **multiBytte** for flere samtidig.
-- **Neste bytte** står alltid over benken med ett trykk for å utføre: utespiller som har passert byttetiden, ellers den som er nærmest, med nedtelling. Keeperen foreslås ikke. Følger bytteplanen hvis den er slått på.
+- **Neste bytte** står alltid over benken med ett trykk for å utføre: utespiller som har passert byttetiden, ellers den som er nærmest, med nedtelling. Keeperen foreslås ikke. Ved likt trekkes én tilfeldig, og den står til noen faktisk ikke lenger står likt (`nextSwapPick`). Følger bytteplanen hvis den er slått på.
 - **Bytteplan** (`computeRotationPlan`): hvem som går ut og inn resten av kampen, med forventet spilletid per spiller. Regnes på nytt fra stillingen nå, så den justerer seg.
 - **Rettferdighetslinje:** «Størst forskjell 3:20» under Neste bytte, fra ett minutt.
 - **Keeper-rotasjon:** tid i mål føres per spiller (på tvers av kamper på enheten), og Kampslutt/Bytteplan foreslår neste. «Sett i mål nå» i bytteplanen.
@@ -76,7 +76,7 @@ Andre `localStorage`-nøkler: `*_session_code_v1`, `*_device_id_v1` (stabil enhe
 
 **Innstillinger**
 - *Hjemskjermen (Innstillinger):* Utseende (fem design), hjemmelag, lagets standarder (kamptid, byttetid, kampformat, keeper, omganger), fast stall, Kampoppførsel, denne enheten (skjerm-våken, fløyte, forvarsel), symbolforklaring, logg ut, slett konto. Lagres lokalt, og i `team_settings` for innlogget konto.
-- *Under kampen (⚙, «Denne kampen»):* lagnavn, spillere, byttetid, Kampoppførsel for økten, deling, Korriger tid, bytteplan, cup, eksport. Kamptid og kampformat kun ved oppsett av ny økt (kamptid også på klokka). Navn kan rettes på spillere på banen, men de kan ikke fjernes der. Eier-valg er låst for andre.
+- *Under kampen (⚙, «Denne kampen»):* lagnavn, spillere, byttetid, Kampoppførsel for økten, deling, Korriger tid, bytteplan, cup, eksport. Kamptid og kampformat kun ved oppsett av ny økt (kamptid også på klokka). Navn kan rettes på spillere på banen, men de kan ikke fjernes der. Bytteplan, cup og eksport vises ikke mens et nytt lag settes opp, og legger seg ellers oppå vinduet, så det som er skrevet inn består. Eier-valg er låst for andre.
 - **Frammøte:** ved ny økt krysses stallen av med ett trykk, og laget står på banen fra start (de første i lista).
 - **Kampoppførsel** = fire to-knapps-valg (venstre = kun aktuell kamp, høyre = alle kamper i økten).
 - **Tips** første gang (`maybeTip`), og kort symbolforklaring.
@@ -95,6 +95,8 @@ Fem design under Innstillinger, per enhet (`*_design_v1`), byttes straks. Samme 
 - **E Oversikt:** liste i stedet for bane, sortert etter hvem som står for tur, med tiden som stolper.
 
 B-E: ingen hvite flater, tilstand står også som tekst (BYTT, BYTT NÅ), kontrast minst 4,5:1 på tidene. Nye komponenter bruker `--ui-*`-tokener. `applyFieldDensity` leser padding og `--token-extra` fra `#field`, så designene kan flytte klokka.
+
+**Statuslinjen:** alt innhold øverst (knapper, klokke, tekst) ligger minst 10 px under statuslinjen, mens bakgrunnen går helt opp, så iOS kan tone innholdet ut bak den ved scrolling. Avstanden settes med `max(env(safe-area-inset-top), 20px) + N` i `style.css` og `designs.css`. Nytt innhold øverst må følge samme regel.
 
 ## Delt økt (Supabase `sessions`)
 

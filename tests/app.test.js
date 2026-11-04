@@ -478,6 +478,68 @@ test('B9 kodeformat: gammel tresifret og ny, ikke forvekslbare tegn', async () =
   A.close();
 });
 
+test('B10 nytt lag: knappene som krever et lag er skjult, og det som er skrevet inn forsvinner ikke', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, {});
+  await sleep(5);
+  A.t.openSettings(true);
+  ['openPlanBtn', 'openCupBtn', 'exportBtn'].forEach(id => assert.strictEqual(A.q('#' + id).hidden, true, id + ' skjult'));
+  assert.strictEqual(A.q('#legendBtn').hidden, false);
+  assert.strictEqual(A.q('#joinExistingBtn').hidden, false);
+  A.close();
+});
+test('B11 lag i gang: Bytteplan og Cup legger seg oppå, innstillingene og endringene består', async () => {
+  const be = makeBackend();
+  for (const [btn, close] of [['openPlanBtn', 'planCloseBtn'], ['openCupBtn', 'cupCloseBtn']]) {
+    const A = loadApp(be, { storage: { [KEYS.state]: team() } });
+    await sleep(5);
+    A.t.openSettings(false);
+    assert.strictEqual(A.q('#' + btn).hidden, false, btn + ' synlig');
+    const input = A.q('#nameRows .name-row[data-id="p4"] input');
+    input.value = 'Endret Navn';
+    A.click(btn);
+    assert.ok(A.open('settingsModal'), 'innstillingene er åpne under');
+    A.click(close);
+    assert.ok(A.open('settingsModal'), 'tilbake i innstillingene');
+    assert.strictEqual(A.q('#nameRows .name-row[data-id="p4"] input').value, 'Endret Navn');
+    A.close();
+  }
+});
+
+test('B12 Neste bytte: ved likt trekkes én tilfeldig som blir stående, også når byttetiden nås', async () => {
+  const seen = new Set();
+  for (let round = 0; round < 12; round++) {
+    const be = makeBackend();
+    const A = loadApp(be, { storage: { [KEYS.state]: team() } });
+    await sleep(2); A.t.renderAll();
+    A.t.togglePlayPause();
+    const first = A.t.computeNextSwap(A.clock.t);
+    seen.add(first.fieldId + '|' + first.benchId);
+    for (let i = 0; i < 300; i++) { // ti minutter, før og etter byttetiden på 3 min
+      A.adv(2000);
+      const n = A.t.computeNextSwap(A.clock.t);
+      assert.strictEqual(n.fieldId + n.benchId, first.fieldId + first.benchId, 'samme spillere');
+    }
+    A.close();
+  }
+  assert.ok(seen.size > 1, 'trekningen er tilfeldig: ' + seen.size);
+});
+test('B13 Neste bytte: bytter spiller når noen faktisk ikke lenger står likt, og knappen bytter den som vises', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team() } });
+  await sleep(2); A.t.renderAll();
+  A.t.togglePlayPause(); A.adv(4 * MIN);
+  const n = A.t.computeNextSwap(A.clock.t);
+  A.t.renderMatchPanels(A.clock.t);
+  A.click('nextSwapBtn');
+  assert.ok(A.t.state.onBench.includes(n.fieldId) && A.t.state.onField.includes(n.benchId), 'det som ble vist');
+  A.adv(1000);
+  const m = A.t.computeNextSwap(A.clock.t);
+  assert.notStrictEqual(m.fieldId, n.benchId, 'den som nettopp kom inn er ikke neste ut');
+  assert.notStrictEqual(m.benchId, n.fieldId, 'den som nettopp gikk ut er ikke neste inn');
+  A.close();
+});
+
 // ---------- NYE FUNKSJONER ----------
 test('N-plan alle får omtrent like mye, keeper utenfor rotasjonen', async () => {
   const be = makeBackend();

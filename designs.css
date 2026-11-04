@@ -71,7 +71,7 @@ html:not([data-design]) .modal-card-dark, html:not([data-design]) .history-scree
 .undo-toast-btn[hidden]{ display:none; }
 
 .spectator-bar{
-  flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:calc(max(env(safe-area-inset-top), 20px) + 8px) 16px 8px;
+  flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:calc(max(env(safe-area-inset-top), 20px) + 18px) 16px 8px;
   background:var(--navy); color:#fff; font-size:13.5px; font-weight:700;
 }
 .spectator-bar[hidden]{ display:none; }
@@ -102,6 +102,8 @@ html:not([data-design]) .modal-card-dark, html:not([data-design]) .history-scree
 .check-update-note{ margin-bottom:10px !important; }
 .check-update-btn{ margin-bottom:18px; }
 .version-log-title{ margin-bottom:10px !important; }
+
+.export-link-btn[hidden]{ display:none; }
 
 /* Kampslutt på ett ark */
 .end-score{ margin:2px 0 0; font-size:30px; font-weight:800; letter-spacing:-.01em; font-variant-numeric:tabular-nums; color:var(--ui-ink); }
@@ -457,9 +459,9 @@ html[data-design="c"] .end-btn, html[data-design="d"] .end-btn, html[data-design
 
 html[data-design="c"] .match-clock-wrap, html[data-design="d"] .match-clock-wrap, html[data-design="e"] .match-clock-wrap{
   top:0; left:0; right:0; transform:none; width:100%; justify-content:center; gap:12px;
-  padding:calc(max(env(safe-area-inset-top), 20px) + 8px) 12px 8px;
+  padding:calc(max(env(safe-area-inset-top), 20px) + 18px) 12px 8px;
 }
-html[data-design="c"] #field, html[data-design="d"] #field{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 92px); }
+html[data-design="c"] #field, html[data-design="d"] #field{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 102px); }
 html[data-design="c"] .home-team-label, html[data-design="c"] .away-team-label,
 html[data-design="d"] .home-team-label, html[data-design="d"] .away-team-label,
 html[data-design="e"] .home-team-label, html[data-design="e"] .away-team-label{ position:static; transform:none; margin:0; font-size:12.5px; }
@@ -483,6 +485,11 @@ html[data-design="c"] .timer.due{ color:#ffd60a; }
 html[data-design="c"] #field-wrap{ background:repeating-linear-gradient(180deg, var(--ui-pitch-1) 0 56px, var(--ui-pitch-2) 56px 112px); }
 html[data-design="c"] #bench .bench-token{ background:#16221c; border-radius:12px; padding:6px 2px 5px; width:70px; }
 html[data-design="c"] .next-swap{ background:#16221c; }
+
+/* Klokka ligger helt øverst i C, D og E, så det som dukker opp over den må også klare statuslinjen. */
+html[data-design="c"] #selectionInfo, html[data-design="d"] #selectionInfo, html[data-design="e"] #selectionInfo,
+html[data-design="c"] #dropHint, html[data-design="d"] #dropHint, html[data-design="e"] #dropHint{ top:calc(max(env(safe-area-inset-top), 20px) + 18px); }
+html[data-design="c"] #clockHint, html[data-design="d"] #clockHint, html[data-design="e"] #clockHint{ top:calc(max(env(safe-area-inset-top), 20px) + 100px); }
 
 /* ---------- D Natt: svart, store tall, ringer ---------- */
 html[data-design="d"]{ --field-avatar-font:15px; }
@@ -531,7 +538,7 @@ html[data-design="e"] .match-clock-center{ gap:0; flex:1; }
 html[data-design="e"] .score-btn{ background:var(--ui-sheet); border:0; border-radius:13px; font-family:var(--ui-font); font-size:26px; font-weight:700; min-width:46px; padding:6px 8px; }
 html[data-design="e"] #field{
   --field-avatar-size:34px; --field-avatar-font:12px; --field-label-font:14.5px; --field-timer-font:15px; --field-token-width:100%; --field-label-max-w:100%;
-  padding:calc(max(env(safe-area-inset-top), 20px) + 84px) calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left)); gap:5px;
+  padding:calc(max(env(safe-area-inset-top), 20px) + 94px) calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left)); gap:5px;
 }
 html[data-design="e"] .field-row{ display:contents; }
 html[data-design="e"] .field-token{

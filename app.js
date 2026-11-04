@@ -315,13 +315,14 @@
 
   // The version shown on the launcher - bump on every push, together with
   // APP_VERSION and CACHE_NAME in sw.js (that change is what phones detect).
-  var APP_VERSION = '2.4.0';
+  var APP_VERSION = '2.4.1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
   // footer on the launcher) - newest first, one entry per version bump.
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.4.1', text: 'Fikset at navnene du hadde skrevet inn forsvant hvis du trykket på Bytteplan eller Cup-oppsett mens du satte opp en ny økt. Knappene vises nå først når laget er satt opp. «Neste bytte» hopper ikke lenger mellom spillere som står likt. Knapper og tekst øverst er flyttet litt ned, klar av statuslinjen på iPhone.' },
     { version: '2.4.0', text: 'Stor oppdatering: velg mellom fem design under Innstillinger. Kampslutt på ett ark, Angre rett etter hvert bytte, Neste bytte alltid synlig, bytteplan, omganger med fløyte, keeper på 5v5 og større, fast stall, cup-oppsett, statistikk og rapport å dele. Del økten med lenke og QR, og med en egen foreldrelenke. Samtidige bytter fra to trenere går ikke lenger tapt, og økter er ikke lenger åpne for alle. Appen spør nå før den oppdaterer seg.' },
     { version: '2.3.5', text: 'Tryggere på banen: appen starter raskt også med dårlig dekning, en telefon som har sovet kan ikke lenger overskrive kampen, og kamper som ikke får lagret seg uten nett sendes automatisk senere. Angre etter en pause og «Fjern dødtid» endrer ikke lenger spilletiden feil. Du må også bekrefte før en delt økt erstatter kampen på enheten.' },
     { version: '2.3.4', text: 'Glemt kampslutt: når kamptiden er ute og det har vært stille en stund, kommer et ark med «Tilbakestill til kampslutt», «Fortsett» og «Still manuelt». Etter «Fortsett» lyser klokka og viser hvor kamptiden endres. Du kan også stille klokka tilbake fra overtidsklokka og fra Korriger tid.' },
@@ -2533,8 +2534,10 @@
   // identical until something changes one of them) is broken by a genuine
   // random pick among the tied ids, rather than always favoring whichever
   // one happened to sort first.
-  /** @param {string[]} ids @param {(id: string) => number} metricFor @param {boolean} [lowest] @returns {string|null} */
-  function pickByMetric(ids, metricFor, lowest){
+  // `keep`: står denne fortsatt blant de like, beholdes den. Trekningen skal bare skje én gang, ikke hver
+  // gang det regnes på nytt (ellers hopper «Neste bytte» mellom spillerne hvert sekund).
+  /** @param {string[]} ids @param {(id: string) => number} metricFor @param {boolean} [lowest] @param {string|null} [keep] @returns {string|null} */
+  function pickByMetric(ids, metricFor, lowest, keep){
     /** @type {string|null} */
     var best = null;
     /** @type {number|null} */
@@ -2553,6 +2556,7 @@
       }
     });
     if (tied.length <= 1) return best;
+    if (keep && tied.indexOf(keep) !== -1) return keep;
     return tied[Math.floor(Math.random() * tied.length)];
   }
 
@@ -2586,10 +2590,8 @@
     var keeper = keeperIdNow();
     var due = state.onField.filter(function(id){ return id !== keeper && fieldElapsed(id, now) >= state.defaultDurationMs; });
     if (due.length === 0) return null;
-    var fieldId = pickByMetric(due, function(id){ return msFor(id, now); });
-    var benchId = state.swapSuggestionBenchMode === 'cumulative'
-      ? pickByMetric(state.onBench, function(id){ return currentPeriodFieldMs(id, now); }, true)
-      : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); });
+    var fieldId = pickByMetric(due, function(id){ return msFor(id, now); }, false, nextSwapPick.fieldId);
+    var benchId = pickNextBench(now);
     if (!fieldId || !benchId) return null;
     return { fieldId: fieldId, benchId: benchId };
   }
@@ -5128,6 +5130,11 @@
     /** @type {HTMLInputElement} */ (qs('modalHomeName')).value = homeName();
     /** @type {HTMLInputElement} */ (qs('modalHomeAbbr')).value = homeAbbr();
     qs('openShareBtn').hidden = !sessionCode;
+    // Bytteplan, cup og eksport handler om et lag som finnes. Mens laget settes opp er det ingenting å vise.
+    var noTeamYet = !!setup && state.players.length === 0;
+    qs('openPlanBtn').hidden = noTeamYet;
+    qs('openCupBtn').hidden = noTeamYet;
+    els.exportBtn.hidden = noTeamYet;
     qs('attendanceWrap').hidden = !setup || roster.length === 0;
     if (setup) renderAttendance();
     updateModalFormatButtons();
@@ -6642,8 +6649,24 @@
     return planCache.plan;
   }
 
+  // Den forrige trekningen, se pickByMetric().
+  /** @type {{fieldId:string|null, benchId:string|null}} */
+  var nextSwapPick = { fieldId: null, benchId: null };
+  /** @param {number} now @returns {string|null} */
+  function pickNextBench(now){
+    return state.swapSuggestionBenchMode === 'cumulative'
+      ? pickByMetric(state.onBench, function(id){ return currentPeriodFieldMs(id, now); }, true, nextSwapPick.benchId)
+      : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); }, false, nextSwapPick.benchId);
+  }
+
   /** @param {number} now @returns {{fieldId:string, benchId:string, inMs:number}|null} */
   function computeNextSwap(now){
+    var next = findNextSwap(now);
+    if (next) nextSwapPick = { fieldId: next.fieldId, benchId: next.benchId };
+    return next;
+  }
+  /** @param {number} now @returns {{fieldId:string, benchId:string, inMs:number}|null} */
+  function findNextSwap(now){
     if (state.onBench.length === 0 || state.onField.length === 0) return null;
     if (state.planEnabled){
       var plan = cachedPlan(now);
@@ -6655,15 +6678,9 @@
     var due = computeSwapSuggestion(now);
     if (due) return { fieldId: due.fieldId, benchId: due.benchId, inMs: 0 };
     var keeper = keeperIdNow();
-    /** @type {any} */
-    var soonest = null;
-    state.onField.forEach(function(id){
-      if (id !== keeper && (!soonest || fieldElapsed(id, now) > fieldElapsed(soonest, now))) soonest = id;
-    });
+    var soonest = pickByMetric(state.onField.filter(function(id){ return id !== keeper; }), function(id){ return fieldElapsed(id, now); }, false, nextSwapPick.fieldId);
     if (!soonest) return null;
-    var benchId = state.swapSuggestionBenchMode === 'cumulative'
-      ? pickByMetric(state.onBench, function(id){ return currentPeriodFieldMs(id, now); }, true)
-      : pickByMetric(state.onBench, function(id){ return benchElapsed(id, now); });
+    var benchId = pickNextBench(now);
     if (!benchId) return null;
     return { fieldId: soonest, benchId: benchId, inMs: Math.max(0, state.defaultDurationMs - fieldElapsed(soonest, now)) };
   }
@@ -7209,7 +7226,8 @@
       if (next) animateAndPerformSwap(next.fieldId, next.benchId);
     });
     els.planBtn.addEventListener('click', openPlanModal);
-    qs('openPlanBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openPlanModal(); });
+    // Disse legger seg oppå innstillingene og går tilbake dit: å lukke dem ville kastet det som er skrevet inn.
+    qs('openPlanBtn').addEventListener('click', openPlanModal);
     qs('planCloseBtn').addEventListener('click', function(){ els.planModal.classList.remove('open'); });
     qs('planEnabledToggle').addEventListener('change', function(e){
       if (!canEdit()) return;
@@ -7221,7 +7239,7 @@
       putInGoal(e.target.dataset.id);
       renderPlanModal();
     });
-    qs('openCupBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openCupModal(); });
+    qs('openCupBtn').addEventListener('click', openCupModal);
     qs('cupCloseBtn').addEventListener('click', function(){ els.cupModal.classList.remove('open'); });
     qs('cupAddBtn').addEventListener('click', function(){
       if (!canEdit()) return;
@@ -7232,7 +7250,7 @@
       if (!canEdit()) return;
       saveCup({ name: e.target.value.trim(), matches: cupMatches() });
     });
-    qs('openShareBtn').addEventListener('click', function(){ els.settingsModal.classList.remove('open'); openShareSheet(); });
+    qs('openShareBtn').addEventListener('click', openShareSheet);
     qs('shareCloseBtn').addEventListener('click', function(){ els.shareModal.classList.remove('open'); });
     els.matchSummaryShareBtn.addEventListener('click', function(){ shareMatchReport(els.matchSummaryShareBtn); });
     els.historyStatsBtn.addEventListener('click', function(){

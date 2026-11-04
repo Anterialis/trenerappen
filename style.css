@@ -347,7 +347,7 @@
      already-tuned +26px past the max(env,20) floor instead of re-deriving
      a new magic number for yet another top-of-screen control. */
   .account-btn{
-    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 26px); right:16px; z-index:1;
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 36px); right:16px; z-index:1;
     display:flex; flex-direction:column; align-items:center; gap:4px;
     background:none; border:none; cursor:pointer; padding:0;
   }
@@ -418,7 +418,7 @@
        tuned value - even a real notch/Dynamic Island's reported inset
        wasn't quite enough on its own before that bump, same symptom, see
        header's comment for the fuller story. */
-    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 26px); left:16px;
+    position:absolute; top:calc(max(env(safe-area-inset-top), 20px) + 36px); left:16px;
     width:36px; height:36px; border-radius:50%; border:none;
     background:rgba(255,255,255,.10); color:#fff; font-size:20px;
     display:flex; align-items:center; justify-content:center; cursor:pointer;
@@ -489,7 +489,7 @@
     position:absolute; inset:0; z-index:310;
     display:flex; flex-direction:column;
     background:linear-gradient(165deg, var(--navy-2), var(--navy) 55%, #081120);
-    padding:calc(max(env(safe-area-inset-top), 20px) + 67px) 20px calc(env(safe-area-inset-bottom) + 20px);
+    padding:calc(max(env(safe-area-inset-top), 20px) + 77px) 20px calc(env(safe-area-inset-bottom) + 20px);
     opacity:0; pointer-events:none; transform:scale(1.03);
     transition:opacity .3s ease, transform .3s ease;
   }
@@ -499,7 +499,7 @@
      puts its back button inline in the header row instead (no floating
      button to clear), and Register's centered card doesn't sit under one
      either, so both can start much closer to the top. */
-  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 26px); }
+  .history-screen.compact-top{ padding-top:calc(max(env(safe-area-inset-top), 20px) + 36px); }
   /* margin-bottom: the back button/title row otherwise sat right on top
      of whatever comes next (e.g. #settingsStorageNote) - noticeably
      cramped on the compact-top screens, which have no floating button
@@ -634,7 +634,7 @@
        #app above) briefly up under that overlay while actively dragging
        past the top edge; fixing that needs a touchmove guard, deliberately
        not added (yet). */
-    padding-top:calc(max(env(safe-area-inset-top), 20px) + 26px);
+    padding-top:calc(max(env(safe-area-inset-top), 20px) + 36px);
     background:linear-gradient(180deg, rgba(22,41,74,.82), rgba(15,31,54,.82));
     -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);
     backdrop-filter:blur(var(--glass-blur)) saturate(160%);
@@ -2570,7 +2570,7 @@
      control and risked the same faded/diffuse look. Matched to the same
      +26px for consistency. */
   .auto-pause-notice{
-    position:absolute; left:50%; top:calc(max(env(safe-area-inset-top), 20px) + 26px);
+    position:absolute; left:50%; top:calc(max(env(safe-area-inset-top), 20px) + 36px);
     transform:translate(-50%,-140%);
     z-index:400;
     max-width:86%;

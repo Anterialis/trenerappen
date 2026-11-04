@@ -303,6 +303,33 @@ for (const design of ['a', 'b', 'c', 'd', 'e']) {
     await br.close(); srv.close();
   });
 }
+for (const design of ['a', 'b', 'c', 'd', 'e']) {
+  test('T-' + design + ' statuslinjen: alt interaktivt ligger minst 10 px nedenfor den, design ' + design, async () => {
+    const srv = await serve({ mockSdk: MOCK_SDK });
+    const br = await webkit.launch();
+    const ctx = await br.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const page = await ctx.newPage();
+    await page.addInitScript(([k, s, d]) => { if (!localStorage.getItem(k)) { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('spillerbytte_design_v1', d); localStorage.setItem('spillerbytte_tips_seen_v1', '{"swap":1,"goal":1,"due":1}'); } }, [KEYS.state, team(), design]);
+    await page.goto(srv.url);
+    await page.waitForSelector('#launcherTile');
+    const statusBar = 20; // max(env(safe-area-inset-top), 20px) uten notch
+    const topOf = (sel) => page.locator(sel).evaluate(el => el.getBoundingClientRect().top);
+    assert.ok(await topOf('#accountBtn') >= statusBar + 10, 'Mitt lag');
+    await page.click('#launcherResumeBtn'); await sleep(700);
+    for (const sel of ['#undoBtn', '#settingsBtn', '#matchClock', '#homeScoreBtn']) {
+      const t = await topOf(sel);
+      assert.ok(t >= statusBar + 10, sel + ' ligger på ' + t);
+    }
+    await page.click('#field [data-id="p1"]');
+    await page.waitForSelector('#selectionInfo.visible'); await sleep(250);
+    const info = await topOf('#selectionInfo');
+    assert.ok(info >= statusBar + 10, 'spillerinfo ligger på ' + info);
+    const clockBottom = await page.locator('#matchCountdown').evaluate(el => el.getBoundingClientRect().bottom);
+    const firstToken = await page.locator('#field .token').first().evaluate(el => el.getBoundingClientRect().top);
+    assert.ok(firstToken >= clockBottom - 2, 'første spiller under klokka: ' + firstToken + ' / ' + clockBottom);
+    await br.close(); srv.close();
+  });
+}
 test('S1 _headers: CSP blokkerer ikke noe appen selv gjør, og stopper innsprøytet kode', async () => {
   const lines = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n').filter(l => /^\s+\S+:/.test(l));
   const headers = {}; lines.forEach(l => { const i = l.indexOf(':'); headers[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
