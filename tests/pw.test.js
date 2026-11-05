@@ -370,6 +370,61 @@ test('T3 stående avstand, og forhåndsvisning på Mac i et lavt vindu beholder 
   assert.ok(offset > 40, 'forhåndsvisningen har stående avstand: ' + offset);
   await br.close(); srv.close();
 });
+// Hjemskjermen med pågående kamp. Admin ser også historikkruta, som gjør innholdet høyere.
+async function openHome(br, srv, design, viewport, admin) {
+  const ctx = await br.newContext({ viewport, serviceWorkers: 'block' });
+  const page = await ctx.newPage();
+  await page.addInitScript(([k, s, d]) => {
+    const mm = window.matchMedia.bind(window); window.matchMedia = (q) => /hover: none/.test(q) ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q);
+    if (!localStorage.getItem(k)) { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('spillerbytte_design_v1', d); }
+  }, [KEYS.state, team(), design]);
+  await page.goto(srv.url);
+  await page.waitForSelector('#launcherResumeBtn:not([hidden])');
+  if (admin) await page.evaluate(() => { document.getElementById('historyTile').hidden = false; });
+  await sleep(100);
+  return page;
+}
+const rectOf = (page, sel) => page.locator(sel).evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; });
+const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+for (const design of ['a', 'b', 'c', 'd', 'e']) {
+  test('H-' + design + ' hjemskjermen på rotert telefon: alt synlig uten scrolling, design ' + design, async () => {
+    const srv = await serve({ mockSdk: MOCK_SDK });
+    const br = await webkit.launch();
+    for (const viewport of [{ width: 844, height: 390 }, { width: 667, height: 375 }, { width: 568, height: 320 }]) {
+      const page = await openHome(br, srv, design, viewport, true);
+      const ids = ['#accountBtn', '#launcherResumeBtn', '#launcherTile', '#coinTile', '#settingsTile', '#historyTile', '#launcherVersionBtn'];
+      const rects = {};
+      for (const sel of ids) {
+        const r = rects[sel] = await rectOf(page, sel);
+        assert.ok(r.top >= 0 && r.bottom <= viewport.height && r.left >= 0 && r.right <= viewport.width, sel + ' utenfor ' + viewport.width + ': ' + JSON.stringify(r));
+      }
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) assert.ok(!overlaps(rects[ids[i]], rects[ids[j]]), ids[i] + ' overlapper ' + ids[j]);
+      await page.click('#launcherTile'); await page.waitForSelector('#launcherChoiceOverlay.open');
+      await sleep(350);
+      await page.locator('#launcherChoiceCancelBtn').scrollIntoViewIfNeeded();
+      const cancel = await rectOf(page, '#launcherChoiceCancelBtn'), tile = await rectOf(page, '#launcherTile');
+      assert.ok(cancel.bottom <= tile.bottom, 'Avbryt er klippet av ruta på ' + viewport.width + ': ' + cancel.bottom + ' / ' + tile.bottom);
+      await page.close();
+    }
+    await br.close(); srv.close();
+  });
+}
+test('H2 hjemskjermen på små telefoner: «Mitt lag» ligger ikke oppå noe, og alt kan nås', async () => {
+  const srv = await serve({ mockSdk: MOCK_SDK });
+  const br = await webkit.launch();
+  for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 844 }]) {
+    for (const admin of [false, true]) {
+      const page = await openHome(br, srv, 'a', viewport, admin);
+      const account = await rectOf(page, '#accountBtn'), resume = await rectOf(page, '#launcherResumeBtn');
+      assert.ok(!overlaps(account, resume), 'overlapp ' + viewport.width + ' admin=' + admin);
+      await page.locator('#launcherVersionBtn').scrollIntoViewIfNeeded();
+      const version = await rectOf(page, '#launcherVersionBtn');
+      assert.ok(version.bottom <= viewport.height, 'versjonsknappen kan nås ' + viewport.width + ' admin=' + admin);
+      await page.close();
+    }
+  }
+  await br.close(); srv.close();
+});
 test('S1 _headers: CSP blokkerer ikke noe appen selv gjør, og stopper innsprøytet kode', async () => {
   const lines = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n').filter(l => /^\s+\S+:/.test(l));
   const headers = {}; lines.forEach(l => { const i = l.indexOf(':'); headers[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });

@@ -98,9 +98,11 @@ B-E: ingen hvite flater, tilstand står også som tekst (BYTT, BYTT NÅ), kontra
 
 **Statuslinjen:** innhold øverst (knapper, klokke, tekst) holder seg klar av statuslinjen, mens bakgrunnen går helt opp, så iOS kan tone innholdet ut bak den ved scrolling. Avstanden settes med `--top-clear` og `--top-clear-tight` (`style.css`); nytt innhold øverst skal bruke dem. På rotert telefon (landskap, høyde under 500 px) er begge 4 px, siden det ikke er statuslinje eller øy i den kanten. iPad og forhåndsvisningen på Mac beholder stående verdier.
 
+**Hjemskjermen på små flater:** på rotert telefon ligger den i to kolonner (rutene til venstre, «Fortsett kampen» og versjon til høyre), så alt får plass uten scrolling. På høykant under 700 px starter innholdet under «Mitt lag» og kan scrolles om det ikke får plass.
+
 ## Delt økt (Supabase `sessions`)
 
-- Koden er nøkkelen: 6 tegn fra et alfabet uten 0/O/1/I/L, første tegn er en bokstav (gamle tresifrede koder virker til de er ryddet bort). **Eier** = enheten som opprettet økten. Tilgang for andre: Redigering eller Kun les (`canEdit()`/`isMaster()`, håndheves i appen).
+- Koden er nøkkelen: 6 tegn fra et alfabet uten 0/O/1/I/L, første tegn er en bokstav (de gamle tresifrede kodene er slettet). **Eier** = enheten som opprettet økten. Tilgang for andre: Redigering eller Kun les (`canEdit()`/`isMaster()`, håndheves i appen).
 - **Tilgang går gjennom databasefunksjoner:** `create_session`, `get_session`, `update_session`, `get_session_view`. Finnes de ikke (steg 1 ikke kjørt: 404/PGRST202) brukes tabellen direkte som før (`rpcAvailable`), så app og database kan oppdateres i vilkårlig rekkefølge.
 - **Skriving er betinget:** serveren tar bare imot en `rev` strengt høyere enn radens (en sovende telefon kan ikke rulle kampen tilbake). Ingenting skrives uten at noe er endret (`remoteDirty`); mislykket skriving prøves igjen av hjerteslaget.
 - **Først lese, så bestemme:** etter (gjen)tilkobling, når nettet er tilbake, når appen kommer i forgrunnen, ved ping og jevnlig (30 s, 10 s uten kanal) kjører `reconcileWithServer()`. Gjelder også lesere.
@@ -126,11 +128,11 @@ RLS slik den faktisk er (sjekket mot produksjon 4. november 2026):
 - `match_history`: Admin select/update/delete (`exists` i `admins`), Public insert, og select for `authenticated` på delte kamper.
 - `team_settings`: bare egen rad.
 - `keepalive`: åpen (ingen persondata).
-- `sessions`: åpen for alle (les, skriv, slett) og i `supabase_realtime` frem til steg 2 er kjørt.
+- `sessions`: ingen direkte tilgang for `anon`/`authenticated`, ingen policyer og ikke i `supabase_realtime`. All tilgang går gjennom funksjonene, og krever at man kjenner koden.
 
 **Personvern i to steg** (`supabase/migrations/`, nøyaktig denne rekkefølgen):
 1. `..._personvern_steg1_rpc.sql`: **kjørt i produksjon 4. november 2026.** Bare tillegg: funksjoner, `view_code`, `extras`, ping-trigger, størrelsesgrense på `match_history`. Gamle telefoner virker som før.
-2. `..._personvern_steg2_las.sql`: **ikke kjørt ennå.** Kjøres når alle telefoner har åpnet 2.4.0 med nett. Fjerner all direkte tilgang til `sessions`, tar tabellen ut av Realtime og sletter de tresifrede øktene.
+2. `..._personvern_steg2_las.sql`: **kjørt i produksjon 5. november 2026.** Fjernet all direkte tilgang til `sessions`, tok tabellen ut av Realtime og slettet de tresifrede øktene. Deling mellom to telefoner og foreldrevisning er bekreftet med `tests/e2e.prod.js` etterpå.
 
 **Når en ny kolonne tas i bruk i `app.js`:** legg den i en migrasjon *og* kjør den samtidig (en insert med ukjent kolonne feiler hele raden; slik ble ingen kamp lagret til historikk i en periode). Nye lagvalg legges i `extras`, ikke som kolonner.
 

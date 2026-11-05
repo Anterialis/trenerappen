@@ -27,6 +27,36 @@ html:not([data-design]) .modal-card-dark, html:not([data-design]) .history-scree
   box-shadow:0 10px 26px rgba(0,0,0,.35); transition:transform .15s ease;
 }
 .launcher-resume[hidden]{ display:none; }
+/* Minste iPhone på siden: med admin-ruta i tillegg må krediteringen vike for «Mitt lag». */
+@media (orientation: landscape) and (max-height: 340px){
+  #viewport-frame:not(.desktop-preview) .launcher-credit{ display:none; }
+}
+/* Lav skjerm på høykant: innholdet starter under «Mitt lag» i stedet for å midtstilles inn i den.
+   Får det likevel ikke plass (admin har en rute til), kan det scrolles, og «safe» hindrer at toppen klippes. */
+@media (orientation: portrait) and (max-height: 700px){
+  .launcher-screen{ padding-top:calc(var(--top-clear) + 56px); overflow-y:auto; justify-content:safe center; }
+}
+/* Rotert telefon: rutene alene er nesten like høye som skjermen, så «Fortsett kampen» ble klippet øverst
+   og versjonsknappen havnet under kanten. To kolonner gir plass til alt uten scrolling. */
+@media (orientation: landscape) and (max-height: 500px){
+  #viewport-frame:not(.desktop-preview) .launcher-screen{
+    display:grid; grid-template-columns:min(380px,62%) minmax(0,300px); grid-template-rows:1fr repeat(4,auto) 1fr;
+    column-gap:28px; justify-content:center; align-items:center; overflow-y:auto;
+    padding:8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
+  }
+  #viewport-frame:not(.desktop-preview) .launcher-tiles-row{ grid-column:1; grid-row:1 / -1; }
+  #viewport-frame:not(.desktop-preview) .launcher-resume{ grid-column:2; grid-row:2; margin:0; }
+  #viewport-frame:not(.desktop-preview) .history-tile{ grid-column:2; grid-row:3; margin:12px 0 0; max-width:none; }
+  #viewport-frame:not(.desktop-preview) .launcher-credit{ grid-column:2; grid-row:4; justify-self:center; margin-top:14px; }
+  #viewport-frame:not(.desktop-preview) .launcher-version{ grid-column:2; grid-row:5; justify-self:center; margin-top:2px; }
+  /* Lave skjermer: det som ikke får plass skal kunne scrolles, ikke forsvinne under kanten. */
+  #viewport-frame:not(.desktop-preview) .coin-flip-screen{ overflow-y:auto; justify-content:safe center; }
+  #viewport-frame:not(.desktop-preview) .launcher-choice-overlay{ overflow-y:auto; align-items:safe center; }
+  #viewport-frame:not(.desktop-preview) .modal-card{ max-height:calc(100dvh - 16px); overflow-y:auto; }
+  /* Her kan øya ligge på siden, så knappene i hjørnene må holde seg klar av den. */
+  #viewport-frame:not(.desktop-preview) .account-btn{ right:calc(16px + env(safe-area-inset-right)); }
+  #viewport-frame:not(.desktop-preview) .coin-flip-close{ left:calc(16px + env(safe-area-inset-left)); }
+}
 .launcher-resume:active{ transform:scale(.98); }
 .launcher-resume-text{ display:flex; flex-direction:column; gap:1px; min-width:0; }
 .launcher-resume-text b{ font-size:16px; font-weight:700; }

@@ -12,3 +12,6 @@ supabase/.branches/
 # Testene har egne avhengigheter. Appen selv har ingen.
 tests/node_modules/
 tests/e2e-code.txt
+
+# Personlige tillatelser for Claude Code på denne maskinen.
+.claude/settings.local.json
