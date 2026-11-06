@@ -303,6 +303,32 @@ for (const design of ['a', 'b', 'c', 'd', 'e']) {
     await br.close(); srv.close();
   });
 }
+test('NB1 WebKit, design A: «Neste bytte» er dempet (ikke mørkeblå) og blir grønn når det er tid for bytte', async () => {
+  const srv = await serve({ mockSdk: MOCK_SDK });
+  const br = await webkit.launch();
+  const ctx = await br.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(([k, s]) => { if (!localStorage.getItem(k)) { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('spillerbytte_design_v1', 'a'); localStorage.setItem('spillerbytte_tips_seen_v1', '{"swap":1,"goal":1,"due":1}'); } }, [KEYS.state, team({ matchDurationMs: 900000, defaultDurationMs: 60000 })]);
+  await page.goto(srv.url);
+  await page.click('#launcherResumeBtn'); await sleep(700);
+  await page.waitForSelector('#nextSwapBar:not([hidden])');
+  const look = () => page.evaluate(() => {
+    const bar = document.getElementById('nextSwapBar'), btn = document.getElementById('nextSwapBtn'), lab = document.getElementById('nextSwapLabel');
+    return { bg: getComputedStyle(bar).backgroundColor, btn: getComputedStyle(btn).backgroundColor, upper: getComputedStyle(lab).textTransform };
+  });
+  const calm = await look();
+  assert.ok(/rgba\(15, 31, 54, 0\.05/.test(calm.bg), 'svak tone, ikke mørkeblå: ' + calm.bg);
+  assert.strictEqual(calm.btn, 'rgb(15, 31, 54)', 'liten mørk knapp');
+  assert.strictEqual(calm.upper, 'uppercase');
+  await page.evaluate(() => document.getElementById('nextSwapBar').classList.add('ready'));
+  await sleep(300);
+  const ready = await look();
+  assert.ok(/rgba\(47, 191, 99, 0\.14/.test(ready.bg), 'grønt skjær: ' + ready.bg);
+  assert.strictEqual(ready.btn, 'rgb(47, 191, 99)', 'grønn knapp');
+  assert.deepStrictEqual(errors, []);
+  await br.close(); srv.close();
+});
 for (const design of ['a', 'b', 'c', 'd', 'e']) {
   test('T-' + design + ' statuslinjen: alt interaktivt ligger minst 10 px nedenfor den, design ' + design, async () => {
     const srv = await serve({ mockSdk: MOCK_SDK });

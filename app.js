@@ -316,13 +316,14 @@
 
   // The version shown on the launcher - bump on every push, together with
   // APP_VERSION and CACHE_NAME in sw.js (that change is what phones detect).
-  var APP_VERSION = '2.5.0';
+  var APP_VERSION = '2.5.1';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
   // footer on the launcher) - newest first, one entry per version bump.
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.5.1', text: '«Neste bytte» under banen er dempet: lys flate i stedet for mørkeblå, og banneren blir svakt grønn når det er tid for bytte.' },
     { version: '2.5.0', text: 'Gjennomtestet før cup. Når du deler en økt, starter den nå som Kun les; velg Redigering for å la medtreneren endre. Delt økt: en telefon som har vært uten nett kan ikke lenger skrive over den andre trenerens bytter og mål, og endringer fra en avsluttet kamp havner ikke i neste. Rettet blant annet angre over halvtid, multiBytte som kunne sette feil spiller i mål, og at et tomt navn slettet en spiller på banen. Keeperen får ikke lenger byttemerker, byttelyden kan slås av, oppdateringsbanneret venter til klokka står, og benken får plass på små iPhoner.' },
     { version: '2.4.3', text: 'Hjemskjermen får plass når telefonen ligger på siden, og «Mitt lag» ligger ikke lenger oppå «Fortsett kampen» på små telefoner.' },
     { version: '2.4.2', text: 'Finjustert avstanden øverst på skjermen. Når telefonen ligger på siden, går innholdet nå helt opp mot kanten.' },
