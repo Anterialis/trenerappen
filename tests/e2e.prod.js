@@ -35,9 +35,16 @@ const waitFor = async (fn, ms, what) => { const t0 = Date.now(); while (Date.now
   console.log('kode', code, /^[A-HJKMNP-Z][A-HJKMNP-Z2-9]{5}$/.test(code) ? '(riktig format)' : '(FEIL FORMAT)');
   assert.ok(/^[A-HJKMNP-Z][A-HJKMNP-Z2-9]{5}$/.test(code));
   await A.page.waitForSelector('#shareViewQr svg', { timeout: 5000 });
-  assert.strictEqual(await A.page.locator('#shareEditQr svg').count(), 1, 'QR for medtrener');
   const viewUrlSet = await A.page.evaluate(() => !document.getElementById('shareViewBlock').hidden);
   assert.ok(viewUrlSet, 'foreldrelenke vises');
+  // En ny deling starter som Kun les (2.5.0): bare foreldrelenken vises, til eieren velger Redigering.
+  assert.strictEqual(await A.page.evaluate(() => document.getElementById('shareEditBlock').hidden), true, 'ingen medtrenerkode i Kun les');
+  await A.page.click('#shareCloseBtn'); await sleep(350);
+  assert.strictEqual(await A.page.locator('#shareModeSegmented [data-mode="read"]').evaluate(e => e.classList.contains('active')), true, 'Kun les er valgt fra start');
+  await A.page.click('#shareModeSegmented [data-mode="edit"]'); await sleep(300);
+  await A.page.click('#openShareBtn');
+  await A.page.waitForSelector('#shareEditQr svg', { timeout: 5000 });
+  assert.strictEqual(await A.page.locator('#shareEditQr svg').count(), 1, 'QR for medtrener etter Redigering');
   await A.page.click('#shareCloseBtn'); await sleep(350);
   await A.page.click('#settingsCancelBtn'); await sleep(350);
   await A.page.waitForFunction(() => !document.getElementById('syncDot').classList.contains('offline'), null, { timeout: 15000 });

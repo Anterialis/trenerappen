@@ -506,15 +506,15 @@ test('B11 lag i gang: Bytteplan og Cup legger seg oppå, innstillingene og endri
   }
 });
 
-test('B12 Neste bytte: ved likt trekkes én tilfeldig som blir stående, også når byttetiden nås', async () => {
-  const seen = new Set();
-  for (let round = 0; round < 12; round++) {
+test('B12 Neste bytte: ved likt velges én som blir stående, også når byttetiden nås, og den er lik på alle telefoner', async () => {
+  const picks = new Set();
+  for (let round = 0; round < 4; round++) {
     const be = makeBackend();
     const A = loadApp(be, { storage: { [KEYS.state]: team() } });
     await sleep(2); A.t.renderAll();
     A.t.togglePlayPause();
     const first = A.t.computeNextSwap(A.clock.t);
-    seen.add(first.fieldId + '|' + first.benchId);
+    picks.add(first.fieldId + '|' + first.benchId);
     for (let i = 0; i < 300; i++) { // ti minutter, før og etter byttetiden på 3 min
       A.adv(2000);
       const n = A.t.computeNextSwap(A.clock.t);
@@ -522,7 +522,8 @@ test('B12 Neste bytte: ved likt trekkes én tilfeldig som blir stående, også n
     }
     A.close();
   }
-  assert.ok(seen.size > 1, 'trekningen er tilfeldig: ' + seen.size);
+  // To trenere med samme kamp får samme forslag (ellers kunne de bytte hver sin og gjøre to bytter).
+  assert.strictEqual(picks.size, 1, 'samme valg hver gang for samme kamp');
 });
 test('B13 Neste bytte: bytter spiller når noen faktisk ikke lenger står likt, og knappen bytter den som vises', async () => {
   const be = makeBackend();
@@ -558,7 +559,8 @@ test('N-plan alle får omtrent like mye, keeper utenfor rotasjonen', async () =>
   A.t.setHistoryCache && 0;
   A.t.togglePlayPause(); A.adv(5 * MIN); A.t.performSwap('b', 'h'); A.t.saveState();
   const plan2 = A.t.computeRotationPlan(A.clock.t);
-  assert.ok(plan2.changes.every(c => c.atMs > 5 * MIN));
+  assert.ok(plan2.changes.every(c => c.atMs >= 5 * MIN), 'ingen bytter bakover i tid');
+  assert.ok(plan2.changes.length > 0 && plan2.changes[0].atMs - 5 * MIN < 30000, 'de som har nådd byttetiden står for tur nå, ikke om et halvt minutt');
   A.close();
 });
 test('N-omgang klokka stopper nøyaktig på halvtid, full tid varsles, glemt kampslutt lar seg ikke lure', async () => {
@@ -1039,6 +1041,358 @@ test('M5 inngangsanimasjon bare på spillere som faktisk er flyttet', async () =
   assert.strictEqual(A.qa('.token-enter').length, 2, 'bare de to som ble byttet');
   A.close();
 });
+// ---------- KLOKKE: funn fra testrunden 5. november 2026 ----------
+async function bootK(extra) {
+  const be = makeBackend();
+  const A = loadApp(be, { audioState: 'running', storage: { [KEYS.state]: team(extra) } });
+  await sleep(5);
+  const rb = A.w.document.getElementById('launcherResumeBtn'); if (rb) rb.click();
+  A.t.renderAll();
+  A.w.document.body.dispatchEvent(new A.w.Event('click', { bubbles: true }));
+  A.K = (id) => A.t.currentPeriodFieldMs(id, A.clock.t);
+  return A;
+}
+test('K1 angre over halvtid: kampen blir i 2. omgang, og Start starter klokka', async () => {
+  const A = await bootK({ halves: 2, matchDurationMs: 20 * MIN });
+  A.t.togglePlayPause(); A.adv(4 * MIN);
+  A.t.performSwap('p1', 'p4'); A.t.saveState();
+  A.adv(6 * MIN + 1000); A.t.checkMatchAlarms(A.clock.t);
+  assert.strictEqual(A.t.state.halfStage, 2);
+  A.adv(5 * MIN);
+  A.t.undoLastAction();
+  assert.strictEqual(A.t.state.halfStage, 2, 'fortsatt 2. omgang etter angre');
+  assert.strictEqual(A.t.matchClockElapsed(A.clock.t), 10 * MIN, 'klokka står på halvtid');
+  A.t.togglePlayPause(); A.adv(1000); A.t.checkMatchAlarms(A.clock.t);
+  assert.strictEqual(A.t.state.globalRunning, true, 'ett trykk på Start holder');
+  A.close();
+});
+test('K2 auto-pause: hjerteslaget før visibilitychange visker ikke ut fraværet', async () => {
+  const A = await bootK({ matchDurationMs: 120 * MIN });
+  A.t.togglePlayPause(); A.adv(10 * MIN);
+  A.setHidden(true);                         // låst: «sist i live» stemples her
+  A.adv(70 * MIN);
+  A.w.__hidden = false;                      // iOS kjører det forfalte intervallet før hendelsen
+  await sleep(8300);
+  assert.strictEqual(A.t.state.globalRunning, false, 'klokka er pauset');
+  assert.strictEqual(A.t.matchClockElapsed(A.clock.t), 10 * MIN, 'fryst der appen ble lagt bort');
+  A.close();
+});
+test('K3 lengre byttetid underveis: byttelyden kommer på den nye tiden', async () => {
+  const A = await bootK({ defaultDurationMs: 2 * MIN, matchDurationMs: 30 * MIN });
+  A.t.togglePlayPause();
+  A.adv(2 * MIN + 1000); A.t.renderAll();
+  A.click('settingsBtn');
+  const plus = A.q('#swapDurationStep button[data-d="1"]'); plus.click(); plus.click();
+  A.click('settingsOkBtn');
+  assert.strictEqual(A.t.state.defaultDurationMs, 4 * MIN);
+  A.adv(2 * MIN - 30000); A.t.renderAll();
+  const before = A.w.__audio.tones;
+  A.adv(31000); A.t.renderAll();
+  assert.strictEqual(A.w.__audio.tones - before, 2, 'byttelyd ved 4:00: ett dobbeltpip, selv om tre spillere når byttetiden samtidig');
+  A.close();
+});
+test('K4 30 t-spørsmålet kommer selv om 1 t-spørsmålet er besvart i samme innlasting', async () => {
+  const A = await bootK({ matchDurationMs: 60 * MIN });
+  A.t.togglePlayPause(); A.adv(5 * MIN); A.t.togglePlayPause();
+  A.setHidden(true); A.adv(70 * MIN); A.setHidden(false); await sleep(20);
+  assert.ok(A.open('idleSuggestModal'), '1 t-spørsmålet');
+  A.click('idleSuggestCancelBtn');
+  A.setHidden(true); A.adv(31 * 60 * MIN); A.setHidden(false); await sleep(20);
+  assert.ok(A.open('idleSuggestModal') && /30 timer/.test(A.q('#idleSuggestText').textContent), '30 t-spørsmålet');
+  A.close();
+});
+test('K5 «Sett klokka til» kan ikke gå forbi siste bytte', async () => {
+  const A = await bootK({ matchDurationMs: 20 * MIN });
+  A.t.togglePlayPause(); A.adv(5 * MIN);
+  A.t.performSwap('p1', 'p4'); A.t.saveState(); A.t.renderAll();
+  A.adv(1 * MIN);
+  A.click('settingsBtn'); A.click('openCorrectTimeBtn');
+  A.q('#manualClockTabs [data-tab="set"]').click();
+  const minus = A.q('#manualMinStep button[data-d="-1"]');
+  for (let i = 0; i < 4; i++) minus.click();
+  assert.ok(/siste bytte/.test(A.q('#manualClockPreview').textContent), 'forklarer grensen');
+  A.click('manualClockApplyBtn');
+  const clock = A.t.matchClockElapsed(A.clock.t);
+  assert.strictEqual(clock, 5 * MIN, 'stoppet ved byttet');
+  const sumK = ['p1', 'p2', 'p3', 'p4', 'p5'].reduce((a, id) => a + A.K(id), 0);
+  assert.strictEqual(sumK, 3 * clock, 'spilletid = 3 × klokka');
+  A.close();
+});
+test('K6 halvtid: senket kamptid hopper ikke tilbake, men låst telefon stopper nøyaktig på halvtid', async () => {
+  const A = await bootK({ halves: 2, matchDurationMs: 20 * MIN });
+  A.t.togglePlayPause(); A.adv(6 * MIN);
+  A.t.performSwap('p1', 'p4'); A.t.saveState();
+  A.adv(1 * MIN);
+  A.click('matchClock'); A.qa('#durationPresets button').find(x => x.textContent === '10').click(); A.click('durationPickerSaveBtn');
+  A.t.checkMatchAlarms(A.clock.t);
+  assert.strictEqual(A.t.state.halfStage, 2);
+  assert.strictEqual(A.t.matchClockElapsed(A.clock.t), 7 * MIN, 'klokka står der den var');
+  A.close();
+  const B = await bootK({ halves: 2, matchDurationMs: 10 * MIN });
+  B.t.togglePlayPause(); B.adv(3 * MIN);
+  B.setHidden(true); B.adv(5 * MIN); B.setHidden(false); await sleep(20);
+  B.t.checkMatchAlarms(B.clock.t);
+  assert.strictEqual(B.t.state.halfStage, 2);
+  assert.strictEqual(B.t.matchClockElapsed(B.clock.t), 5 * MIN, 'nøyaktig på halvtid');
+  B.close();
+});
+
+// ---------- DELT ØKT OG ANNET: funn fra testrunden 5. november 2026 ----------
+test('Y1 telefon som var uten nett og gjorde flest endringer, skriver ikke over den andre treneren', async () => {
+  const { be, A, B } = sharedPair();
+  await sleep(20);
+  B.client.offline = true;
+  A.t.recordOp({ t: 'goal', goal: { id: 'gA', team: 'home', playerId: 'p1', at: A.t.nowTs(), matchMs: 0 } }); A.t.saveState();
+  await sleep(10);
+  for (let i = 0; i < 3; i++) { B.t.performSwap(B.t.state.onField[0], B.t.state.onBench[0]); B.t.saveState(); await sleep(2); }
+  B.client.offline = false; B.w.dispatchEvent(new B.w.Event('online'));
+  await sleep(100);
+  const r = row(be).data;
+  assert.strictEqual(r.goalLog.length, 1, 'A sitt mål er med');
+  assert.strictEqual(r.swapCount, 3, 'B sine bytter er med');
+  assert.strictEqual(A.t.state.goalLog.length, 1); assert.strictEqual(B.t.state.goalLog.length, 1);
+  A.close(); B.close();
+});
+test('Y2 én trener uten nett: bytte, angre og bytte kommer fram uten tap og uten melding', async () => {
+  const be = makeBackend();
+  be.insertSession('123', team({ sessionOwnerDeviceId: 'devA', participants: [{ deviceId: 'devA', joinedAt: 1 }] }));
+  const A = loadApp(be, { storage: { [KEYS.state]: be.tables.sessions['123'].data, [KEYS.code]: '123', [KEYS.dev]: 'devA' } });
+  await sleep(20);
+  A.client.offline = true;
+  A.t.performSwap('p1', 'p4'); A.t.saveState();
+  A.t.undoLastAction();
+  A.t.performSwap('p2', 'p5'); A.t.saveState();
+  A.t.performSwap('p3', 'p4'); A.t.saveState();
+  A.client.offline = false; A.w.dispatchEvent(new A.w.Event('online'));
+  await sleep(100);
+  const r = row(be).data;
+  assert.deepStrictEqual(r.onField.slice().sort(), ['p1', 'p4', 'p5'], 'serveren har det som er på telefonen');
+  assert.deepStrictEqual(A.t.state.onField.slice().sort(), ['p1', 'p4', 'p5']);
+  assert.ok(!A.q('#autoPauseNotice').classList.contains('show'), 'ingen melding');
+  A.close();
+});
+test('Y3 handlinger fra en avsluttet kamp havner ikke i neste kamp, og treneren får beskjed', async () => {
+  const { be, A, B } = sharedPair();
+  await sleep(20);
+  A.t.togglePlayPause(); await sleep(10); A.adv(2 * MIN); B.adv(2 * MIN);
+  B.client.offline = true;
+  B.t.performSwap('p1', 'p4'); B.t.saveState();
+  B.t.recordOp({ t: 'clock', run: false }); B.t.saveState();
+  A.adv(1000); B.adv(1000);
+  A.t.recordOp({ t: 'endMatch', reorganize: false, nextOpponentName: 'Neste', nextOpponentAbbr: 'NES' }); A.t.saveState();
+  A.t.togglePlayPause(); A.adv(MIN); B.adv(MIN);
+  await sleep(10);
+  B.client.offline = false; B.w.dispatchEvent(new B.w.Event('online'));
+  await sleep(100);
+  const r = row(be).data;
+  assert.strictEqual(r.swapCount, 0, 'ingen gamle bytter i kamp 2');
+  assert.strictEqual(r.globalRunning, true, 'kamp 2 er ikke stoppet av en gammel pause');
+  assert.strictEqual(r.matchHistory.length, 1);
+  assert.ok(/uten nett/.test(B.q('#autoPauseNotice').textContent), 'B får beskjed');
+  A.close(); B.close();
+});
+test('Y4 Kampslutt-arket åpent på begge: den andre trenerens bekreftelse lager ikke en ekstra kamp', async () => {
+  const { be, A, B } = sharedPair();
+  await sleep(20);
+  A.t.togglePlayPause(); await sleep(10); A.adv(2 * MIN); B.adv(2 * MIN);
+  await sleep(20);
+  A.click('endBtn'); B.click('endBtn');
+  A.els().endSaveToggle.checked = false; B.els().endSaveToggle.checked = false;
+  A.click('endPeriodBtn');
+  await sleep(60);
+  B.click('endPeriodBtn');
+  await sleep(80);
+  assert.strictEqual(row(be).data.matchHistory.length, 1);
+  assert.strictEqual(B.open('endMatchModal'), false, 'arket lukkes');
+  A.close(); B.close();
+});
+test('Y5 Avslutt økten i en Kun les-økt gir ikke leseren redigering', async () => {
+  const { be, A, B } = sharedPair({ shareEditable: false });
+  await sleep(20);
+  A.t.resetMatch();
+  await sleep(50);
+  assert.strictEqual(B.t.canEdit(), false);
+  assert.strictEqual(row(be).data.shareEditable, false);
+  A.close(); B.close();
+});
+test('Y6 multiBytte: hver innbytter tar plassen til den hen byttes med, også i mål', async () => {
+  const be = makeBackend();
+  const ids = ['p1','p2','p3','p4','p5','p6','p7','p8','p9'];
+  const st = team({ players: ids.map(i => ({ id: i, name: 'N' + i })), onField: ids.slice(0, 7), onBench: ids.slice(7), fieldSize: 7, hasKeeper: true,
+    fieldSlotAssignment: ids.slice(0, 7), fieldTimers: Object.fromEntries(ids.slice(0, 7).map(i => [i, { baseElapsedMs: 0, sinceTs: 0 }])), benchTimers: Object.fromEntries(ids.slice(7).map(i => [i, { baseElapsedMs: 0, sinceTs: 0 }])) });
+  const A = loadApp(be, { storage: { [KEYS.state]: st } });
+  await sleep(5); A.t.renderAll();
+  A.t.recordOp({ t: 'swap', out: 'p7', in: 'p8' });
+  A.t.recordOp({ t: 'swap', out: 'p1', in: 'p9' });
+  A.t.renderAll();
+  const slots = A.t.state.fieldSlotAssignment;
+  assert.strictEqual(slots[0], 'p9', 'p9 i mål (byttet med keeper)');
+  assert.strictEqual(slots[6], 'p8', 'p8 på spissplassen');
+  assert.strictEqual(A.t.keeperIdNow(), 'p9');
+  A.close();
+});
+test('Y7 tomt navn på en spiller på banen fjerner ikke spilleren', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team({ cumulative: { p1: { fieldMs: 5 * MIN, benchMs: 0 } } }) } });
+  await sleep(5); A.t.renderAll();
+  A.t.openSettings(false);
+  const row1 = A.qa('#nameRows .name-row').find(r => r.dataset.id === 'p1');
+  row1.querySelector('input').value = '';
+  A.click('settingsOkBtn');
+  assert.ok(A.t.state.players.some(p => p.id === 'p1'), 'p1 er fortsatt med');
+  assert.strictEqual(A.t.state.cumulative.p1.fieldMs, 5 * MIN, 'tiden er urørt');
+  assert.ok(A.open('settingsModal'), 'vinduet står åpent med markering');
+  A.close();
+});
+test('Y8 Angre-stripen forsvinner når handlingen er angret via ↩, og angrer ikke noe annet', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team() } });
+  await sleep(5); A.t.renderAll();
+  A.t.handleTap('p1', 'field'); A.t.handleTap('p4', 'bench');
+  await sleep(700);
+  assert.ok(A.els().undoToast.classList.contains('show'), 'stripen vises etter byttet');
+  A.t.undoLastAction();
+  assert.ok(!A.els().undoToast.classList.contains('show'), 'stripen er borte');
+  A.close();
+});
+test('Y9 cup: neste kamp er den første i programmet som ikke er spilt, selv om tidene skrider', async () => {
+  const be = makeBackend();
+  const t0 = new Date(2026, 10, 7, 9, 18).getTime();
+  const A = loadApp(be, { now: t0, storage: { [KEYS.state]: team({ opponentName: 'Alfa', matchClock: { baseElapsedMs: 13 * MIN, sinceTs: t0 },
+    cup: { name: 'Cup', matches: [{ id: 'c3', time: '09:30', opponent: 'Cesar' }, { id: 'c1', time: '09:00', opponent: 'Alfa' }, { id: 'c2', time: '09:15', opponent: 'Beta' }] } }) } });
+  await sleep(5); A.t.renderAll();
+  assert.strictEqual(A.t.cupNextMatch(A.clock.t).opponent, 'Beta', 'Beta, ikke Cesar');
+  A.close();
+  // Første kamp uten motstander (vinduet kom før cupen var lagt inn), eller med annen skrivemåte
+  for (const first of ['', 'alfa il']) {
+    const B = loadApp(makeBackend(), { now: t0, storage: { [KEYS.state]: team({ opponentName: first, matchClock: { baseElapsedMs: 13 * MIN, sinceTs: t0 },
+      cup: { name: 'Cup', matches: [{ id: 'c1', time: '09:00', opponent: 'Alfa' }, { id: 'c2', time: '09:15', opponent: 'Beta' }, { id: 'c3', time: '09:30', opponent: 'Cesar' }] } }) } });
+    await sleep(5);
+    assert.strictEqual(B.t.cupNextMatch(B.clock.t).opponent, 'Beta', 'Beta etter kamp 1 med motstander «' + first + '»');
+    B.close();
+  }
+});
+test('Y13 en motstander endret uten nett i en kamp som er avsluttet siden, endrer ikke neste kamp', async () => {
+  const { be, A, B } = sharedPair();
+  await sleep(20);
+  A.t.togglePlayPause(); await sleep(10); A.adv(2 * MIN); B.adv(2 * MIN);
+  B.client.offline = true;
+  B.t.recordOp({ t: 'set', fields: { opponentName: 'Gammel', opponentAbbr: 'GAM' } }); B.t.saveState();
+  A.t.recordOp({ t: 'endMatch', reorganize: false, nextOpponentName: 'Neste', nextOpponentAbbr: 'NES' }); A.t.saveState();
+  await sleep(10);
+  B.client.offline = false; B.w.dispatchEvent(new B.w.Event('online'));
+  await sleep(100);
+  assert.strictEqual(row(be).data.opponentName, 'Neste', 'kamp 2 har riktig motstander');
+  assert.strictEqual(B.t.state.opponentName, 'Neste');
+  A.close(); B.close();
+});
+test('Y10 Lagre i Historikk mens nettet henger: raden ligger i køen med en gang', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team() } });
+  await sleep(5); A.t.renderAll();
+  A.client.hang = true;
+  A.t.saveMatchToHistory({ id: '11111111-2222-4333-8444-555555555555', endedAt: Date.now(), opponentName: 'X', homeScore: 1, awayScore: 0, players: [{ id: 'p1', name: 'Ola', ms: 1, totalMs: 2, goals: 0 }], goals: [] });
+  const q = JSON.parse(A.w.localStorage.getItem('spillerbytte_history_queue_v1') || '[]');
+  assert.strictEqual(q.length, 1, 'i køen');
+  assert.strictEqual(q[0].players[0].totalMs, undefined, 'T sendes ikke til databasen');
+  A.close();
+});
+test('Y11 forbokstaver: emoji gir ikke ødelagte tegn', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team({ players: [{ id: 'p1', name: 'Mikkel 😀 Smil' }, { id: 'p2', name: 'Kari Li' }, { id: 'p3', name: 'Per Berg' }, { id: 'p4', name: 'Liv Dal' }, { id: 'p5', name: 'Nils Fjord' }] }) } });
+  await sleep(5); A.t.renderAll();
+  const txt = A.q('#field [data-id="p1"]').textContent;
+  assert.ok(!/[\uD800-\uDFFF]/.test(txt.replace(/😀/g, '')), 'ingen halve tegn: ' + JSON.stringify(txt));
+  A.close();
+});
+test('Y12 Neste bytte oppdateres straks etter et bytte, også når klokka står', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team({ defaultDurationMs: MIN }) } });
+  await sleep(5); A.t.renderAll();
+  A.t.togglePlayPause(); A.adv(2 * MIN); A.t.togglePlayPause(); A.t.renderAll();
+  const before = A.els().nextSwapNames.textContent;
+  A.click('nextSwapBtn');
+  assert.notStrictEqual(A.els().nextSwapNames.textContent, before, 'viser ikke det byttet som nettopp ble gjort');
+  A.close();
+});
+
+// ---------- VALG FØR CUPEN (1A 2A 3B 4A 5A 7A 8A) ----------
+test('Z1 glemt kampslutt: arket spør «Har kampen sluttet?» (klokka går videre)', async () => {
+  const A = await bootK({ matchDurationMs: 10 * MIN });
+  A.t.togglePlayPause(); A.adv(12 * MIN + 1000);
+  await sleep(1100);
+  assert.ok(A.open('forgottenModal'), 'arket er åpent');
+  assert.strictEqual(A.q('#forgottenTitle').textContent, 'Har kampen sluttet?');
+  assert.strictEqual(A.t.state.globalRunning, true, 'klokka går');
+  A.close();
+});
+test('Z2 keeperen får ingen byttemerker, byttelyd eller trekanter', async () => {
+  const ids = ['p1','p2','p3','p4','p5','p6','p7'];
+  const A = await bootK({ players: ids.map(i => ({ id: i, name: 'Spiller ' + i })), onField: ids.slice(0, 5), onBench: ids.slice(5), fieldSize: 5, hasKeeper: true, fieldSlotAssignment: ids.slice(0, 5),
+    fieldTimers: Object.fromEntries(ids.slice(0, 5).map(i => [i, { baseElapsedMs: 0, sinceTs: 1800000000000 }])), benchTimers: Object.fromEntries(ids.slice(5).map(i => [i, { baseElapsedMs: 0, sinceTs: 1800000000000 }])),
+    defaultDurationMs: 3 * MIN, matchDurationMs: 30 * MIN });
+  A.t.togglePlayPause();
+  A.t.performSwap('p2', 'p6'); A.t.performSwap('p3', 'p7'); A.t.saveState(); A.t.renderAll(); // utespillerne får ferske tider
+  A.adv(10 * MIN); A.t.renderAll();
+  const keeperEl = A.q('#field [data-id="p1"]');
+  assert.strictEqual(A.t.keeperIdNow(), 'p1');
+  assert.strictEqual(keeperEl.querySelector('.badge-warning'), null, 'ingen ⇅ på keeperen');
+  assert.ok(!keeperEl.querySelector('.avatar').classList.contains('time-up'));
+  assert.strictEqual(keeperEl.dataset.level, '', 'ingen BYTT-nivå');
+  assert.strictEqual(keeperEl.querySelector('.badge-rank'), null, 'ingen trekant');
+  A.close();
+});
+test('Z3 byttelyd kan slås av per enhet', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { audioState: 'running', storage: { [KEYS.state]: team({ defaultDurationMs: MIN }), spillerbytte_sound_swap_v1: '0', spillerbytte_sound_prewarn_v1: '0' } });
+  await sleep(5); A.click('launcherResumeBtn'); A.t.renderAll();
+  A.w.document.body.dispatchEvent(new A.w.Event('click', { bubbles: true }));
+  A.t.togglePlayPause();
+  const before = A.w.__audio.tones;
+  A.adv(MIN + 1000); A.t.renderAll();
+  assert.strictEqual(A.w.__audio.tones - before, 0, 'ingen byttelyd');
+  A.t.openSettings && 0;
+  A.close();
+});
+test('Z4 «spilte minst først» setter den foreslåtte neste keeperen i mål', async () => {
+  const ids = ['p1','p2','p3','p4','p5','p6','p7'];
+  const A = await bootK({ players: ids.map(i => ({ id: i, name: 'Spiller ' + i })), onField: ids.slice(0, 5), onBench: ids.slice(5), fieldSize: 5, hasKeeper: true, fieldSlotAssignment: ids.slice(0, 5),
+    fieldTimers: Object.fromEntries(ids.slice(0, 5).map(i => [i, { baseElapsedMs: 0, sinceTs: 1800000000000 }])), benchTimers: Object.fromEntries(ids.slice(5).map(i => [i, { baseElapsedMs: 0, sinceTs: 1800000000000 }])),
+    matchDurationMs: 20 * MIN });
+  A.t.togglePlayPause(); A.adv(20 * MIN);
+  const next = A.t.suggestNextKeeper(A.clock.t);
+  assert.ok(next && next.id !== 'p1');
+  A.click('endBtn');
+  A.els().endReorgToggle.checked = true; A.els().endSaveToggle.checked = false;
+  A.click('endPeriodBtn');
+  await sleep(900);
+  assert.strictEqual(A.t.keeperIdNow(), next.id, 'foreslått keeper står i mål');
+  assert.strictEqual(A.t.state.onField.length, 5);
+  assert.ok(A.t.state.onField.includes('p6') && A.t.state.onField.includes('p7'), 'de som satt på benken starter');
+  A.close();
+});
+
+test('Y14 ny deling starter som Kun les: medtreneren kan ikke endre før eieren velger Redigering', async () => {
+  const be = makeBackend();
+  const A = loadApp(be, { storage: { [KEYS.state]: team(), [KEYS.dev]: 'devA' } });
+  await sleep(5);
+  let code; A.t.createNewSession(c => { code = c; });
+  await sleep(25);
+  assert.strictEqual(be.tables.sessions[code].data.shareEditable, false, 'raden er Kun les fra start');
+  assert.strictEqual(A.t.canEdit(), true, 'eieren kan alltid endre');
+  const B = loadApp(be, { storage: { [KEYS.dev]: 'devB' } });
+  await sleep(5);
+  let joined = false; B.t.joinSession(code, () => { joined = true; }, () => {}, () => {});
+  await sleep(40);
+  assert.ok(joined);
+  assert.strictEqual(B.t.canEdit(), false, 'medtreneren leser bare');
+  A.t.openSettings(false);
+  A.q('#shareModeSegmented [data-mode="edit"]').click();
+  await sleep(40);
+  assert.strictEqual(B.t.canEdit(), true, 'etter Redigering kan medtreneren endre');
+  A.close(); B.close();
+});
+
 test('V1 versjonen stemmer i app.js og sw.js, og alle filer i APP_SHELL finnes', async () => {
   const fs = require('fs'), path = require('path');
   const ROOT = path.resolve(__dirname, '..');

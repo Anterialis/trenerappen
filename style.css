@@ -1521,6 +1521,8 @@
     display:block; font-size:12px; font-weight:700; color:var(--ink-soft);
     margin:16px 0 8px;
   }
+  .modal-card label.section-label[hidden],
+  .modal-card div.section-label[hidden]{ display:none; }
   /* "Kampresultat" summary popup (see showMatchSummaryThen in app.js) -
      light-themed siblings of the dark .history-row-goal/.history-row-player
      rows the "Historikk" screen uses for the same data, since this modal
@@ -2517,6 +2519,8 @@
   .ems-name{ font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ems-time{ color:var(--ink-soft); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:12px; }
   #endMatchModal{ z-index:110; }
+  /* Åpnes fra Kampslutt-arket («Forlat delt økt»): må ligge over det. */
+  #closeSessionConfirmModal{ z-index:115; }
   #exportModal{ z-index:110; }
   /* 320: åpnes også fra Innstillinger-skjermen (.history-screen, z-index:310) - lavere havnet bak den. */
   #legendModal{ z-index:320; }

@@ -93,7 +93,10 @@ html:not([data-design]) .modal-card-dark, html:not([data-design]) .history-scree
   min-height:50px; padding:8px 8px 8px 16px; border-radius:15px; background:rgba(15,31,54,.97); color:#fff; font-size:14.5px; font-weight:600; line-height:1.3;
   box-shadow:0 12px 30px rgba(0,0,0,.4); opacity:0; pointer-events:none; transform:translateY(10px); transition:opacity .2s ease, transform .2s ease;
 }
-.undo-toast.show{ opacity:1; pointer-events:auto; transform:none; }
+.undo-toast.show{ opacity:1; transform:none; }
+/* Stripen ligger over benken i 5 s etter hvert bytte: bare knappen fanger trykk, resten
+   slipper fingeren gjennom til spilleren under (et nytt bytte rett etter skal virke). */
+.undo-toast.show .undo-toast-btn{ pointer-events:auto; }
 .undo-toast-btn{
   flex:0 0 auto; height:36px; padding:0 14px; border:0; border-radius:10px; background:rgba(255,255,255,.14); color:#ffc48f;
   font:inherit; font-size:14px; font-weight:800; cursor:pointer;
@@ -420,6 +423,7 @@ html[data-design]:not([data-design="a"]) .level-tag{
   display:block; margin-top:2px; font-size:9.5px; font-weight:800; letter-spacing:.04em; line-height:1.5; padding:0 5px; border-radius:4px;
 }
 html[data-design]:not([data-design="a"]) .field-token .level-tag:empty{ display:none; }
+html[data-design]:not([data-design="a"]) .level-tag{ white-space:nowrap; } /* «BYTT NÅ» på to linjer la seg over spilleren under */
 html[data-design]:not([data-design="a"]) .field-token[data-level="due"] .level-tag{ background:#ffd60a; color:#1c1600; }
 html[data-design]:not([data-design="a"]) .field-token[data-level="over"] .level-tag{ background:#fff; color:#b00020; }
 html[data-design]:not([data-design="a"]) .badge-warning{ display:none; }
@@ -609,4 +613,18 @@ html[data-design="e"] .bench-token .stopwatch{ margin:0; font-weight:600; }
   .undo-toast, .next-swap-btn{ transition:none; }
   .spectator-dot{ animation:none; }
   html[data-design="e"] .stint-bar i{ transition:none; }
+}
+
+/* Små iPhoner på høykant (SE, 8 og eldre): banen tok så mye av høyden at benken ble lavere enn
+   én innbytter. Litt lavere bane gir plass til en hel rad på benken. Store telefoner og landskap
+   er urørt. Design E (liste) har allerede plass. */
+@media (orientation: portrait) and (max-height: 700px){
+  #viewport-frame:not(.desktop-preview) #field-wrap{ flex-basis:60%; }
+  #viewport-frame:not(.desktop-preview) #bench-wrap{ flex-basis:40%; }
+  html[data-design="c"] #viewport-frame:not(.desktop-preview) #field-wrap,
+  html[data-design="d"] #viewport-frame:not(.desktop-preview) #field-wrap{ flex-basis:61%; }
+  html[data-design="c"] #viewport-frame:not(.desktop-preview) #bench-wrap,
+  html[data-design="d"] #viewport-frame:not(.desktop-preview) #bench-wrap{ flex-basis:39%; }
+  html[data-design="e"] #viewport-frame:not(.desktop-preview) #field-wrap{ flex-basis:66%; }
+  html[data-design="e"] #viewport-frame:not(.desktop-preview) #bench-wrap{ flex-basis:34%; }
 }

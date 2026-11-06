@@ -545,6 +545,58 @@ test('O2 oppdatering: «Oppdater nå» tar i bruk ny versjon, og kampen er urør
   assert.deepStrictEqual(errors, []);
   await b.close(); srv.close();
 });
+test('O2b oppdatering midt i kampen: etter «Oppdater nå» står treneren i kampen, ikke på hjemskjermen', async () => {
+  const st = team({ opponentName: 'Brann', opponentAbbr: 'BRA', globalRunning: false, matchClock: { baseElapsedMs: 300000, sinceTs: Date.now() } });
+  const { srv, b, page, errors } = await swPage({ [KEYS.state]: JSON.stringify(st) });
+  publish(srv, '9.9.9');
+  await page.reload();
+  await page.waitForSelector('#updateBanner:not([hidden])', { timeout: 15000 });
+  await page.click('#launcherResumeBtn'); await sleep(800);
+  await Promise.all([page.waitForEvent('load', { timeout: 15000 }), page.click('#updateNowBtn')]);
+  await page.waitForSelector('#launcherTile', { state: 'attached' });
+  await sleep(300);
+  assert.ok(await page.evaluate(() => document.getElementById('launcherScreen').classList.contains('hidden')), 'rett inn i kampen');
+  assert.strictEqual(await page.locator('#field [data-id="p1"]').isVisible(), true);
+  assert.deepStrictEqual(errors, []);
+  await b.close(); srv.close();
+});
+test('O2c oppdatering: banneret dekker ikke benken mens klokka går, og kommer når klokka stoppes', async () => {
+  const st = team({ opponentName: 'Brann', opponentAbbr: 'BRA', globalRunning: true });
+  const { srv, b, page, errors } = await swPage({ [KEYS.state]: JSON.stringify(st) });
+  publish(srv, '9.9.9');
+  await page.reload();
+  await page.waitForSelector('#updateBanner:not([hidden])', { timeout: 15000 }); // på hjemskjermen vises det
+  await page.click('#launcherResumeBtn'); await sleep(800);
+  assert.strictEqual(await page.locator('#updateBanner').isVisible(), false, 'skjult mens klokka går');
+  await page.click('#playPauseBtn'); await sleep(300);
+  assert.strictEqual(await page.locator('#updateBanner').isVisible(), true, 'vises i pausen');
+  await page.click('#playPauseBtn'); await sleep(300);
+  assert.strictEqual(await page.locator('#updateBanner').isVisible(), false, 'skjult igjen når klokka starter');
+  assert.deepStrictEqual(errors, []);
+  await b.close(); srv.close();
+});
+test('L1 små iPhoner: benken har plass til en hel rad i alle design, og Angre-stripen slipper trykk gjennom', async () => {
+  const srv = await serve({ mockSdk: MOCK_SDK });
+  const b = await webkit.launch();
+  for (const d of ['a', 'b', 'c', 'd', 'e']) {
+    const ctx = await b.newContext({ viewport: { width: 375, height: 667 }, serviceWorkers: 'block', hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    const ids = ['p1','p2','p3','p4','p5','p6','p7','p8','p9'];
+    const st = team({ players: ids.map(i => ({ id: i, name: 'Spiller ' + i })), onField: ids.slice(0, 5), onBench: ids.slice(5), fieldSize: 5, hasKeeper: true,
+      fieldTimers: Object.fromEntries(ids.slice(0, 5).map(i => [i, { baseElapsedMs: 0, sinceTs: Date.now() }])), benchTimers: Object.fromEntries(ids.slice(5).map(i => [i, { baseElapsedMs: 0, sinceTs: Date.now() }])) });
+    await page.addInitScript(([k, s, dd]) => { if (!localStorage.getItem(k)) { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem('spillerbytte_design_v1', dd); localStorage.setItem('spillerbytte_tips_seen_v1', '{"swap":1,"goal":1,"due":1}'); } }, [KEYS.state, st, d]);
+    await page.route('**/*', (route) => route.request().url().includes('cdn.jsdelivr.net') ? route.fulfill({ contentType: 'application/javascript', body: MOCK_SDK }) : route.continue());
+    await page.goto(srv.url); await page.click('#launcherResumeBtn'); await sleep(800);
+    const m = await page.evaluate(() => ({ bench: document.getElementById('bench').getBoundingClientRect().height, tok: document.querySelector('#bench .bench-token').getBoundingClientRect().height }));
+    assert.ok(m.bench >= m.tok, d + ': benken (' + Math.round(m.bench) + ') rommer en innbytter (' + Math.round(m.tok) + ')');
+    // Angre-stripen: bare knappen fanger trykk
+    await page.evaluate(() => { document.getElementById('undoToast').classList.add('show'); });
+    const pe = await page.evaluate(() => [getComputedStyle(document.getElementById('undoToast')).pointerEvents, getComputedStyle(document.getElementById('undoToastBtn')).pointerEvents]);
+    assert.deepStrictEqual(pe, ['none', 'auto'], d + ': stripen slipper trykk gjennom, knappen fanger');
+    await ctx.close();
+  }
+  await b.close(); srv.close();
+});
 test('O3 oppdatering: × skjuler til neste oppstart, og versjonen i vinduet ser etter på nytt', async () => {
   const { srv, b, page } = await swPage();
   const before = await appVersionShown(page);

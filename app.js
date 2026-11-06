@@ -121,6 +121,7 @@
    * @property {Object<string, number>} [keeperMs] - time in goal this match
    * @property {{id:string, sinceMs:number}|null} [keeperNow]
    * @property {string[]} opIds - the latest operations this state already contains, so a replay can't apply one twice (see applyOp())
+   * @property {number} [matchNo] - telles opp ved Kampslutt og Avslutt økten; en operasjon fra en tidligere kamp spilles ikke av
    *
    * @typedef {Object} MatchEvent
    * @property {string} k - 'swap'|'toField'|'toBench'|'goal'|'ungoal'|'start'|'pause'
@@ -315,13 +316,14 @@
 
   // The version shown on the launcher - bump on every push, together with
   // APP_VERSION and CACHE_NAME in sw.js (that change is what phones detect).
-  var APP_VERSION = '2.4.3';
+  var APP_VERSION = '2.5.0';
 
   // Changelog shown in #versionHistoryModal (tapped from the short "vX.Y"
   // footer on the launcher) - newest first, one entry per version bump.
   // Keep each note short (roughly 10-15 words); it's a footnote, not
   // release notes.
   var VERSION_HISTORY = [
+    { version: '2.5.0', text: 'Gjennomtestet før cup. Når du deler en økt, starter den nå som Kun les; velg Redigering for å la medtreneren endre. Delt økt: en telefon som har vært uten nett kan ikke lenger skrive over den andre trenerens bytter og mål, og endringer fra en avsluttet kamp havner ikke i neste. Rettet blant annet angre over halvtid, multiBytte som kunne sette feil spiller i mål, og at et tomt navn slettet en spiller på banen. Keeperen får ikke lenger byttemerker, byttelyden kan slås av, oppdateringsbanneret venter til klokka står, og benken får plass på små iPhoner.' },
     { version: '2.4.3', text: 'Hjemskjermen får plass når telefonen ligger på siden, og «Mitt lag» ligger ikke lenger oppå «Fortsett kampen» på små telefoner.' },
     { version: '2.4.2', text: 'Finjustert avstanden øverst på skjermen. Når telefonen ligger på siden, går innholdet nå helt opp mot kanten.' },
     { version: '2.4.1', text: 'Fikset at navnene du hadde skrevet inn forsvant hvis du trykket på Bytteplan eller Cup-oppsett mens du satte opp en ny økt. Knappene vises nå først når laget er satt opp. «Neste bytte» hopper ikke lenger mellom spillere som står likt. Knapper og tekst øverst er flyttet litt ned, klar av statuslinjen på iPhone.' },
@@ -473,14 +475,26 @@
     qs('updateBannerSub').textContent = state && state.players.length > 0 && !spectatorCode
       ? 'Kampen og klokkene fortsetter der de er.'
       : 'Tar bare et øyeblikk.';
-    qs('updateBanner').hidden = false;
+    syncUpdateBanner();
     worker.postMessage({ type: 'GET_VERSION' });
   }
+  // Mens klokka går på kampskjermen ligger banneret over benken: det venter da til
+  // klokka står (pause, halvtid, kampslutt) eller treneren går til hjemskjermen.
+  function syncUpdateBanner(){
+    var banner = document.getElementById('updateBanner');
+    if (!banner) return;
+    var inMatch = !!(els.launcherScreen && els.launcherScreen.classList.contains('hidden'));
+    var busy = !!(state && state.globalRunning && inMatch && !spectatorCode);
+    banner.hidden = !waitingWorker || updateDismissed || updateAccepted || busy;
+  }
 
+  var RESUME_AFTER_UPDATE_KEY = 'spillerbytte_resume_after_update';
   function acceptUpdate(){
     if (!waitingWorker) return;
     updateAccepted = true;
     if (state) saveStateLocally(); // alt skal ligge trygt før siden lastes på nytt
+    // Midt i en kamp: kom tilbake til kampen etter omlastingen, ikke til hjemskjermen.
+    try { if (els.launcherScreen && els.launcherScreen.classList.contains('hidden')) sessionStorage.setItem(RESUME_AFTER_UPDATE_KEY, '1'); } catch(e){}
     var btn = qs('updateNowBtn');
     btn.disabled = true;
     btn.textContent = 'Oppdaterer …';
@@ -531,9 +545,12 @@
   // co-editor's own edit, or the entire session just joined). Undo simply
   // doesn't make sense across a boundary like that, so the safest thing is
   // to make there be nothing to undo, rather than undo the wrong thing.
+  var undoLostToRemote = false; // angrehistorikken ble tømt av en endring fra en annen enhet
   function clearUndoHistory(){
+    if (undoStack.length > 0) undoLostToRemote = true;
     undoStack = [];
     redoStack = [];
+    hideUndoToast();
     updateUndoUI();
   }
   var settingsDirty = false; // true once anything that only takes effect on "OK" (names, kampvarighet, byttetid, first-run feltstørrelse) has been touched since openSettings() - drives the × close button's "save changes?" prompt
@@ -743,6 +760,7 @@
       matchHistory: [],
       eventLog: [],
       opIds: [],
+      matchNo: 0,
       // Bumped by 1 on every pushRemoteState() call (see there) - lets a
       // receiving device tell a genuinely newer shared update apart from a
       // stale one arriving late (e.g. a read-only viewer's phone whose tab
@@ -904,6 +922,7 @@
     raw.keeperMs = keeperMs;
     raw.keeperNow = raw.keeperNow && isSafeId(raw.keeperNow.id) && isFinite(raw.keeperNow.sinceMs) ? { id: raw.keeperNow.id, sinceMs: Number(raw.keeperNow.sinceMs) } : null;
     raw.opIds = (Array.isArray(raw.opIds) ? raw.opIds : []).filter(function(id){ return typeof id === 'string'; }).slice(-OP_ID_MEMORY);
+    raw.matchNo = typeof raw.matchNo === 'number' && raw.matchNo >= 0 && isFinite(raw.matchNo) ? Math.floor(raw.matchNo) : 0;
     return raw;
   }
 
@@ -1011,7 +1030,31 @@
   var opRecorded = false;        // set by recordOp, read by saveState: was this save an operation?
   var plainEditPending = false;  // an unconfirmed edit that isn't an operation
   var PENDING_OPS_KEY = 'spillerbytte_pending_ops_v1';
-  var OP_ID_MEMORY = 64;
+  var OP_ID_MEMORY = 300; // som eventLog: en lang kamp uten nett må ikke kunne skyve ut id-er og bli spilt av to ganger
+  // Siste rev denne enheten vet ligger på serveren (sett i en rad, eller bekreftet
+  // skriving). Hver skriving sendes som serverRev + 1, og serveren tar bare imot
+  // en rev strengt høyere enn sin egen: skrivingen lander altså bare hvis ingen
+  // andre har skrevet siden. Ellers hentes raden og egne endringer flettes oppå.
+  // (Før: rev økte ved hvert forsøk, også uten nett, og en telefon som hadde
+  // vært offline «vant» og skrev over den andre treneren.)
+  var SERVER_REV_KEY = 'spillerbytte_server_rev_v1';
+  /** @type {number|null} */
+  var serverRev = null;
+  /** @param {number|null} rev */
+  function setServerRev(rev){
+    serverRev = typeof rev === 'number' ? rev : null;
+    try {
+      if (serverRev === null || !sessionCode) localStorage.removeItem(SERVER_REV_KEY);
+      else localStorage.setItem(SERVER_REV_KEY, JSON.stringify({ code: sessionCode, rev: serverRev }));
+    } catch(e){}
+  }
+  function loadServerRev(){
+    serverRev = null;
+    try {
+      var saved = JSON.parse(localStorage.getItem(SERVER_REV_KEY) || 'null');
+      if (saved && saved.code === sessionCode && typeof saved.rev === 'number') serverRev = saved.rev;
+    } catch(e){}
+  }
   /** @type {string|null} */
   var spectatorCode = null;      // set while this is a parent link (?se=...): nothing is ever written or stored
 
@@ -1049,7 +1092,7 @@
 
   function pushRemoteState(){
     if (!sessionCode || !sb || spectatorCode) return;
-    state.rev = (typeof state.rev === 'number' ? state.rev : 0) + 1;
+    state.rev = serverRev !== null ? serverRev + 1 : (typeof state.rev === 'number' ? state.rev : 0) + 1;
     remoteDirty = true;
     sendRemoteState();
   }
@@ -1062,8 +1105,10 @@
     var code = sessionCode;
     var seq = ++pushSeq;
     var sentIds = pendingOps.map(function(op){ return op.id; });
+    var sentRev = state.rev;
     var sentAt = Date.now();
     var confirmed = function(){
+      setServerRev(Math.max(serverRev === null ? 0 : serverRev, sentRev)); // svarene kan komme i feil rekkefølge
       pendingOps = pendingOps.filter(function(op){ return sentIds.indexOf(op.id) === -1; });
       if (seq === pushSeq && pendingOps.length === 0){
         remoteDirty = false;
@@ -1130,14 +1175,18 @@
 
   // The server is ahead and this device has its own unconfirmed operations: keep both.
   /** @param {AppState} server */
+  var staleOpsDropped = 0;
+  var MATCH_ONLY_FIELDS = ['opponentName', 'opponentAbbr', 'continueCount', 'lastPlayAt'];
   function mergeOntoServer(server){
     var ops = pendingOps.slice();
     var wasMaster = isMaster();
     state = server;
     clearUndoHistory();
+    staleOpsDropped = 0;
     ops.forEach(function(op){
       try { applyOp(op); } catch(e){ console.warn('Kunne ikke spille av en endring', op, e); }
     });
+    if (staleOpsDropped > 0) showNotice('Kampen ble avsluttet på en annen telefon mens denne var uten nett. ' + staleOpsDropped + (staleOpsDropped === 1 ? ' endring' : ' endringer') + ' fra den kampen ble ikke tatt med.');
     dropStaleSelection();
     resyncTimeUpNotified();
     saveStateLocally();
@@ -1175,12 +1224,17 @@
     var sameRev = server.rev === state.rev;
     var fromOther = origin !== deviceOrigin;
     var dirty = remoteDirty || pendingOps.length > 0 || plainEditPending;
+    var knewRev = serverRev; // hva denne enheten trodde lå på serveren før svaret kom
     if (sameRev && !fromOther){
-      // Our own write landed, only the answer got lost.
-      pendingOps = [];
-      plainEditPending = false;
-      remoteDirty = false;
+      // Our own write landed (only the answer got lost). Since nobody else has written
+      // after it, this device holds everything the server has; anything recorded
+      // after that write is sent on top.
+      setServerRev(server.rev);
+      pendingOps = pendingOps.filter(function(op){ return server.opIds.indexOf(op.id) === -1; });
+      if (canEdit() && (pendingOps.length > 0 || plainEditPending)) pushRemoteState();
+      else { plainEditPending = false; remoteDirty = false; saveStateLocally(); }
     } else if (server.rev > state.rev || (sameRev && fromOther)){
+      setServerRev(server.rev);
       if (!canEdit() || !dirty) adoptRemoteState(server);
       else if (pendingOps.length > 0 && !plainEditPending) mergeOntoServer(server);
       else {
@@ -1188,9 +1242,23 @@
         showNotice('Noe ble endret på en annen enhet samtidig. Sjekk kampen og prøv igjen.');
       }
     } else if (!canEdit()){
+      setServerRev(server.rev);
       if (!sameRev) adoptRemoteState(server);
+    } else if (!dirty){
+      // Ingenting her som serveren mangler: en høyere lokal rev betyr bare at den ble
+      // telt opp av skrivinger som aldri kom fram. Serveren gjelder.
+      setServerRev(server.rev);
+      adoptRemoteState(server);
+    } else if (server.rev !== knewRev && pendingOps.length > 0 && !plainEditPending){
+      // Serveren har endret seg siden denne enheten sist var i takt (eller det er
+      // ukjent, fra før denne regelen): den kan ha endringer herfra mangler. Flett.
+      setServerRev(server.rev);
+      mergeOntoServer(server);
     } else {
+      // Serveren har ikke endret seg siden denne enheten sist var i takt: send det som er her.
+      setServerRev(server.rev);
       remoteDirty = true;
+      state.rev = server.rev + 1;
       sendRemoteState(!hasRev);
     }
     if (!participantChecked){
@@ -1278,6 +1346,11 @@
     if (state.opIds.indexOf(op.id) !== -1) return; // already part of this state (a write whose answer got lost)
     state.opIds.push(op.id);
     if (state.opIds.length > OP_ID_MEMORY) state.opIds.shift();
+    // Gjort i en kamp som er avsluttet siden (typisk på en telefon som var uten nett
+    // mens den andre treneren tok Kampslutt): hører ikke hjemme i den nye kampen.
+    // Lagoppstilling, innstillinger og deltakere gjelder på tvers av kamper.
+    var stale = typeof op.m === 'number' && op.m < (state.matchNo || 0);
+    if (stale && op.t !== 'roster' && op.t !== 'set' && op.t !== 'participant'){ staleOpsDropped++; return; }
     var at = op.at;
     switch (op.t){
       case 'swap':
@@ -1326,11 +1399,18 @@
         break;
       case 'clock':
         if (op.run === state.globalRunning) return;
+        // Spilt av etter et bytte som skjedde senere (fra en telefon uten nett): da
+        // gjelder start/stopp fra byttet, ellers får en spiller mer tid enn klokka.
+        at = Math.max(at, state.lastPlayAt || 0);
         if (op.run) startClockAt(at); else stopClockAt(at);
         logEvent(op.run ? 'start' : 'pause', at, null, null);
         break;
       case 'set':
-        Object.keys(op.fields).forEach(function(k){ state[k] = op.fields[k]; });
+        Object.keys(op.fields).forEach(function(k){
+          // Fra en kamp som er avsluttet siden: motstander og «Fortsett»-telling hører til den kampen.
+          if (stale && MATCH_ONLY_FIELDS.indexOf(k) !== -1) return;
+          state[k] = op.fields[k];
+        });
         break;
       case 'trim':
         trimElapsedTime(op.ms);
@@ -1344,9 +1424,13 @@
         if (state.halfStage === 2) return;
         if (state.globalRunning) stopClockAt(at);
         state.halfStage = 2;
+        // Halvtid er tid som har gått, som start/stopp: angre over pausen skal
+        // ikke sende kampen tilbake til 1. omgang (da kom fløyta på nytt ved Start).
+        undoStack.concat(redoStack).forEach(function(snap){ snap.halfStage = 2; });
         break;
       case 'endMatch':
-        applyEndMatch(!!op.reorganize, at, op.nextOpponentName, op.nextOpponentAbbr);
+        applyEndMatch(!!op.reorganize, at, op.nextOpponentName, op.nextOpponentAbbr, op.nextKeeper);
+        state.matchNo = (state.matchNo || 0) + 1;
         break;
       case 'reset':
         applyReset();
@@ -1366,6 +1450,7 @@
   function recordOp(op){
     op.at = op.at || nowTs();
     op.id = uid();
+    op.m = state.matchNo || 0;
     applyOp(op);
     if (sessionCode){
       pendingOps.push(op);
@@ -1561,6 +1646,7 @@
     if (realtimeChannel && sb){ sb.removeChannel(realtimeChannel); realtimeChannel = null; }
     realtimeSubscribed = false;
     sessionCode = null;
+    setServerRev(null);
     sessionVerified = false;
     participantChecked = false;
     remoteDirty = false;
@@ -1627,12 +1713,16 @@
   function createNewSession(callback){
     if (!sb){ callback(null); return; }
     state.sessionOwnerDeviceId = deviceId;
+    // En ny deling starter alltid som Kun les: andre må få redigering med vilje
+    // (Redigering i samme vindu), ikke ved et uhell.
+    state.shareEditable = false;
     state.sessionUid = uid();
     state.participants = []; // devices from an earlier session on this phone aren't part of this one
     ensureParticipant();
 
     function onCreated(code){
       sessionCode = code;
+      setServerRev(state.rev);
       sessionVerified = true; // this device just wrote the row itself
       participantChecked = true;
       remoteDirty = false;
@@ -1704,11 +1794,13 @@
       var finish = function(){
         state = incoming;
         clearUndoHistory(); // this device's own pre-join history (if any) has nothing to do with the session it's adopting now
+        undoLostToRemote = false;
         selected = null;
         suggestedPartnerId = null;
         multiMode = false;
         multiSelected = [];
         sessionCode = code;
+        setServerRev(incoming.rev);
         sessionViewCode = viewCode;
         sessionVerified = true;
         participantChecked = true;
@@ -1810,14 +1902,17 @@
   /** @param {any} row @returns {Promise<boolean>} */
   function insertHistoryRow(row){
     if (!sb) return Promise.resolve(false);
-    return sb.from('match_history').insert(row).then(function(res){
+    // Et svar som aldri kommer skal ikke holde køen sperret: etter 20 s regnes det
+    // som ikke sendt (raden ligger i køen og prøves igjen; samme id lagres aldri to ganger).
+    var timeout = new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 20000); });
+    return Promise.race([timeout, sb.from('match_history').insert(row).then(function(/** @type {any} */ res){
       if (!res.error || res.error.code === '23505') return true; // 23505: already saved by an earlier attempt
       console.warn('Kunne ikke lagre kamp til historikk', res.error);
       return false;
-    }).catch(function(e){
+    }).catch(function(/** @type {any} */ e){
       console.warn('Kunne ikke lagre kamp til historikk', e);
       return false;
-    });
+    })]);
   }
   /** @param {HistoryMatchEntry} entry @returns {Promise<boolean>} */
   function saveMatchToHistory(entry){
@@ -1828,13 +1923,22 @@
       opponent_abbr: entry.opponentAbbr || '',
       home_score: entry.homeScore || 0,
       away_score: entry.awayScore || 0,
-      players: entry.players || [],
+      // Uten totalMs (T): den er lokal for økten og skal ikke til databasen (se HistoryMatchEntry).
+      players: (entry.players || []).map(function(/** @type {any} */ p){
+        var copy = Object.assign({}, p);
+        delete copy.totalMs;
+        return copy;
+      }),
       goals: entry.goals || [],
       origin: deviceOrigin
     };
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.id)) row.id = entry.id;
+    // I køen FØR den sendes: henger nettet, kan iOS drepe appen før forespørselen
+    // gir opp, og da var kampen tapt. Fjernes igjen når serveren har bekreftet
+    // (samme id to ganger avvises av databasen og regnes som lagret).
+    saveHistoryQueue(loadHistoryQueue().concat([row]));
     return insertHistoryRow(row).then(function(ok){
-      if (!ok) saveHistoryQueue(loadHistoryQueue().concat([row]));
+      if (ok) saveHistoryQueue(loadHistoryQueue().filter(function(r){ return r.ended_at !== row.ended_at; }));
       return ok;
     });
   }
@@ -2305,11 +2409,17 @@
 
   /** @param {string} name @param {boolean} [singleLetter] @returns {string} */
   function initials(name, singleLetter){
-    var parts = name.trim().split(/\s+/).filter(Boolean);
+    var all = name.trim().split(/\s+/).filter(Boolean);
+    // Ord som begynner med bokstav eller tall (en emoji som eget ord hoppes over), og
+    // tegn regnet som hele tegn: en emoji er to UTF-16-enheter, og halvparten blir søppel.
+    var parts = all.filter(function(w){ return /^[\p{L}\p{N}]/u.test(w); });
+    if (parts.length === 0) parts = all;
     if (parts.length === 0) return '?';
-    if (singleLetter) return parts[0].slice(0,1).toUpperCase();
-    if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
-    return (parts[0][0] + parts[1][0]).toUpperCase();
+    /** @param {string} w @param {number} n */
+    var first = function(w, n){ return Array.from(w).slice(0, n).join(''); };
+    if (singleLetter) return first(parts[0], 1).toUpperCase();
+    if (parts.length === 1) return first(parts[0], 2).toUpperCase();
+    return (first(parts[0], 1) + first(parts[1], 1)).toUpperCase();
   }
 
   function formatMs(ms){
@@ -2512,7 +2622,8 @@
   function computeRankBadges(now){
     var badges = {};
     var msFor = state.rankByCumulative ? cumulativeFieldMs : currentPeriodFieldMs;
-    var all = state.players.map(function(p){ return { id: p.id, ms: msFor(p.id, now) }; });
+    var keeper = keeperIdNow(); // står i mål hele tiden og ville alltid fått ▲▲
+    var all = state.players.filter(function(p){ return p.id !== keeper; }).map(function(p){ return { id: p.id, ms: msFor(p.id, now) }; });
     var n = all.length;
     if (n < 2) return badges;
     all.sort(function(a,b){ return b.ms - a.ms; });
@@ -2559,7 +2670,13 @@
     });
     if (tied.length <= 1) return best;
     if (keep && tied.indexOf(keep) !== -1) return keep;
-    return tied[Math.floor(Math.random() * tied.length)];
+    // «Tilfeldig», men likt på alle telefoner i en delt økt (ellers kunne to trenere
+    // trykke Bytt på hvert sitt forslag og gjøre to bytter): avledet av hvem som står
+    // likt og hvor langt kampen er kommet.
+    var seed = tied.slice().sort().join('|') + '|' + (state.swapCount || 0) + '|' + (state.matchNo || 0);
+    var h = 0;
+    for (var c = 0; c < seed.length; c++) h = (h * 31 + seed.charCodeAt(c)) | 0;
+    return tied[Math.abs(h) % tied.length];
   }
 
   // Picks the swap the "Forslag" button recommends.
@@ -2678,6 +2795,7 @@
   // semantics), so this also clears redoStack.
   function pushUndoSnapshot(){
     state.lastPlayAt = nowTs(); // every undoable action is a real play action - see forgottenMatchInfo()
+    undoLostToRemote = false;
     undoStack.push(snapshotState());
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -2697,8 +2815,13 @@
 
   function undoLastAction(){
     if (!canEdit()) return;
+    hideUndoToast();
     var snap = undoStack.pop();
-    if (!snap) return;
+    if (!snap){
+      if (undoLostToRemote) showNotice('Kan ikke angre: kampen er endret på en annen enhet i mellomtiden.');
+      updateUndoUI();
+      return;
+    }
     state.lastPlayAt = nowTs();
     pendingOps = []; // the restored state replaces them; see plainEditPending
     redoStack.push(snapshotState());
@@ -2713,6 +2836,7 @@
 
   function redoLastAction(){
     if (!canEdit()) return;
+    hideUndoToast();
     var snap = redoStack.pop();
     if (!snap) return;
     state.lastPlayAt = nowTs();
@@ -2734,6 +2858,7 @@
     updateLauncherResume();
     els.launcherTile.classList.remove('lifted');
     els.launcherScreen.classList.remove('hidden');
+    syncUpdateBanner();
   }
 
   /** @param {string} id @returns {Player|null} */
@@ -3150,6 +3275,8 @@
     renderField();
     renderBench();
     updatePlayPauseUI();
+    planCache = null;          // noe er endret: bytteplanen og «Neste bytte» regnes på nytt nå,
+    lastPanelsSecond = -1;     // ikke først neste sekund (står klokka, kommer det ikke noe neste sekund)
     updateTimersOnly();
     updateUndoUI();
     updateMultiSelectUI();
@@ -3651,8 +3778,9 @@
     var p = playerById(id);
     if (!p) return null;
     var elapsed = fieldElapsed(id, now);
-    var timeUp = elapsed >= state.defaultDurationMs;
-    var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
+    var stintMs = id === keeperIdNow() ? 0 : elapsed; // keeperen er utenfor byttene: ingen merker
+    var timeUp = stintMs >= state.defaultDurationMs;
+    var farOver = timeUp && stintMs >= state.defaultDurationMs * OVERTIME_FACTOR;
     var isChecked = multiMode && multiSelected.indexOf(id) !== -1;
     var el = document.createElement('div');
     el.className = 'token field-token' + enterClassFor(id, 'field') + (isChecked ? ' multi-checked' : '');
@@ -3668,7 +3796,7 @@
       '<div class="timer' + (farOver ? ' overtime' : timeUp ? ' due' : '') + '">' + formatMs(elapsed) + '</div>' +
       // Vises bare i designene som bruker dem (designs.css).
       '<div class="level-tag"></div><div class="stint-bar"><i></i></div>';
-    paintStint(el, elapsed);
+    paintStint(el, stintMs);
     attachTokenEvents(el, id, 'field');
     return el;
   }
@@ -3804,16 +3932,19 @@
   // picker changes while paused still need the clock + countdown redrawn.
   function updateTimersOnly(){
     var now = nowTs();
+    var keeper = keeperIdNow();
     Array.prototype.forEach.call(els.field.querySelectorAll('.field-token'), function(el){
       var id = el.dataset.id;
       var elapsed = fieldElapsed(id, now);
       var timerEl = el.querySelector('.timer');
       var avatarEl = el.querySelector('.avatar');
       timerEl.textContent = formatMs(elapsed);
-      var timeUp = elapsed >= state.defaultDurationMs;
-      var farOver = timeUp && elapsed >= state.defaultDurationMs * OVERTIME_FACTOR;
-      paintStint(el, elapsed);
-      notePrewarn(id, elapsed);
+      // Keeperen foreslås aldri byttet, og skal derfor heller ikke få byttemerker, forvarsel eller byttelyd.
+      var stintMs = id === keeper ? 0 : elapsed;
+      var timeUp = stintMs >= state.defaultDurationMs;
+      var farOver = timeUp && stintMs >= state.defaultDurationMs * OVERTIME_FACTOR;
+      paintStint(el, stintMs);
+      notePrewarn(id, stintMs);
       timerEl.classList.toggle('overtime', farOver);
       timerEl.classList.toggle('due', timeUp && !farOver);
       avatarEl.classList.toggle('time-up', timeUp);
@@ -4033,8 +4164,14 @@
     try { localStorage.setItem('spillerbytte_sound_' + key + '_v1', on ? '1' : '0'); } catch(e){}
   }
 
+  // Når flere når byttetiden samtidig (typisk ved kampstart) høres det én gang, ikke én gang per spiller.
+  var lastTimeUpBeepAt = 0;
+  var lastPrewarnToneAt = 0;
   function playTimeUpBeep(){
-    if (!audioCtx) return;
+    if (!audioCtx || !soundPref('swap')) return;
+    var t = Date.now();
+    if (t - lastTimeUpBeepAt < 2000) return;
+    lastTimeUpBeepAt = t;
     var ctx = audioCtx; // capture non-null locally so the closure below stays typed
     try {
       [0, 0.22].forEach(function(delay){
@@ -4060,6 +4197,7 @@
     els.playPauseIcon.textContent = running ? '⏸' : '▶';
     els.playPauseText.textContent = running ? 'Pause' : 'Start';
     els.playPauseBtn.setAttribute('aria-label', running ? 'Pause' : 'Start');
+    syncUpdateBanner();
   }
 
   /** @returns {string[]} */
@@ -4219,6 +4357,13 @@
 
     state.onField = state.onField.filter(function(x){ return x !== fieldId; });
     state.onField.push(benchId);
+    // Innbytteren tar plassen (og keeperrollen) til den som går ut, med en gang:
+    // ved flere bytter på rad (multiBytte, avspilling) ville ellers syncFieldSlots
+    // fylt ledige plasser i rekkefølge, og en utespiller kunne havnet i mål.
+    if (Array.isArray(state.fieldSlotAssignment)){
+      var slotIdx = state.fieldSlotAssignment.indexOf(fieldId);
+      if (slotIdx !== -1) state.fieldSlotAssignment[slotIdx] = benchId;
+    }
     state.fieldTimers[benchId] = { baseElapsedMs: 0, sinceTs: now };
     delete state.fieldTimers[fieldId];
     delete timeUpNotified[benchId];
@@ -4743,7 +4888,7 @@
   function fillForgottenSheet(){
     var now = nowTs(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
     var trim = Math.max(0, clock - target);
-    els.forgottenTitle.textContent = forgottenCtx.auto ? '⏸ Kampen er satt på pause' : 'Still klokka tilbake til kampslutt';
+    els.forgottenTitle.textContent = forgottenCtx.auto ? 'Har kampen sluttet?' : 'Still klokka tilbake til kampslutt'; // klokka går videre mens arket står åpent
     els.forgottenInfo.textContent = (forgottenCtx.auto
         ? 'Kamptiden gikk ut for ' + formatMs(Math.max(0, clock - state.matchDurationMs)) + ' siden, og det har ikke skjedd noe på en stund. '
         : 'Fjerner ' + formatMs(trim) + ' fra klokka og spillerne. ') +
@@ -4808,13 +4953,25 @@
   }
 
   /* ---- manuell justering: «Trekk fra tid» eller «Sett klokka til» ---- */
-  var manual = { tab: 'sub', sub: 0, set: 0, clockSec: 0, thenEnd: false };
+  var manual = { tab: 'sub', sub: 0, set: 0, clockSec: 0, maxSubSec: 0, thenEnd: false };
+  // Mest som kan trekkes fra: tiden siden siste bytte (den korteste løpende
+  // spiller- eller benketiden). Lenger tilbake ville klokka havnet før et bytte
+  // som er gjort, og spillerne fått mer spilletid enn kampen har vart.
+  /** @param {number} now @returns {number} */
+  function maxTrimMs(now){
+    var max = matchClockElapsed(now);
+    state.onField.forEach(function(id){ max = Math.min(max, fieldElapsed(id, now)); });
+    state.onBench.forEach(function(id){ max = Math.min(max, benchElapsed(id, now)); });
+    return Math.max(0, max);
+  }
   /** @type {{match: any, swap: any}} */
   var manualSteps = { match: null, swap: null };
   function manualSecs(){ return manual.tab === 'sub' ? manual.sub : manual.set; }
   /** @param {number} sec */
   function setManualSecs(sec){
-    var v = Math.max(0, Math.min(manual.clockSec, sec));
+    var v = manual.tab === 'sub'
+      ? Math.max(0, Math.min(manual.maxSubSec, sec))
+      : Math.max(manual.clockSec - manual.maxSubSec, Math.min(manual.clockSec, sec));
     if (manual.tab === 'sub') manual.sub = v; else manual.set = v;
     updateManualClockUI();
   }
@@ -4826,14 +4983,16 @@
     els.manualSecLabel.textContent = manual.tab === 'sub' ? 'sek fjernes' : 'sek';
     manualSteps.match.refresh(); manualSteps.swap.refresh();
     var subSec = manual.tab === 'sub' ? manual.sub : manual.clockSec - manual.set;
-    els.manualClockPreview.innerHTML = 'Klokka blir <b>' + formatMs((manual.clockSec - subSec) * 1000) + '</b> · fjerner <b>' + formatMs(subSec * 1000) + '</b> fra klokka og spillerne.';
+    els.manualClockPreview.innerHTML = 'Klokka blir <b>' + formatMs((manual.clockSec - subSec) * 1000) + '</b> · fjerner <b>' + formatMs(subSec * 1000) + '</b> fra klokka og spillerne.'
+      + (subSec >= manual.maxSubSec && manual.maxSubSec < manual.clockSec ? ' Lenger tilbake går ikke: da havner klokka før siste bytte (' + formatMs((manual.clockSec - manual.maxSubSec) * 1000) + ').' : '');
   }
   /** @param {string} tab @param {boolean} [thenEnd] */
   function openManualClock(tab, thenEnd){
     var now = nowTs(), clock = matchClockElapsed(now), target = matchEndTargetMs(now);
     manual.clockSec = Math.floor(clock / 1000);
-    manual.sub = Math.max(0, Math.floor((clock - target) / 1000));
-    manual.set = Math.floor(target / 1000);
+    manual.maxSubSec = Math.floor(maxTrimMs(now) / 1000);
+    manual.sub = Math.min(manual.maxSubSec, Math.max(0, Math.floor((clock - target) / 1000)));
+    manual.set = manual.clockSec - manual.sub;
     manual.tab = tab;
     manual.thenEnd = !!thenEnd;
     updateManualClockUI();
@@ -4844,7 +5003,7 @@
     if (!canEdit()) return;
     var clock = matchClockElapsed(nowTs());
     var subMs = manual.tab === 'sub' ? manual.sub * 1000 : clock - manual.set * 1000;
-    subMs = Math.max(0, Math.min(clock, subMs));
+    subMs = Math.max(0, Math.min(maxTrimMs(nowTs()), subMs));
     if (subMs > 0){
       subtractDeadTime(subMs, true); // årsaken er rettet - neste gang kan det spørres som vanlig
     }
@@ -4936,23 +5095,24 @@
     try { localStorage.setItem(IDLE_SUGGEST_SNOOZE_KEY_PREFIX + kind, String(Date.now())); } catch(e){}
   }
 
-  var idleSuggestShown = false; // once per page load - reopening the app re-stamps lastActivityAt anyway
+  // Hvert spørsmål høyst én gang per innlasting. Hver for seg: å ha svart
+  // «fortsett» på 1 t-spørsmålet skal ikke stenge for 30 t-spørsmålet.
+  var idleSuggestShown = { endPeriod: false, reset: false };
   function checkLongIdleSuggestion(){
-    if (idleSuggestShown) return;
     if (!canEdit()) return; // nothing a read-only viewer could act on anyway
     if (state.players.length === 0) return; // nothing to end/reset yet
     var gap = nowTs() - (state.lastActivityAt || 0);
     if (gap > IDLE_RESET_SUGGEST_MS){
       if (!isMaster()) return; // only the owner can actually reset a shared session
-      if (isIdleSuggestSnoozed('reset')) return;
-      idleSuggestShown = true;
+      if (idleSuggestShown.reset || isIdleSuggestSnoozed('reset')) return;
+      idleSuggestShown.reset = true;
       openIdleSuggestModal('reset');
       return;
     }
     var hasElapsedTime = state.globalRunning || matchClockElapsed(nowTs()) > 0;
     if (gap > IDLE_END_PERIOD_SUGGEST_MS && hasElapsedTime && !forgottenMatchInfo(nowTs())){
-      if (isIdleSuggestSnoozed('endPeriod')) return;
-      idleSuggestShown = true;
+      if (idleSuggestShown.endPeriod || isIdleSuggestSnoozed('endPeriod')) return;
+      idleSuggestShown.endPeriod = true;
       openIdleSuggestModal('endPeriod');
     }
   }
@@ -5065,7 +5225,9 @@
   var durationStep = null;
 
   function commitDurationPickerValue(){
-    setShared({ matchDurationMs: durationPickerValue * 60000, continueCount: 0 }); // kamptiden er rettet - årsaken til «Fortsett» er borte
+    // Kamptiden er rettet - årsaken til «Fortsett» er borte. Og det er en handling: senkes
+    // kamptiden under spilt tid, skal ikke «det har ikke skjedd noe på en stund» komme straks.
+    setShared({ matchDurationMs: durationPickerValue * 60000, continueCount: 0, lastPlayAt: nowTs() });
     renderAll();
   }
 
@@ -5464,6 +5626,7 @@
     renderDesignPicker();
     /** @type {HTMLInputElement} */ (qs('settingsWhistleToggle')).checked = soundPref('whistle');
     /** @type {HTMLInputElement} */ (qs('settingsPrewarnToggle')).checked = soundPref('prewarn');
+    /** @type {HTMLInputElement} */ (qs('settingsSwapSoundToggle')).checked = soundPref('swap');
     qs('deleteAccountWrap').hidden = !isTeamAccountSignedIn();
     els.settingsWakeLockToggle.checked = wakeLockWanted();
     els.settingsDefaultRankCumulative.checked = d.rankByCumulative;
@@ -5665,6 +5828,7 @@
     });
     qs('settingsWhistleToggle').addEventListener('change', function(e){ setSoundPref('whistle', e.target.checked); });
     qs('settingsPrewarnToggle').addEventListener('change', function(e){ setSoundPref('prewarn', e.target.checked); });
+    qs('settingsSwapSoundToggle').addEventListener('change', function(e){ setSoundPref('swap', e.target.checked); });
     qs('stallAddBtn').addEventListener('click', addStallFromInput);
     qs('stallAddInput').addEventListener('keydown', function(e){ if (e.key === 'Enter') addStallFromInput(); });
     qs('accountForgotLink').addEventListener('click', function(){
@@ -5904,19 +6068,31 @@
     var rows = Array.prototype.slice.call(els.nameRows.querySelectorAll('.name-row'));
     var newPlayers = [];
     var keptIds = {};
+    var emptyOnField = [];
 
     rows.forEach(function(row){
       var wrap = row.querySelector('.name-input-wrap');
       clearFieldInvalid(wrap);
       var input = row.querySelector('input');
       var name = input.value.trim();
-      if (!name) return;
+      if (!name){
+        // En spiller på banen kan ikke fjernes (raden har ingen ×). Et tomt navn her
+        // ville likevel slettet spilleren og all spilletiden, uten mulighet til å angre.
+        if (row.dataset.id && state.onField.indexOf(row.dataset.id) !== -1) emptyOnField.push(row);
+        return;
+      }
       var id = row.dataset.id;
       if (!id){ id = uid(); }
       newPlayers.push({id:id, name:name});
       keptIds[id] = true;
     });
 
+    if (emptyOnField.length > 0){
+      shakeElement(els.settingsModal.querySelector('.modal-card'));
+      emptyOnField.forEach(function(row){ markFieldInvalid(row.querySelector('.name-input-wrap')); });
+      showNotice('Spillere på banen må ha navn. Bytt dem ut først for å fjerne dem.');
+      return;
+    }
     if (newPlayers.length === 0){
       shakeElement(els.settingsModal.querySelector('.modal-card'));
       rows.forEach(function(row){ markFieldInvalid(row.querySelector('.name-input-wrap')); });
@@ -5929,7 +6105,7 @@
     state.players.forEach(function(p){ oldIds[p.id] = true; });
     var rosterChanged = newPlayers.length !== state.players.length ||
       newPlayers.some(function(p){ return !oldIds[p.id]; });
-    if (rosterChanged) clearUndoHistory();
+    if (rosterChanged){ clearUndoHistory(); undoLostToRemote = false; }
 
     /** @type {Object<string, any>} */
     var rosterOp = { t: 'roster', players: newPlayers, keptIds: keptIds };
@@ -5987,7 +6163,10 @@
     });
     state.players = newPlayers.map(function(/** @type {Player} */ p){ return { id: p.id, name: p.name }; });
     if (typeof op.matchDurationMs === 'number'){ state.matchDurationMs = op.matchDurationMs; state.continueCount = 0; }
-    if (typeof op.defaultDurationMs === 'number') state.defaultDurationMs = op.defaultDurationMs;
+    if (typeof op.defaultDurationMs === 'number'){
+      state.defaultDurationMs = op.defaultDurationMs;
+      resyncTimeUpNotified(); // lengre byttetid: byttelyden skal komme igjen på den nye tiden
+    }
     if (typeof op.fieldSize === 'number') state.fieldSize = op.fieldSize;
     if (typeof op.hasKeeper === 'boolean') state.hasKeeper = op.hasKeeper;
     if (op.halves === 1 || op.halves === 2) state.halves = op.halves;
@@ -6060,8 +6239,10 @@
 
   // Kampslutt på ett ark: alt som trengs for å avslutte, uten en rekke spørsmål etter hverandre.
   var END_PREFS_KEY = 'spillerbytte_end_prefs_v1';
+  var endSheetMatchNo = 0;
   function openEndSheet(){
     var now = nowTs();
+    endSheetMatchNo = state.matchNo || 0;
     var home = teamGoalCount('home'), away = teamGoalCount('away');
     els.endSheetScore.textContent = homeAbbr() + ' ' + home + ' – ' + away + ' ' + (state.opponentAbbr || state.opponentName || '?');
     var swaps = state.swapCount || 0;
@@ -6308,12 +6489,15 @@
     summaryEntry.events = state.eventLog.slice();
     lastMatchSummary = summaryEntry;
     syncKeeperTime(now);
+    // Regnes her, før keepertiden bankes, og sendes med operasjonen: keeperhistorikken
+    // ligger bare på denne telefonen, så en avspilling andre steder må få samme svar.
+    var nextKeeper = reorganize ? suggestNextKeeper(now) : null;
     bankKeeperHistory(now);
     // The shared Supabase archive - state.matchHistory is synced shared-session state and gets wiped
     // by resetMatch() same as everything else, which is right for "this session's matches so far"
     // but wrong for a durable record.
     if (saveToHistory) saveToHistoryWithNote(summaryEntry);
-    recordOp({ t: 'endMatch', at: now, reorganize: reorganize, nextOpponentName: nextOpponent ? nextOpponent.name : '', nextOpponentAbbr: nextOpponent ? nextOpponent.abbr : '' });
+    recordOp({ t: 'endMatch', at: now, reorganize: reorganize, nextKeeper: nextKeeper ? nextKeeper.id : null, nextOpponentName: nextOpponent ? nextOpponent.name : '', nextOpponentAbbr: nextOpponent ? nextOpponent.abbr : '' });
     selected = null;
     suggestedPartnerId = null;
     undoStack = [];
@@ -6324,8 +6508,8 @@
   }
 
   // The state half of Kampslutt. Runs again if the end is replayed, so it only depends on state.
-  /** @param {boolean} reorganize @param {number} now @param {string} [nextName] @param {string} [nextAbbr] */
-  function applyEndMatch(reorganize, now, nextName, nextAbbr){
+  /** @param {boolean} reorganize @param {number} now @param {string} [nextName] @param {string} [nextAbbr] @param {string|null} [nextKeeper] */
+  function applyEndMatch(reorganize, now, nextName, nextAbbr, nextKeeper){
     // Each player's time in this match, read before the stints are banked.
     var calc = computeMatchScoreAndPlayerMs(now);
     var homeScore = calc.homeScore, awayScore = calc.awayScore, playerMs = calc.playerMs;
@@ -6376,6 +6560,20 @@
       var fieldSize = Math.max(1, Math.min(state.fieldSize || 3, all.length));
       state.onField = all.slice(0, fieldSize).map(function(x){ return x.id; });
       state.onBench = all.slice(fieldSize).map(function(x){ return x.id; });
+      // Forslaget «Neste i mål» på arket gjøres til virkelighet: står hen ikke blant de
+      // som spilte minst, tar hen plassen til den av dem som spilte mest.
+      var nk = typeof nextKeeper === 'string' && playerById(nextKeeper) ? nextKeeper : null;
+      if (nk && fieldHasPositions() && fieldFormationRows(state.fieldSize).hasKeeper){
+        if (state.onField.indexOf(nk) === -1){
+          var bumped = state.onField.pop();
+          state.onBench = state.onBench.filter(function(x){ return x !== nk; });
+          if (bumped) state.onBench.unshift(bumped);
+          state.onField.push(nk);
+        }
+        var slots = Array.isArray(state.fieldSlotAssignment) ? state.fieldSlotAssignment.map(function(x){ return x === nk ? null : x; }) : [];
+        slots[0] = nk; // den som stod i mål får en ledig plass i syncFieldSlots
+        state.fieldSlotAssignment = slots;
+      }
     }
 
     state.fieldTimers = {};
@@ -6450,7 +6648,11 @@
     var keepSessionUid = sessionCode ? state.sessionUid : undefined;
     var keepRev = state.rev;
     var keepOpIds = state.opIds;
+    var keepMatchNo = state.matchNo || 0;
+    var keepShareEditable = sessionCode ? state.shareEditable : true; // en Kun les-økt skal ikke åpnes for redigering av en nullstilling
     state = defaultState();
+    state.matchNo = keepMatchNo + 1;
+    state.shareEditable = keepShareEditable;
     state.sessionOwnerDeviceId = keepOwnerDeviceId;
     state.participants = keepParticipants;
     if (keepSessionUid) state.sessionUid = keepSessionUid;
@@ -6505,18 +6707,27 @@
     els.undoToastBtn.hidden = !actionLabel;
     if (actionLabel) els.undoToastBtn.textContent = actionLabel;
     toastAction = action || null;
+    toastIsUndo = false;
     els.undoToast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, ms || 5000);
   }
+  var toastIsUndo = false;
   function hideToast(){
     clearTimeout(toastTimer);
     toastAction = null;
+    toastIsUndo = false;
     if (els.undoToast) els.undoToast.classList.remove('show');
   }
   /** @param {string} text */
   function showUndoToast(text){
     showToast(text, 'Angre', function(){ undoLastAction(); });
+    toastIsUndo = true;
+  }
+  // Angre-stripen gjelder én bestemt handling: er den angret på annen måte, eller er
+  // historikken borte, skal ikke et trykk på stripen angre noe annet.
+  function hideUndoToast(){
+    if (toastIsUndo) hideToast();
   }
   /** @param {string} name @returns {string} */
   function firstName(name){
@@ -6564,14 +6775,19 @@
     if (elapsed < d - PREWARN_MS){ delete prewarned[id]; return; }
     if (elapsed >= d || prewarned[id] || !state.globalRunning) return;
     prewarned[id] = true;
-    if (!spectatorCode && soundPref('prewarn')) playTones([[1320, 0, 0.14]]);
+    if (spectatorCode || !soundPref('prewarn') || Date.now() - lastPrewarnToneAt < 2000) return;
+    lastPrewarnToneAt = Date.now();
+    playTones([[1320, 0, 0.14]]);
   }
   /** @param {number} now */
   function checkMatchAlarms(now){
     var clock = matchClockElapsed(now), d = state.matchDurationMs;
     if (state.halves === 2 && state.halfStage !== 2 && clock >= d / 2 && canEdit()){
       // Stoppes nøyaktig på halvtid, også om telefonen var låst akkurat da.
-      recordOp({ t: 'halftime', at: now - (clock - d / 2) });
+      // Men aldri før siste handling: senkes kamptiden forbi halvtid midt i kampen,
+      // skal klokka stoppe der den er, ikke hoppe tilbake forbi bytter som er gjort.
+      var halfAt = Math.min(now, Math.max(now - (clock - d / 2), state.lastActivityAt || 0));
+      recordOp({ t: 'halftime', at: halfAt });
       saveState();
       updatePlayPauseUI();
       updateTimersOnly();
@@ -6617,7 +6833,8 @@
       for (var guard = 0; guard < 200; guard++){
         var longest = 0;
         rotating.forEach(function(id){ if (stint[id] > longest) longest = stint[id]; });
-        var dt = Math.max(30000, interval - longest);
+        // Første bytte kan være nå (byttetiden er nådd); deretter minst et halvt minutt mellom.
+        var dt = guard === 0 ? Math.max(0, interval - longest) : Math.max(30000, interval - longest);
         if (t + dt >= total - 30000) break; // ingen bytter det siste halve minuttet
         field.forEach(function(id){ played[id] += dt; stint[id] = (stint[id] || 0) + dt; });
         t += dt;
@@ -6813,9 +7030,22 @@
   }
   /** @param {number} now */
   function cupNextMatch(now){
-    var upcoming = cupMatches().filter(function(m){ return m.time && cupMinutesUntil(m, now) > 0; })
-      .sort(function(a, b){ return a.time < b.time ? -1 : 1; });
-    return upcoming[0] || null;
+    // Den første kampen i programmet som ikke er spilt, ikke den første som ligger fram i
+    // tid: en kamp som starter eller slutter forsinket skal ikke få appen til å hoppe over
+    // neste motstander eller foreslå en som er spilt. De spilte kampene (i økten, pluss den
+    // som pågår) går gjennom i rekkefølge: stemmer motstanderen med en kamp i programmet,
+    // er det den; ellers (ukjent motstander, annen skrivemåte) er det den tidligste igjen.
+    /** @param {string} name */
+    var key = function(name){ return String(name || '').trim().toLowerCase(); };
+    var left = cupMatches().filter(function(m){ return !!m.time; }).slice().sort(function(a, b){ return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
+    var played = (state.matchHistory || []).map(function(m){ return key(m.opponentName); });
+    if (matchClockElapsed(now) > 0) played.push(key(state.opponentName));
+    played.forEach(function(name){
+      if (left.length === 0) return;
+      var i = name ? left.findIndex(function(m){ return key(m.opponent) === name; }) : -1;
+      left.splice(i === -1 ? 0 : i, 1);
+    });
+    return left[0] || null;
   }
   /** @param {any} cup */
   function saveCup(cup){
@@ -6831,7 +7061,7 @@
     var editable = canEdit();
     var next = cupNextMatch(now);
     qs('cupNext').textContent = next
-      ? 'Neste kamp ' + next.time + (next.opponent ? ' mot ' + next.opponent : '') + ' (om ' + cupMinutesUntil(next, now) + ' min)'
+      ? 'Neste kamp ' + next.time + (next.opponent ? ' mot ' + next.opponent : '') + (cupMinutesUntil(next, now) > 0 ? ' (om ' + cupMinutesUntil(next, now) + ' min)' : '')
       : 'Legg inn kampene, så teller appen ned til neste og foreslår motstanderen ved kampslutt.';
     var nameInput = /** @type {HTMLInputElement} */ (qs('cupNameInput'));
     nameInput.value = state.cup ? state.cup.name : '';
@@ -8131,6 +8361,12 @@
       // reachable by everyone now, so this can't lean on canEdit() having
       // already been checked before the modal even opened.
       if (!canEdit()) return;
+      if ((state.matchNo || 0) !== endSheetMatchNo){
+        // Den andre treneren tok Kampslutt mens arket sto åpent her: ikke avslutt den nye kampen også.
+        els.endMatchModal.classList.remove('open');
+        showNotice('Kampen ble allerede avsluttet på en annen enhet.');
+        return;
+      }
       var save = els.endSaveToggle.checked, reorg = els.endReorgToggle.checked;
       var nextName = els.endNextOpponent.value.trim();
       var next = nextName ? { name: nextName, abbr: deriveAbbrFromName(nextName) } : undefined;
@@ -8584,6 +8820,7 @@
       els.launcherTile.classList.add('lifted');
       setTimeout(function(){
         els.launcherScreen.classList.add('hidden');
+        syncUpdateBanner();
       }, 500);
     }
 
@@ -8783,6 +9020,7 @@
     }
 
     try { sessionCode = localStorage.getItem(SESSION_CODE_KEY); } catch(e){ sessionCode = null; }
+    loadServerRev();
     updateSessionCodeUI(); // also without a Supabase client: the code bar then says it isn't synced
     if (sessionCode){
       try {
@@ -8799,6 +9037,19 @@
     // While the checks below wait for the server, the heartbeat must not overwrite
     // the "last alive" stamp they need in order to see how long the app was away.
     var resumeChecksPending = false;
+    // After the server has answered: the idle checks judge "has anything
+    // happened?" from state, and this device may have slept through a match.
+    function runResumeChecks(){
+      if (resumeChecksPending) return;
+      resumeChecksPending = true;
+      afterSessionSync(function(){
+        resumeChecksPending = false;
+        checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
+        if (!checkForgottenMatch()) checkLongIdleSuggestion();
+        stampLastAlive();
+        updateTimersOnly();
+      });
+    }
 
     function finishStartup(){
       checkIdleAutoPause(); // covers "app was fully closed and reopened after a long gap"
@@ -8822,6 +9073,11 @@
       // retries a write that didn't get through (remoteDirty), without any new rev.
       setInterval(function(){
         saveStateLocally();
+        // Et hjerteslag som selv ser et langt opphold (iOS kan kjøre et forfalt
+        // intervall før visibilitychange) skal ikke viske ut hullet: da ville
+        // auto-pause aldri slått til, og hele fraværet blitt spilletid.
+        var lastAlive = Number(localStorage.getItem(LAST_ALIVE_KEY)) || 0;
+        if (!resumeChecksPending && lastAlive && Date.now() - lastAlive > IDLE_AUTO_PAUSE_MS) runResumeChecks();
         if (!resumeChecksPending) stampLastAlive();
         if (networkOnline){
           if (sessionCode && !sessionVerified) reconcileWithServer(); // the first comparison hasn't got through yet
@@ -8831,22 +9087,14 @@
       document.addEventListener('visibilitychange', function(){
         if (document.hidden){
           if (activeDragCancel) activeDragCancel(); // the finger is gone by the time the app is back
+          if (!resumeChecksPending) stampLastAlive(); // så en auto-pause fryser klokka der appen faktisk ble lagt bort
           saveStateLocally();
           flushRemoteIfDirty();
         } else {
           updateTimersOnly();
           requestWakeLock();
           flushHistoryQueue();
-          // After the server has answered: the idle checks judge "has anything
-          // happened?" from state, and this device may have slept through a match.
-          resumeChecksPending = true;
-          afterSessionSync(function(){
-            resumeChecksPending = false;
-            checkIdleAutoPause(); // covers "tab/app was backgrounded for a long gap, then resumed"
-            if (!checkForgottenMatch()) checkLongIdleSuggestion();
-            stampLastAlive();
-            updateTimersOnly();
-          });
+          runResumeChecks();
         }
       });
       flushHistoryQueue();
@@ -8868,6 +9116,9 @@
       return;
     }
     updateLauncherResume();
+    var resumeAfterUpdate = false;
+    try { resumeAfterUpdate = sessionStorage.getItem(RESUME_AFTER_UPDATE_KEY) === '1'; sessionStorage.removeItem(RESUME_AFTER_UPDATE_KEY); } catch(e){}
+    if (resumeAfterUpdate && state.players.length > 0 && !joinParam) els.launcherScreen.classList.add('hidden');
     if (joinParam && isValidSessionCode(joinParam)){
       try { history.replaceState(null, '', location.pathname); } catch(e){}
       setTimeout(function(){
